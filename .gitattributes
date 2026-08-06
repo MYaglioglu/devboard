@@ -1,0 +1,18 @@
+# Zeilenenden vereinheitlichen: im Repo immer LF, egal auf welchem Betriebssystem.
+* text=auto eol=lf
+
+# Dateien, die zwingend LF brauchen (laufen in Linux-Containern)
+*.sh    text eol=lf
+Dockerfile text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Binärdateien: niemals konvertieren
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.woff  binary
+*.woff2 binary
