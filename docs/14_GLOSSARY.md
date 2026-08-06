@@ -1,0 +1,3 @@
+# Glossar
+
+Begriffe und Definitionen.
