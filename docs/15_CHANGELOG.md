@@ -8,6 +8,10 @@ Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- NestJS-Grundgerüst in `backend/` (verifiziert: HTTP 200 auf Port 3000)
+- ADR-005: Ein Repository, zwei getrennte npm-Projekte, npm als Paketmanager
+- Architekturdokument: Schichten, Dependency Injection, feature-basierte Modulstruktur
+- Lerntagebuch Session 2, Interviewfragen 11–17, Glossarteil NestJS
 - Lerntagebuch, Interviewfragen mit Antworten, DevOps-Referenz und Glossar (Sprint 0, Session 1)
 - PostgreSQL 18 als Docker-Compose-Service mit Healthcheck und persistentem Volume
 - `.env` / `.env.example`-Paar für Konfigurationswerte

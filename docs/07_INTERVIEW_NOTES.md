@@ -123,3 +123,85 @@ Solange sie **nur lokal** existiert. Rebase, Amend und Squash ändern Commit-Has
 alten Commits bereits geholt, divergieren die Historien und ein Force-Push zieht anderen den Boden
 weg. Regel: **vor dem Push frei, nach dem Push tabu** – außer auf einem Branch, an dem nachweislich
 niemand sonst arbeitet, und dann mit `--force-with-lease` statt `--force`.
+
+---
+
+## Architektur & NestJS
+
+### 11. Was ist Dependency Injection und warum benutzt man sie?
+
+Eine Klasse erzeugt ihre Abhängigkeiten nicht selbst, sondern bekommt sie hineingereicht – meist
+über den Konstruktor. Ein Container übernimmt das Erzeugen und Verdrahten. Das Prinzip dahinter
+heißt **Inversion of Control**: nicht die Klasse holt sich, was sie braucht, sondern es wird ihr
+gegeben.
+
+Der praktische Nutzen ist **Testbarkeit**. Eine Klasse mit `new PrismaService()` im Rumpf ist an eine
+echte Datenbank gekettet: kein Unit-Test ohne laufende Datenbank, keine Möglichkeit,
+Ausfallszenarien zu simulieren. Wird die Abhängigkeit injiziert, reicht man im Test eine Attrappe
+hinein und in Produktion die echte Implementierung – ohne die Klasse zu ändern.
+
+Zweitrangig, aber ebenfalls relevant: austauschbare Implementierungen und ein zentraler Ort für die
+Lebenszyklus-Verwaltung der Objekte.
+
+### 12. Wie weiß NestJS, welche Klasse es injizieren muss?
+
+Aus dem **Typ des Konstruktor-Parameters**. TypeScript-Typen existieren zur Laufzeit normalerweise
+nicht; die Compiler-Option `emitDecoratorMetadata` schreibt sie als Metadaten mit ins JavaScript
+(`reflect-metadata`). Nest liest sie beim Start aus und sucht in den registrierten `providers` nach
+einer passenden Klasse.
+
+Deshalb der häufigste Anfängerfehler: `Nest can't resolve dependencies of X` bedeutet fast immer,
+dass die benötigte Klasse nicht in den `providers` des Moduls steht oder das Modul sie nicht
+exportiert.
+
+### 13. Was gehört in einen Controller, was in einen Service?
+
+**Controller:** HTTP entgegennehmen, Eingaben validieren, Antwort und Statuscode zurückgeben. Dünn.
+**Service:** die Fachlogik. Kennt kein HTTP – keinen Request, kein Response.
+
+Der Grund ist nicht Ästhetik: Ein Service ohne HTTP-Bezug ist aus einem Cronjob, einem
+Queue-Worker oder einem Unit-Test genauso aufrufbar. Wandert die Logik in den Controller, ist sie an
+den HTTP-Aufruf gebunden und nur noch über einen HTTP-Test erreichbar.
+
+### 14. Welchen Scope haben Provider in NestJS?
+
+Standardmäßig **Singleton** – eine Instanz für die gesamte Anwendung, geteilt von allen, die sie
+injizieren. Alternativen sind `REQUEST` (eine Instanz pro Anfrage, nützlich für anfragebezogenen
+Kontext, aber teurer) und `TRANSIENT` (jede Injektion bekommt eine eigene Instanz). In Spring ist
+Singleton ebenfalls der Standard-Scope.
+
+Wichtige Folge: Ein Singleton darf keinen veränderlichen Zustand pro Nutzer halten – der wäre
+zwischen allen Anfragen geteilt.
+
+### 15. Warum validierst du Umgebungsvariablen beim Start?
+
+Weil `process.env.FOO` bei fehlender Variable `undefined` liefert, ohne Fehler. Die Anwendung startet
+scheinbar normal und fällt Stunden später an unerwarteter Stelle um – mit einem Fehlerbild, das
+nichts mit der Ursache zu tun hat.
+
+Wird die Konfiguration beim Start gegen ein Schema validiert (hier Zod), bricht die Anwendung sofort
+und mit klarer Meldung ab. Das Prinzip heißt **fail fast**: Fehler sollen so früh und so nah an
+ihrer Ursache wie möglich auftreten. Ein Container, der wegen fehlender Konfiguration nicht
+hochkommt, ist besser als einer, der halb funktioniert – und in einer Deployment-Pipeline führt er
+zum sauberen Abbruch statt zu einem stillen Ausfall in Produktion.
+
+### 16. Warum ein eigenes Backend statt der API-Routes von Next.js?
+
+Technisch geht beides. Gegen die API-Routes spricht hier: keine erzwungene Schichtentrennung, kein
+DI-Container, keine Guards und Interceptors – also genau die Struktur, die ein wachsendes Backend
+trägt. Zudem lässt sich das Backend unabhängig skalieren, deployen und von anderen Clients (mobile
+App, Cronjob, Webhook) nutzen.
+
+Gegen ein eigenes Backend spricht der Mehraufwand: zwei Deployments, CORS, doppelte
+Typdefinitionen. Bei einem kleinen Produkt mit einem einzigen Web-Client sind API-Routes die
+pragmatischere Wahl.
+
+### 17. Warum gliederst du nach Features und nicht nach technischen Schichten?
+
+Bei einer Gliederung in `controllers/`, `services/`, `repositories/` sind für eine Änderung an einem
+Thema drei entfernte Ordner zu öffnen, und Zusammengehörigkeit ist nirgends sichtbar. Bei
+feature-basierter Gliederung (`auth/`, `projects/`, `tasks/`) liegt alles zu einem Thema beieinander:
+Module lassen sich als Ganzes verstehen, verschieben oder entfernen, und jedes Modul kontrolliert
+über `exports`, was es nach außen sichtbar macht.
+
+Schichten gibt es weiterhin – nur **innerhalb** des Feature-Moduls statt als oberste Gliederungsebene.
