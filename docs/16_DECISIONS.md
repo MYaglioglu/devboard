@@ -104,7 +104,33 @@ Alle übrigen Features werden mit Begründung in `06_BACKLOG.md` geparkt.
 
 ---
 
-## ADR-004 bis ADR-006
+## ADR-004: PostgreSQL im Container statt lokaler Installation
 
-Folgen im Lauf von Sprint 0: Repository-Layout, PostgreSQL im Container statt lokaler Installation,
-Prisma als ORM.
+**Status:** Angenommen (07.08.2026)
+
+### Kontext
+Das Projekt braucht lokal eine PostgreSQL-Datenbank. Produktion läuft später unter Linux auf einem
+eigenen Hetzner-Server. Entwicklungsrechner ist Windows 11.
+
+### Entscheidung
+PostgreSQL läuft ausschließlich in einem Docker-Container, gesteuert über `docker-compose.yml` im
+Wurzelverzeichnis des Repositories. Die Version ist auf `postgres:18-alpine` gepinnt.
+
+### Alternativen
+| Option | Bewertung |
+|---|---|
+| **Lokale Installation** unter Windows | Versions-Drift bei mehreren Projekten, keine saubere Deinstallation, aufwendiges Onboarding. Vor allem: Postgres verhält sich unter Windows anders als unter Linux – insbesondere bei Collation und Groß-/Kleinschreibung. Solche Abweichungen erzeugen Fehler, die lokal nicht reproduzierbar sind. |
+| **Managed Cloud** (Neon, Supabase, RDS) | Bequem, aber kein Lerneffekt beim Betrieb, Internet zwingend erforderlich, ab einer gewissen Nutzung kostenpflichtig. |
+| **Container** | Identische Umgebung wie in Produktion, wegwerfbar, ein Befehl zum Starten, Konfiguration liegt versioniert im Repository. |
+
+### Konsequenzen
+- **Positiv:** `docker compose up -d` genügt zum Aufsetzen der gesamten lokalen Umgebung. Die Konfiguration ist Teil des Repositories (Infrastructure as Code) statt angeklickter GUI-Zustand.
+- **Negativ:** Docker Desktop und aktivierte Hardware-Virtualisierung sind Voraussetzung. Unter Windows läuft eine WSL2-VM mit, die Arbeitsspeicher belegt.
+- **Wichtig:** Die Daten liegen in einem **named volume** (`devboard-db-data`). Ohne das wären sie nach jedem `docker compose down` verloren. `docker compose down -v` löscht sie ausdrücklich.
+- **Version gepinnt**, nicht `latest`: `latest` ist ein beweglicher Zeiger. Ein Versionssprung macht das Datenverzeichnis unlesbar und bricht Builds ohne jede Code-Änderung.
+
+---
+
+## ADR-005 und ADR-006
+
+Folgen im Lauf von Sprint 0: Repository-Layout und Prisma als ORM.
