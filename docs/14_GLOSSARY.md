@@ -103,6 +103,67 @@ nicht fertig.
 **Secret** – Vertraulicher Wert (Passwort, Token, Schlüssel). Gehört nie ins Repository. Ist eines
 doch hineingeraten: **erst rotieren, dann Historie bereinigen.**
 
+**Fail fast** – Fehler so früh und so nah an ihrer Ursache wie möglich auftreten lassen. Eine
+Anwendung, die wegen fehlender Konfiguration gar nicht startet, ist besser als eine, die halb
+funktioniert.
+
+---
+
+## NestJS & Backend
+
+**Dependency Injection (DI)** – Eine Klasse erzeugt ihre Abhängigkeiten nicht selbst, sondern
+bekommt sie hineingereicht. Macht die Klasse testbar, weil sich im Test eine Attrappe einsetzen
+lässt.
+
+**Inversion of Control (IoC)** – Das Prinzip hinter DI: Nicht die Klasse holt sich, was sie braucht,
+sondern ein Container gibt es ihr.
+
+**IoC-Container** – Der Mechanismus, der Objekte erzeugt und verdrahtet. In NestJS eingebaut, in
+Spring der `ApplicationContext`.
+
+**Composition Root** – Der einzige Ort, an dem der Objektgraph zusammengebaut wird. Bei NestJS
+`NestFactory.create(AppModule)` in `main.ts`.
+
+**Module (`@Module`)** – Bündelt zusammengehörige Controller und Provider. Deklariert über
+`exports`, was andere Module sehen dürfen. Entspricht in Spring der Konfiguration samt Component
+Scan.
+
+**Controller (`@Controller`)** – Nimmt HTTP-Anfragen entgegen und gibt Antworten zurück. Enthält
+keine Fachlogik. Entspricht `@RestController`.
+
+**Provider / `@Injectable`** – Eine vom Container verwaltete Klasse, meist ein Service mit der
+Fachlogik. Entspricht `@Service`.
+
+**Guard** – Entscheidet vor dem Controller, ob ein Aufruf durchgelassen wird (Authentifizierung,
+Rollen). Entspricht einem Spring-Security-Filter.
+
+**Interceptor** – Umschließt Aufrufe, z. B. für Logging, Caching oder das Umformen von Antworten.
+Entspricht AOP-Aspekten.
+
+**Pipe** – Validiert und wandelt Eingaben um, bevor der Controller sie erhält.
+
+**Exception Filter** – Wandelt geworfene Fehler in einheitliche HTTP-Antworten. Entspricht
+`@ControllerAdvice`.
+
+**Decorator** – Syntax wie `@Module({...})`. Hier reine **Metadaten**, kein ausführbarer Code – eine
+Liste, aus der das Framework beim Start ableitet, was zu tun ist.
+
+**`emitDecoratorMetadata`** – Compiler-Option, die TypeScript-Typen aus Konstruktoren als Metadaten
+ins JavaScript schreibt. Nur dadurch weiß Nest zur Laufzeit, welche Klasse es injizieren muss.
+
+**Parameter Property** – TypeScript-Kurzschrift: `constructor(private readonly x: Y) {}` nimmt den
+Parameter entgegen, legt das Feld an und weist es zu – alles in einer Zeile.
+
+**Scope** – Lebensdauer eines Providers. Standard ist **Singleton** (eine Instanz für die ganze
+Anwendung); daneben `REQUEST` (eine pro Anfrage) und `TRANSIENT` (eine pro Injektion).
+
+**`dist/`** – Verzeichnis mit dem kompilierten JavaScript. Node führt kein TypeScript aus; gestartet
+wird immer der gebaute Stand.
+
+**Lockfile (`package-lock.json`)** – Hält die exakten Versionen aller Abhängigkeiten fest. Gehört
+ins Repository, damit alle dieselben Versionen installieren. `node_modules` dagegen nicht – es ist
+daraus rekonstruierbar.
+
 ---
 
 ## PostgreSQL

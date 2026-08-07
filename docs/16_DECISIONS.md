@@ -131,6 +131,39 @@ Wurzelverzeichnis des Repositories. Die Version ist auf `postgres:18-alpine` gep
 
 ---
 
-## ADR-005 und ADR-006
+## ADR-005: Ein Repository, zwei getrennte npm-Projekte
 
-Folgen im Lauf von Sprint 0: Repository-Layout und Prisma als ORM.
+**Status:** Angenommen (08.08.2026)
+
+### Kontext
+Das Projekt besteht aus einem NestJS-Backend und einem Next.js-Frontend. Beide sind
+TypeScript-Projekte mit eigenen Abhängigkeiten, eigenem Build und eigenem Dockerfile. Entwickelt
+wird von einer Person.
+
+### Entscheidung
+**Ein Git-Repository** mit `backend/` und `frontend/` als voneinander unabhängige npm-Projekte, jedes
+mit eigener `package.json` und eigenem Lockfile. Kein Workspace-Werkzeug. Als Paketmanager **npm**.
+
+### Alternativen
+| Option | Bewertung |
+|---|---|
+| **Zwei getrennte Repositories** | Klare Trennung, aber jede übergreifende Änderung (neues Feld in der API plus Anzeige im Frontend) zerfällt in zwei PRs, die getrennt reviewt und in der richtigen Reihenfolge gemergt werden müssen. Für eine Person reine Reibung. |
+| **Monorepo mit npm-Workspaces / Turborepo / Nx** | Löst gemeinsame Abhängigkeiten und orchestrierte Builds – Probleme, die bei zwei Paketen noch nicht existieren. Erzeugt aber sofort ein neues: Docker-Builds werden deutlich komplizierter, weil das Lockfile im Wurzelverzeichnis liegt und der Build-Kontext anders geschnitten werden muss. |
+| **Ein Repo, zwei unabhängige Projekte** | Eine Historie, ein PR pro Feature über alle Schichten, aber jedes Projekt bleibt für sich baubar und dockerisierbar. |
+
+### Paketmanager
+`npm` statt `pnpm`, obwohl pnpm schneller ist und weniger Plattenplatz braucht. Grund: pnpms
+Symlink-Ansatz erfordert in Dockerfiles Sonderbehandlung. In dieser Projektphase soll pro Schritt
+nur **eine** neue Variable eingeführt werden – gelernt wird gerade NestJS, nicht
+Paketmanager-Feinheiten.
+
+### Konsequenzen
+- **Positiv:** Ein vertikaler Slice (Datenbank bis UI) ist ein einziger PR. Kein Werkzeug zwischen dir und dem Build. Dockerfiles bleiben einfach.
+- **Negativ:** Gemeinsame Typen zwischen Backend und Frontend müssen anders gelöst werden – zunächst durch Duplizieren der Zod-Schemata, später ggf. durch ein generiertes API-Client-Paket.
+- **Revidierbar:** Wächst das Projekt auf mehrere Pakete, lässt sich nachträglich ein Workspace einführen. Der umgekehrte Weg wäre aufwendiger.
+
+---
+
+## ADR-006
+
+Folgt im Lauf von Sprint 0: Prisma als ORM.
