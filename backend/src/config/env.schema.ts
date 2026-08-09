@@ -14,6 +14,15 @@ export const envSchema = z.object({
 
   // Umgebungsvariablen sind immer Strings. `coerce` wandelt "3000" in 3000 um.
   PORT: z.coerce.number().int().positive().default(3000),
+
+  // Kein Default: Ohne Datenbank-URL darf das Backend nicht starten.
+  DATABASE_URL: z
+    .string()
+    .min(1, 'DATABASE_URL fehlt')
+    .startsWith(
+      'postgresql://',
+      'DATABASE_URL muss mit postgresql:// beginnen',
+    ),
 });
 
 /** Typ der validierten Konfiguration - aus dem Schema abgeleitet, nicht doppelt gepflegt. */

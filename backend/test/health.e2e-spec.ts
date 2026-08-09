@@ -9,6 +9,7 @@ interface HealthResponse {
   status: string;
   uptimeSeconds: number;
   timestamp: string;
+  checks: { database: string };
 }
 
 describe('Health (e2e)', () => {
@@ -27,7 +28,7 @@ describe('Health (e2e)', () => {
     await app.close();
   });
 
-  it('GET /health liefert 200 und Status ok', async () => {
+  it('GET /health liefert 200 mit erreichbarer Datenbank', async () => {
     const response = await request(app.getHttpServer())
       .get('/health')
       .expect(200);
@@ -37,11 +38,12 @@ describe('Health (e2e)', () => {
     const body = response.body as HealthResponse;
 
     expect(body.status).toBe('ok');
+    expect(body.checks.database).toBe('up');
     expect(typeof body.uptimeSeconds).toBe('number');
     expect(new Date(body.timestamp).toISOString()).toBe(body.timestamp);
   });
 
-  it('GET / existiert nicht mehr', () => {
+  it('GET / existiert nicht', () => {
     return request(app.getHttpServer()).get('/').expect(404);
   });
 });

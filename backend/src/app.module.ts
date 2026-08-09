@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 
 import { validateEnv } from './config/env.schema';
 import { HealthModule } from './health/health.module';
+import { PrismaModule } from './prisma/prisma.module';
 
 @Module({
   imports: [
@@ -11,12 +12,13 @@ import { HealthModule } from './health/health.module';
       isGlobal: true,
 
       // Die .env liegt im Wurzelverzeichnis des Repos - dieselbe, die auch
-      // Docker Compose liest. Eine Quelle statt zwei, die auseinanderlaufen.
+      // Docker Compose und Prisma lesen. Eine Quelle statt drei.
       envFilePath: ['../.env'],
 
       // Laeuft beim Start. Wirft bei ungueltiger Konfiguration.
       validate: validateEnv,
     }),
+    PrismaModule,
     HealthModule,
   ],
 })
