@@ -13,6 +13,19 @@ describe('validateEnv', () => {
     expect(env.PORT).toBe(3000);
   });
 
+  it('setzt CORS_ORIGIN auf die lokale Frontend-URL', () => {
+    expect(validateEnv(gueltig).CORS_ORIGIN).toBe('http://localhost:3001');
+  });
+
+  it('uebernimmt eine abweichende CORS_ORIGIN', () => {
+    const env = validateEnv({
+      ...gueltig,
+      CORS_ORIGIN: 'https://devboard.example,https://staging.devboard.example',
+    });
+
+    expect(env.CORS_ORIGIN.split(',')).toHaveLength(2);
+  });
+
   it('lehnt eine fehlende DATABASE_URL ab', () => {
     expect(() => validateEnv({})).toThrow(/DATABASE_URL/);
   });

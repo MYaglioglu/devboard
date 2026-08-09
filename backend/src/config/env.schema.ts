@@ -15,6 +15,10 @@ export const envSchema = z.object({
   // Umgebungsvariablen sind immer Strings. `coerce` wandelt "3000" in 3000 um.
   PORT: z.coerce.number().int().positive().default(3000),
 
+  // Welche Herkunft (Origin) darf das Backend im Browser aufrufen?
+  // Kommagetrennt, falls spaeter mehrere Umgebungen noetig sind.
+  CORS_ORIGIN: z.string().min(1).default('http://localhost:3001'),
+
   // Kein Default: Ohne Datenbank-URL darf das Backend nicht starten.
   DATABASE_URL: z
     .string()
