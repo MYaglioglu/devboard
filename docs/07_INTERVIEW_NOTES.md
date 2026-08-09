@@ -205,3 +205,68 @@ Module lassen sich als Ganzes verstehen, verschieben oder entfernen, und jedes M
 über `exports`, was es nach außen sichtbar macht.
 
 Schichten gibt es weiterhin – nur **innerhalb** des Feature-Moduls statt als oberste Gliederungsebene.
+
+---
+
+## Datenbank, ORM & Betrieb
+
+### 18. Was ist ein ORM, und wann würdest du keins nehmen?
+
+Ein ORM übersetzt zwischen Datenbanktabellen und Objekten im Code und übernimmt Schemaverwaltung,
+Migrationen und Typgenerierung.
+
+**Kein ORM** bei sehr komplexen Abfragen (mehrere Joins, Fensterfunktionen, rekursive CTEs), bei
+Datenanalyse-Lasten oder wenn das Team SQL sicher beherrscht und volle Kontrolle über den
+Ausführungsplan braucht. Auch mit ORM greift man dafür punktuell auf rohes SQL zurück – bei Prisma
+über `$queryRaw`.
+
+Was man dabei nennen sollte: ORMs machen SQL bequem, aber nicht überflüssig. Wer nie sieht, welches
+SQL erzeugt wird, findet keine N+1-Probleme.
+
+### 19. Warum sind Migrationen versionierte Dateien im Repository?
+
+Weil der Zustand der Datenbank sonst nicht reproduzierbar ist. Mit Migrationen lässt sich jede
+Umgebung – lokal, CI, Staging, Produktion – aus demselben Repository in denselben Zustand bringen.
+Dasselbe Prinzip wie bei `docker-compose.yml`: Infrastruktur als Code.
+
+**Wichtige Regel:** Eine bereits angewendete Migration wird nie bearbeitet. Korrekturen kommen als
+neue Migration obendrauf – sonst laufen die Umgebungen auseinander. Analog zu Git-Commits nach dem
+Push.
+
+Und: `prisma migrate dev` erzeugt Migrationen und kann die Datenbank zurücksetzen – nur lokal.
+Auf einem Server läuft ausschließlich `prisma migrate deploy`, das nur anwendet.
+
+### 20. Warum erzwingst du Eindeutigkeit in der Datenbank statt im Code?
+
+Weil eine Prüfung im Code eine **Race Condition** enthält: Zwischen „gibt es die E-Mail schon?" und
+dem Schreiben liegt ein Zeitfenster. Zwei gleichzeitige Registrierungen können beide die Prüfung
+bestehen und beide schreiben.
+
+Ein `UNIQUE`-Constraint wird von der Datenbank atomar durchgesetzt und kann nicht umgangen werden –
+auch nicht von einem zweiten Dienst oder einem manuellen `INSERT`. Die Prüfung im Code bleibt
+sinnvoll, aber für die **Fehlermeldung**, nicht für die Garantie.
+
+### 21. Was ist der Unterschied zwischen Liveness und Readiness?
+
+**Liveness:** Läuft der Prozess? Bei rot hilft ein Neustart.
+**Readiness:** Kann er Anfragen bedienen? Bei rot – etwa weil die Datenbank weg ist – hilft ein
+Neustart **nicht**; die Instanz gehört nur aus dem Verkehr genommen, bis die Abhängigkeit zurück ist.
+
+Werden beide vermischt, startet ein Orchestrator bei einem Datenbankausfall alle Instanzen im Kreis
+neu und verschlimmert die Lage.
+
+### 22. Warum liefert dein Health-Endpoint 503 statt 200 mit einem Fehlerfeld?
+
+Weil ein Health-Check von Maschinen ausgewertet wird – Loadbalancer, Docker, Kubernetes lesen den
+**Statuscode**. Liefert der Endpoint immer 200, bekommt eine defekte Instanz weiter Anfragen und der
+Check ist wirkungslos.
+
+### 23. Wie testest du Verhalten bei einem Datenbankausfall?
+
+Mit einer Attrappe statt der echten Datenbank. Der Service bekommt sie per Dependency Injection
+hineingereicht, im Test wird sie durch ein Objekt ersetzt, dessen `isReachable()` `false` liefert.
+Der Test braucht keinen Container, läuft in Millisekunden und prüft genau den Fall, der real kaum
+herstellbar ist.
+
+Zusätzlich habe ich es manuell verifiziert: Datenbankcontainer gestoppt → `/health` liefert 503,
+Container zurück → 200. Attrappe prüft die Logik, der manuelle Versuch die Verdrahtung.

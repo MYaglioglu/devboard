@@ -170,3 +170,82 @@ Abhängigkeiten untereinander, und vor allem beim Testen.
 ### Nächster Schritt
 
 Konfiguration mit Zod validieren (fail fast) und ein `/health`-Modul als erstes echtes Feature-Modul.
+
+---
+
+## Session 3 – 08.08.2026 · Sprint 0, Schritt 3 abgeschlossen
+
+**Thema:** Konfigurationsvalidierung, Health-Endpoint, Prisma
+**Ergebnis:** Walking Skeleton auf Backend-Seite geschlossen – HTTP → NestJS → Prisma → PostgreSQL
+
+### Was ich gelernt habe
+
+**Fail fast.** `process.env.FOO` liefert bei fehlender Variable `undefined`, ohne Fehler. Die
+Anwendung startet scheinbar normal und fällt Stunden später an ganz anderer Stelle um. Mit
+Zod-Validierung beim Start bricht sie sofort ab:
+
+```
+ERROR [ExceptionHandler] Error: Ungueltige Umgebungskonfiguration:
+  - PORT: Invalid input: expected number, received NaN
+```
+
+Ein Container, der wegen fehlender Konfiguration gar nicht hochkommt, ist besser als einer, der halb
+funktioniert.
+
+**Health-Checks sind für Maschinen.** Loadbalancer und Orchestratoren lesen den **Statuscode**, nicht
+den Body. Deshalb `503` statt `200` mit Fehlerfeld – sonst bekommt eine kaputte Instanz weiter
+Anfragen. Selbst nachgestellt: Datenbank gestoppt → 503, Datenbank zurück → 200.
+
+**Liveness vs. Readiness.** „Läuft der Prozess?" und „kann er arbeiten?" sind verschiedene Fragen mit
+verschiedenen Konsequenzen. Bei fehlender Datenbank hilft ein Neustart nicht – die Instanz gehört
+nur aus dem Verkehr genommen.
+
+**Der Moment, in dem DI sich auszahlt.** Im Unit-Test bekommt der HealthService statt der echten
+Datenbank eine Attrappe:
+
+```ts
+{ provide: PrismaService, useValue: { isReachable } }
+```
+
+Kein Container, Laufzeit in Millisekunden – und der **Ausfallfall** ist überhaupt erst prüfbar.
+Genau das war mit `new PrismaClient()` im Rumpf unmöglich. Testbarkeit ist eine Eigenschaft des
+Designs, nicht der Tests.
+
+**Prisma erzeugt SQL, das ich lesen kann.** Aus `@unique` wurde ein `CREATE UNIQUE INDEX`. Wichtig
+dabei: Die Eindeutigkeit erzwingt die **Datenbank**, nicht mein Code. Eine Prüfung im Code hat immer
+eine Lücke zwischen Prüfen und Schreiben – zwei gleichzeitige Registrierungen könnten beide
+durchkommen.
+
+**Migrationen sind unveränderlich.** Eine angewendete Migration wird nie bearbeitet; Korrekturen
+kommen als neue Migration obendrauf. Dieselbe Regel wie bei Git-Commits nach dem Push.
+`migrate dev` erzeugt, `migrate deploy` wendet nur an – nur letzteres darf auf einen Server.
+
+**Lifecycle-Hooks.** `OnModuleInit` und `OnModuleDestroy` hängen den PrismaClient an den
+Lebenszyklus der Anwendung. Ohne sauberes `$disconnect` bleiben Verbindungen im Pool hängen.
+
+### Was schwierig war
+
+Prisma 7 ist eine junge Hauptversion, und drei Dinge haben Zeit gekostet – alle drei durch **Lesen
+der Fehlermeldung** gelöst, nicht durch Raten:
+
+1. `.env` wird nicht mehr automatisch geladen → explizit in `prisma.config.ts`, zeigend auf die
+   Wurzel-`.env`.
+2. Der generierte Client ist ESM mit `import.meta`, NestJS kompiliert aber nach CommonJS →
+   `moduleFormat = "cjs"` und `importFileExtension = ""` im Generator.
+3. Der Query-Compiler wird als WASM per dynamischem Import geladen → in Jest
+   `NODE_OPTIONS=--experimental-vm-modules`, im echten Node-Prozess unproblematisch.
+
+Dazu ein TypeScript-Fehler, der direkt am gelernten Konzept hing: `TS1272` verlangt `import type`
+für Interfaces in dekorierten Signaturen – weil `emitDecoratorMetadata` einen **Laufzeitwert**
+braucht und ein Interface zur Laufzeit nicht existiert.
+
+### Offene Fragen für später
+
+- Wie sieht eine separate Testdatenbank für Integrationstests aus (eigener Container, Testcontainers)?
+- Wann lohnt `$queryRaw` statt des Prisma-Clients?
+- Wie wird `DATABASE_URL` sauber umgeschaltet, wenn das Backend selbst im Container läuft (`db` statt `localhost`)?
+
+### Nächster Schritt
+
+Sprint 0, Schritt 4: Next.js-Frontend, das `/health` aufruft und anzeigt. Damit ist das Walking
+Skeleton vollständig – von der UI bis zur Datenbank.

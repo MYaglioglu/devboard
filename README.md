@@ -1,7 +1,136 @@
 # DevBoard
 
-Willkommen zum DevBoard-Projekt.
+Eine SaaS-Plattform für Entwicklerteams – Projekte, Aufgaben, Kanban-Board und Aktivitäts-Feed,
+mit Organisationen und rollenbasiertem Zugriff.
 
-Dieses Repository dient als langfristiges Lern- und Portfolio-Projekt auf dem Weg zum Fullstack Developer.
+> **Status:** In aktiver Entwicklung. Sprint 0 (Fundament) ist zu großen Teilen abgeschlossen.
+> Der aktuelle Stand steht in [`docs/15_CHANGELOG.md`](docs/15_CHANGELOG.md).
 
-Siehe `docs/00_MASTER_PROMPT.md` als zentrale Einstiegspunkt.
+---
+
+## Warum es dieses Projekt gibt
+
+DevBoard ist ein Lern- und Referenzprojekt auf dem Weg vom Frontend- zum Fullstack-Entwickler. Es
+soll sich wie ein Produkt anfühlen, nicht wie ein Tutorial: mit Tests, Docker, CI-Pipeline,
+Staging-Umgebung und dokumentierten Architekturentscheidungen.
+
+Parallel zum Code entsteht unter [`docs/`](docs/) ein Entwicklerhandbuch – Architektur,
+Datenbankdesign, API, Security, DevOps, Glossar und ein Fehlerprotokoll.
+
+---
+
+## Stack
+
+| Bereich | Technologien |
+|---|---|
+| **Frontend** | Next.js, TypeScript, Tailwind, shadcn/ui, TanStack Query, React Hook Form, Zod |
+| **Backend** | NestJS, Prisma, PostgreSQL 18 |
+| **Infrastruktur** | Docker, Docker Compose, GitHub Actions, nginx |
+
+Warum TypeScript statt Java und warum NestJS statt Express: siehe ADR-001 und ADR-002 in
+[`docs/16_DECISIONS.md`](docs/16_DECISIONS.md).
+
+---
+
+## Umfang – bewusst zugeschnitten
+
+Gebaut werden **vier Kern-Features** plus **eine echte Integration**:
+
+1. Authentifizierung und rollenbasierter Zugriff
+2. Organisationen, Mitgliedschaften und Mandantentrennung
+3. Projekte, Aufgaben und Kanban-Board
+4. Dashboard und Aktivitäts-Feed
+5. GitHub-Integration über Webhooks
+
+Monitoring, Datei-Uploads, Volltextsuche, Benachrichtigungen und ein Administrationsbereich sind
+**bewusst nicht** Teil des Umfangs. Die Begründung steht in
+[`docs/06_BACKLOG.md`](docs/06_BACKLOG.md) und ADR-003.
+
+Der Grund für den Schnitt: Vier fertige Features belegen mehr als zwölf angefangene.
+
+---
+
+## Lokal starten
+
+**Voraussetzungen:** Node 24+, Docker Desktop (mit aktivierter Hardware-Virtualisierung), Git
+
+```bash
+git clone https://github.com/MYaglioglu/devboard.git
+cd devboard
+```
+
+```bash
+cp .env.example .env    # PowerShell: Copy-Item .env.example .env
+```
+
+Danach in der `.env` die Platzhalter durch eigene Werte ersetzen.
+
+```bash
+docker compose up -d
+```
+
+```bash
+cd backend
+npm install
+npm run db:migrate
+npm run start:dev
+```
+
+Prüfen:
+
+```bash
+curl http://localhost:3000/health
+```
+
+```json
+{ "status": "ok", "uptimeSeconds": 12, "timestamp": "...", "checks": { "database": "up" } }
+```
+
+Liefert der Endpoint `503` mit `"database": "down"`, läuft der Datenbank-Container nicht.
+
+---
+
+## Tests
+
+```bash
+cd backend
+npm test         # Unit-Tests
+npm run test:e2e # E2E-Tests
+npm run lint
+```
+
+---
+
+## Dokumentation
+
+| Datei | Inhalt |
+|---|---|
+| [01_ROADMAP.md](docs/01_ROADMAP.md) | Sprints mit Definition of Done |
+| [02_ARCHITECTURE.md](docs/02_ARCHITECTURE.md) | Schichten, Dependency Injection, Modulstruktur |
+| [03_CODING_STANDARDS.md](docs/03_CODING_STANDARDS.md) | Konventionen und Regeln |
+| [04_LEARNING_JOURNAL.md](docs/04_LEARNING_JOURNAL.md) | Lerntagebuch pro Session |
+| [05_FEATURES.md](docs/05_FEATURES.md) | verbindlicher Umfang mit Abnahmekriterien |
+| [06_BACKLOG.md](docs/06_BACKLOG.md) | begründet zurückgestellte Features |
+| [07_INTERVIEW_NOTES.md](docs/07_INTERVIEW_NOTES.md) | Fachfragen mit Antworten |
+| [08_DATABASE.md](docs/08_DATABASE.md) | Schema, Migrationen, Indizes |
+| [09_API.md](docs/09_API.md) | Endpoints |
+| [10_SECURITY.md](docs/10_SECURITY.md) | Maßnahmen und offene Punkte |
+| [11_DEVOPS.md](docs/11_DEVOPS.md) | Docker, Compose, CI |
+| [12_TESTING.md](docs/12_TESTING.md) | Teststrategie |
+| [16_DECISIONS.md](docs/16_DECISIONS.md) | Architekturentscheidungen (ADRs) |
+| [17_MISTAKES_AND_LESSONS.md](docs/17_MISTAKES_AND_LESSONS.md) | Fehlerprotokoll mit Learnings |
+
+---
+
+## Projektstruktur
+
+```
+backend/        NestJS-Anwendung
+  prisma/       Datenmodell und Migrationen
+  src/          Feature-Module
+  test/         E2E-Tests
+frontend/       Next.js-Anwendung (Sprint 0, Schritt 4)
+docker/         Dockerfiles und nginx-Konfiguration (Sprint 6)
+docs/           Entwicklerhandbuch
+.github/        CI-Workflows (Sprint 0, Schritt 5)
+```

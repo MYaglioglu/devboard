@@ -8,6 +8,11 @@ Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- Prisma 7 mit PostgreSQL-Driver-Adapter, erste Migration (`users`)
+- `GET /health` prüft die echte Datenbankverbindung, liefert 503 bei Ausfall
+- Umgebungsvariablen werden beim Start mit Zod validiert (fail fast)
+- ADR-006: Prisma als ORM
+- Datenbank-, API- und Testing-Dokumentation; Interviewfragen 18–23
 - NestJS-Grundgerüst in `backend/` (verifiziert: HTTP 200 auf Port 3000)
 - ADR-005: Ein Repository, zwei getrennte npm-Projekte, npm als Paketmanager
 - Architekturdokument: Schichten, Dependency Injection, feature-basierte Modulstruktur
