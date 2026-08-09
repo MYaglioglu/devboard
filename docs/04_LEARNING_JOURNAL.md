@@ -318,3 +318,78 @@ Weniger die Technik als die **Anzahl gleichzeitig laufender Dinge**: Datenbank-C
 
 Sprint 0, Schritt 5: ESLint/Prettier-Gates, Husky, und die GitHub-Actions-Pipeline, die Lint, Tests
 und Build bei jedem Push ausführt. Damit ist Sprint 0 abgeschlossen.
+
+---
+
+## Session 5 – 09.08.2026 · Sprint 0 abgeschlossen
+
+**Thema:** Git-Hooks, CI-Pipeline, Branch-Schutz
+**Ergebnis:** Pipeline im ersten Anlauf grün (1 min 1 s), `main` geschützt
+
+### Was ich gelernt habe
+
+**Ein Git-Hook ist Bequemlichkeit, keine Garantie.**
+Husky läuft auf meinem Rechner und lässt sich mit `--no-verify` umgehen. Auf einem fremden Rechner
+ist er womöglich gar nicht installiert. Die eigentliche Absicherung ist die Pipeline, weil sie auf
+GitHubs Servern läuft und niemand sie überspringen kann.
+
+Daraus folgt die Arbeitsteilung: Hook macht das **Schnelle** (Formatierung, zwei Sekunden), Pipeline
+das **Gründliche** (typbewusstes Linting, alle Tests, Build). Ein Hook, der zwei Minuten braucht,
+wird nach einer Woche abgeschaltet – und dann schützt gar nichts mehr.
+
+**`npm ci` ist nicht `npm install` mit anderem Namen.**
+`ci` löscht `node_modules`, installiert exakt die Versionen aus dem Lockfile und **bricht ab**, wenn
+`package.json` und Lockfile nicht zusammenpassen. `install` würde das Lockfile stillschweigend
+anpassen. In einer Pipeline ist genau das falsch: Das Ergebnis wäre nicht mehr reproduzierbar, und
+zwei Läufe könnten unterschiedliche Abhängigkeiten installieren.
+
+**In der CI wird nicht automatisch repariert.**
+Mein lokales `lint` läuft mit `--fix`. In der Pipeline wäre das schädlich – sie würde Fehler
+heimlich beheben und grün werden, obwohl der committete Code kaputt ist. Deshalb ein eigenes
+`lint:ci` ohne `--fix`, dafür mit `--max-warnings 0`: Auch Warnungen machen den Lauf rot. Sonst
+sammeln sich Warnungen an, bis sie niemand mehr liest.
+
+**Service-Container in der Pipeline.**
+Der Backend-Job startet einen echten `postgres:18-alpine` für seine Laufzeit. Kein Mock – die
+E2E-Tests laufen gegen dieselbe Datenbankversion wie lokal. Der **Healthcheck ist Pflicht**: Ohne
+ihn starten die Tests, bevor Postgres Verbindungen annimmt. Genau dasselbe Problem wie lokal bei
+`docker compose`, nur an anderer Stelle.
+
+**Erst der Branch-Schutz macht die Pipeline wirksam.**
+Ohne ihn kann man eine rote Pipeline schlicht ignorieren. Und eine Einstellung, die ich vorher nicht
+bedacht hatte: Pflicht-Reviews würden mich komplett aussperren, weil GitHub niemanden den eigenen
+Pull Request freigeben lässt.
+
+Ebenso wichtig: `enforce_admins` steht auf `false`, also kann ich als Eigentümer weiterhin direkt
+auf `main` pushen. Der Schutz ist also nur so stark wie meine eigene Disziplin – solange ich ihn
+nicht auch für Admins einschalte.
+
+### Was schwierig war
+
+Nichts Technisches – der Lauf war beim ersten Versuch grün. Schwieriger war zu verstehen, **warum**
+manche Voreinstellungen in der Pipeline anders sein müssen als lokal. `--fix` ist lokal praktisch
+und in der CI ein Fehler. `npm install` ist lokal richtig und in der CI falsch. Die Regel dahinter:
+**Lokal optimiert man auf Bequemlichkeit, in der Pipeline auf Reproduzierbarkeit und Ehrlichkeit.**
+
+### Der Bezug zur eigenen Geschichte
+
+Genau das hat bei der lahmgelegten Live-Seite gefehlt: keine Tests, keine Pipeline, keine
+Staging-Umgebung, kein Gate vor dem Deployment. Zurücksetzen ging nur, weil Git-Historie,
+Vercel-Historie und Snapshots vorhanden waren – also durch Glück beim Aufräumen, nicht durch
+Vorsorge.
+
+Ab jetzt kommt in DevBoard nichts nach `main`, ohne dass Lint, Unit-Tests, E2E-Tests und Build für
+Backend und Frontend grün sind. Das ist der Unterschied zwischen „ich würde es heute anders machen"
+und einem Beleg im Repository.
+
+### Offene Fragen für später
+
+- Wie kommt eine Testdatenbank pro Testlauf zustande, ohne dass Tests sich gegenseitig stören?
+- Wann lohnt sich eine Abdeckungsschwelle in der CI – und welche Zahl ist sinnvoll?
+- Wie sieht der Schritt aus, der nach grüner Pipeline automatisch auf Staging deployt?
+
+### Nächster Schritt
+
+**Sprint 1: Authentifizierung.** Registrierung, Login, Passwort-Hashing mit argon2, JWT mit
+Access- und Refresh-Token, Guards, geschützte Seiten im Frontend – der erste vollständige vertikale
+Slice von der Datenbank bis zur UI.

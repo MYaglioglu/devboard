@@ -8,6 +8,12 @@ Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Sprint 0 abgeschlossen**
+- GitHub-Actions-Pipeline: Lint, Unit-Tests, E2E-Tests und Build für Backend und Frontend,
+  mit PostgreSQL-18-Service-Container
+- Husky + lint-staged: Formatierung der geänderten Dateien vor jedem Commit
+- Branch-Schutz auf `main`: Pflicht-Checks `Backend` und `Frontend`, kein Force-Push
+- Interviewfragen 29–35 zu CI/CD, Glossarteil CI/CD
 - Next.js-Frontend auf Port 3001 mit Statusseite, die `/health` abfragt
 - CORS im Backend über `CORS_ORIGIN` konfigurierbar, restriktiv statt `*`
 - Walking Skeleton geschlossen: Browser → Next.js → NestJS → Prisma → PostgreSQL

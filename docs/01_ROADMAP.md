@@ -20,10 +20,12 @@ Postgres im Container, dazu Tests und eine grüne CI-Pipeline.
 - [x] NestJS läuft, `/health` prüft die echte DB-Verbindung
 - [x] Prisma-Schema angelegt, erste Migration ausgeführt
 - [x] Next.js zeigt einen Wert an, der nachweislich aus Postgres kommt
-- [ ] ESLint, Prettier, Husky + lint-staged aktiv
-- [ ] GitHub Actions: Lint, Test und Build laufen grün (mit Postgres-Service-Container)
+- [x] ESLint, Prettier, Husky + lint-staged aktiv
+- [x] GitHub Actions: Lint, Test und Build laufen grün (mit Postgres-Service-Container)
 - [x] ADR-001 bis ADR-006 in `16_DECISIONS.md` geschrieben
-- [ ] Branch-Schutz auf `main`: kein direkter Push, kein Merge ohne grüne Pipeline
+- [x] Branch-Schutz auf `main`: Pflicht-Checks, kein Force-Push
+
+**Abgeschlossen am 09.08.2026.** Pipeline im ersten Durchlauf grün (1 min 1 s).
 
 ---
 

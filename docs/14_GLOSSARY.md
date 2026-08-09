@@ -253,6 +253,46 @@ Ereignis-Handler und Zustand daran knüpft.
 
 ---
 
+## CI/CD
+
+**Continuous Integration (CI)** – Jede Änderung wird automatisch gebaut und geprüft, bevor sie in den
+Hauptzweig gelangt.
+
+**Continuous Delivery** – Jede grüne Änderung ist jederzeit ausrollbar; der letzte Schritt in
+Produktion wird manuell freigegeben.
+
+**Continuous Deployment** – Wie oben, nur ohne manuelle Freigabe.
+
+**Pipeline / Workflow** – Die Abfolge automatisierter Schritte. Bei GitHub Actions in
+`.github/workflows/` definiert.
+
+**Job** – Abschnitt einer Pipeline, der auf einem eigenen Rechner läuft. Jobs ohne Abhängigkeiten
+laufen parallel.
+
+**Runner** – Die Maschine, auf der ein Job ausgeführt wird.
+
+**Service-Container** – Zusätzlicher Container, der für die Dauer eines Jobs läuft, etwa eine
+Datenbank für Integrationstests. Braucht einen Healthcheck, sonst starten die Tests zu früh.
+
+**`npm ci`** – Installiert exakt die Versionen aus dem Lockfile und bricht ab, wenn `package.json`
+und Lockfile auseinanderlaufen. In Pipelines Pflicht; `npm install` würde das Lockfile still
+verändern.
+
+**Git-Hook** – Skript, das Git zu bestimmten Zeitpunkten lokal ausführt, z. B. `pre-commit`. Mit
+`--no-verify` umgehbar – deshalb Bequemlichkeit, keine Garantie.
+
+**Husky** – Werkzeug, das Git-Hooks im Repository versioniert und für alle installiert.
+
+**lint-staged** – Führt Befehle nur auf den **gestagten** Dateien aus, statt auf dem ganzen Projekt.
+Hält den Hook schnell.
+
+**Branch-Schutz** – Regeln auf einem Branch: Pflicht-Checks, keine Force-Pushes, kein direkter Push.
+Erst dadurch wird eine Pipeline verbindlich.
+
+**Required Status Check** – Ein Pipeline-Job, der grün sein muss, bevor gemergt werden darf.
+
+---
+
 ## PostgreSQL
 
 **`psql`** – Kommandozeilen-Client für PostgreSQL.

@@ -1,9 +1,13 @@
 # DevBoard
 
+[![CI](https://github.com/MYaglioglu/devboard/actions/workflows/ci.yml/badge.svg)](https://github.com/MYaglioglu/devboard/actions/workflows/ci.yml)
+
 Eine SaaS-Plattform für Entwicklerteams – Projekte, Aufgaben, Kanban-Board und Aktivitäts-Feed,
 mit Organisationen und rollenbasiertem Zugriff.
 
-> **Status:** In aktiver Entwicklung. Sprint 0 (Fundament) ist zu großen Teilen abgeschlossen.
+> **Status:** In aktiver Entwicklung. Sprint 0 (Fundament) ist abgeschlossen – lauffähige
+> Umgebung, Datenbank, Backend, Frontend, Tests und CI-Pipeline stehen. Als Nächstes folgt
+> Sprint 1 (Authentifizierung).
 > Der aktuelle Stand steht in [`docs/15_CHANGELOG.md`](docs/15_CHANGELOG.md).
 
 ---
@@ -90,14 +94,31 @@ Liefert der Endpoint `503` mit `"database": "down"`, läuft der Datenbank-Contai
 
 ---
 
-## Tests
+Das Frontend startet separat:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Danach läuft die Oberfläche auf `http://localhost:3001` und zeigt den Systemstatus.
+
+---
+
+## Tests und Qualitätssicherung
 
 ```bash
 cd backend
-npm test         # Unit-Tests
-npm run test:e2e # E2E-Tests
+npm test          # Unit-Tests
+npm run test:e2e  # E2E-Tests
 npm run lint
 ```
+
+Bei jedem Pull Request laufen Lint, Tests und Build für Backend und Frontend automatisch in
+GitHub Actions – inklusive eines echten PostgreSQL-Service-Containers für die E2E-Tests. `main` ist
+geschützt: kein Merge ohne grüne Pipeline. Details in
+[`docs/11_DEVOPS.md`](docs/11_DEVOPS.md).
 
 ---
 

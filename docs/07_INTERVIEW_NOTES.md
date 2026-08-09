@@ -330,3 +330,81 @@ Es macht eine Umgebungsvariable im Browser-Bundle verfügbar – der Wert wird b
 eingebacken. Alles damit Markierte ist öffentlich lesbar. Geheimnisse dürfen dort nie stehen.
 
 Praktische Folge: Ändert sich der Wert, genügt kein Neustart – es braucht einen neuen Build.
+
+---
+
+## CI/CD & Qualitätssicherung
+
+### 29. Was ist Continuous Integration, und was bringt sie konkret?
+
+CI bedeutet, dass jede Änderung automatisch gebaut und geprüft wird, bevor sie in den
+Hauptentwicklungszweig gelangt – bei jedem Push und jedem Pull Request.
+
+Der konkrete Nutzen ist nicht „Automatisierung", sondern **schnelles Feedback am richtigen Ort**.
+Ein Fehler, der im Pull Request auffällt, kostet Minuten. Derselbe Fehler in Produktion kostet
+Stunden, oft unter Zeitdruck und mit Publikum.
+
+In DevBoard laufen bei jedem PR zwei parallele Jobs: Backend (Lint, Unit-Tests, E2E-Tests gegen
+einen echten PostgreSQL-Service-Container, Build) und Frontend (Lint, Build). Beide müssen grün
+sein, sonst lässt sich der PR nicht mergen.
+
+### 30. Warum `npm ci` und nicht `npm install` in der Pipeline?
+
+`npm ci` löscht `node_modules`, installiert exakt die Versionen aus dem Lockfile und **schlägt
+fehl**, wenn `package.json` und Lockfile auseinanderlaufen. `npm install` würde das Lockfile
+stillschweigend anpassen.
+
+In einer Pipeline ist das entscheidend: Ohne `ci` könnten zwei Läufe unterschiedliche
+Abhängigkeiten installieren, und der Build wäre nicht mehr reproduzierbar. Nebeneffekt: `ci` ist
+schneller, weil es keine Auflösung von Versionsbereichen vornimmt.
+
+### 31. Reichen Git-Hooks nicht aus? Wozu dann noch eine Pipeline?
+
+Nein. Ein Hook läuft auf dem Rechner der Entwicklerin, lässt sich mit `--no-verify` überspringen und
+ist auf einem neuen Rechner erst nach `npm install` überhaupt vorhanden. **Ein Hook ist
+Bequemlichkeit, keine Garantie.**
+
+Die Pipeline läuft auf fremder Infrastruktur, für alle gleich und ohne Umgehungsmöglichkeit. Deshalb
+die Arbeitsteilung: Hook macht das Schnelle (Formatierung, Sekunden), Pipeline das Gründliche
+(Linting, Tests, Build). Ein Hook, der Minuten braucht, wird abgeschaltet – und dann schützt gar
+nichts mehr.
+
+### 32. Warum läuft der Linter in der CI ohne `--fix`?
+
+Weil eine Pipeline Fehler **melden** und nicht heimlich beheben soll. Mit `--fix` würde sie den Code
+im Durchlauf reparieren und grün werden, obwohl der committete Stand kaputt ist – die Änderung wäre
+nirgends gespeichert.
+
+Zusätzlich `--max-warnings 0`: Auch Warnungen machen den Lauf rot. Sonst sammeln sich Warnungen über
+Monate an, bis sie niemand mehr liest – und dann geht auch die eine unter, die wichtig war.
+
+### 33. Warum ein echter Datenbank-Container in der CI statt eines Mocks?
+
+Weil Unit-Tests mit Attrappen bereits die Logik abdecken. Die E2E-Tests sollen genau das prüfen, was
+Attrappen **nicht** können: dass Migrationen durchlaufen, das Schema stimmt, der Treiber
+funktioniert und die echte Datenbankversion sich wie erwartet verhält.
+
+Wichtiges Detail: Der Service-Container braucht einen **Healthcheck**. Ohne ihn starten die Tests,
+bevor Postgres Verbindungen annimmt – dasselbe Startreihenfolge-Problem wie lokal bei Docker
+Compose.
+
+### 34. Was bringt Branch-Schutz, wenn es schon eine Pipeline gibt?
+
+Erst der Branch-Schutz macht die Pipeline verbindlich. Ohne ihn kann man eine rote Pipeline
+ignorieren und trotzdem mergen oder direkt auf `main` pushen.
+
+Konfiguriert sind: Pflicht-Checks (`Backend`, `Frontend`), der Branch muss aktuell mit `main` sein,
+kein Force-Push, kein Löschen.
+
+**Bewusst nicht aktiv:** Pflicht-Reviews – GitHub lässt niemanden den eigenen Pull Request
+freigeben, bei einer Einzelperson würde das jeden Merge blockieren. Sobald ein zweiter Mensch
+mitarbeitet, wird es eingeschaltet.
+
+### 35. Was wäre der nächste Schritt Richtung Continuous Delivery?
+
+Nach grüner Pipeline automatisch auf **Staging** deployen, dort verifizieren, und Produktion per
+manueller Freigabe – Continuous Delivery statt Continuous Deployment.
+
+Dafür nötig: Multi-Stage-Dockerfiles, ein Registry-Push der gebauten Images, getrennte Umgebungen
+mit eigener Konfiguration, Secrets aus dem Secret-Store, und eine Rollback-Strategie. Das ist
+Sprint 6 in DevBoard.
