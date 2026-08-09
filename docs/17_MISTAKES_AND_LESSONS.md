@@ -100,3 +100,47 @@ also muss man es hinschreiben: `import type { HealthStatus } from './health.serv
 **Learning:** Der Fehler wirkte auf den ersten Blick wie Compiler-Schikane, hing aber direkt an dem
 Mechanismus, über den NestJS überhaupt weiß, was es injizieren muss. Fehlermeldungen, die man nicht
 versteht, decken oft genau die Konzepte auf, die man noch nicht verstanden hat.
+
+---
+
+## 2026-08-09 – Push und Merge verkettet, PR mit veraltetem Stand gemergt
+
+**Symptom:** Nach `git push` und `gh pr merge --rebase --delete-branch` fehlten auf `main` die
+letzten beiden Commits. Im Arbeitsverzeichnis war die gesamte Prisma-Integration verschwunden – die
+Dateien standen wieder auf dem Stand davor.
+
+**Ursache:** Beide Befehle liefen in einem einzigen Block ohne Prüfung dazwischen. GitHub hat den
+Pull Request mit dem Stand gemergt, den es zu diesem Zeitpunkt kannte – ohne die frisch gepushten
+Commits. `--delete-branch` hat den Branch anschließend entfernt, samt der beiden Commits, die nur
+dort hingen.
+
+**Behebung:**
+
+```bash
+git reflog                                  # Commits gefunden: d93ad36, 28402ee
+git switch -c feat/prisma-health            # neuer Branch von main
+git cherry-pick d93ad36 28402ee             # Commits uebertragen
+npm run build; npm test; npm run test:e2e   # verifiziert
+git push -u origin feat/prisma-health
+git log --oneline origin/feat/prisma-health # Push geprueft
+gh pr view 3 --json headRefOid              # PR-Kopf mit lokalem Stand verglichen
+gh pr merge 3 --rebase --delete-branch
+git log --oneline -3                        # Ergebnis geprueft
+```
+
+**Learnings:**
+
+1. **Push und Merge nie verketten.** Zwischen beiden gehört eine Prüfung: Zeigt der PR wirklich auf
+   den Commit, den ich meine? `gh pr view <nr> --json headRefOid` beantwortet das in einer Sekunde.
+2. **Zwischen jedem unumkehrbaren Schritt verifizieren.** Es ist derselbe Reflex wie bei
+   `docker compose ps` – nicht annehmen, nachsehen. Nur ist der Preis hier höher, weil
+   `--delete-branch` den Sicherheitsgurt entfernt.
+3. **Nichts ist verloren, solange der Reflog existiert.** Git protokolliert jede Bewegung von `HEAD`.
+   Commits ohne Branch verschwinden nicht sofort, sondern werden erst nach Wochen von der
+   Garbage Collection abgeräumt. `git reflog` ist der erste Griff, wenn Arbeit „weg" ist – nicht
+   Panik und nicht Neuschreiben.
+4. **`cherry-pick` überträgt einzelne Commits** auf einen anderen Branch. Hier ideal: Die Inhalte des
+   Ziel-Branches waren identisch, deshalb ließen sich beide Commits konfliktfrei aufsetzen.
+5. **Automatisierung ersetzt kein Nachsehen.** Mehrere Befehle in einem Block sparen Sekunden und
+   kosten im Fehlerfall Stunden. Bei allem, was auf einem Server oder Remote wirkt, gilt: ein
+   Schritt, eine Prüfung.
