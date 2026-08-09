@@ -1,0 +1,35 @@
+// Datenmodell von DevBoard.
+// Aenderungen hier erzeugen per `npm run db:migrate` eine versionierte
+// SQL-Migration unter prisma/migrations/.
+
+generator client {
+  provider = "prisma-client"
+
+  // Der Client wird als TypeScript erzeugt und muss mitkompiliert werden.
+  // Deshalb liegt er unter src/ - alles ausserhalb landet nicht in dist/.
+  output = "../src/generated/prisma"
+
+  // NestJS kompiliert nach CommonJS. Ohne diese Zeile erzeugt Prisma 7 ESM
+  // mit `import.meta`, woran sowohl Jest als auch der Node-Start scheitern.
+  moduleFormat = "cjs"
+
+  // Ohne diese Zeile schreibt Prisma ".js" an interne Importe (ESM-Stil).
+  // Jest kann das im CommonJS-Modus nicht aufloesen.
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+  // Die URL kommt aus prisma.config.ts (Prisma 7), nicht mehr aus dieser Datei.
+}
+
+/// Ein Benutzerkonto. Wird in Sprint 1 um Authentifizierung erweitert.
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}

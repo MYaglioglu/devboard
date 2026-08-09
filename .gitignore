@@ -37,6 +37,9 @@ test-results/
 prisma/*.db
 prisma/*.db-journal
 
+# Prisma-Client wird aus schema.prisma generiert - gehoert nicht ins Repo
+backend/src/generated/
+
 # Editor / IDE
 .vscode/*
 !.vscode/extensions.json
