@@ -224,6 +224,35 @@ prüfbar, die real kaum herstellbar sind (z. B. Datenbankausfall).
 
 ---
 
+## Frontend & Browser
+
+**Origin (Herkunft)** – Kombination aus Schema, Host und Port. Weicht eines ab, ist es eine fremde
+Herkunft – `http://localhost:3000` und `http://localhost:3001` sind verschieden.
+
+**Same-Origin-Policy** – Grundregel des Browsers: Ein Skript darf die Antwort einer fremden Herkunft
+nicht auslesen.
+
+**CORS (Cross-Origin Resource Sharing)** – Der Mechanismus, mit dem ein **Server** einer fremden
+Herkunft den Zugriff erlaubt, über den Header `Access-Control-Allow-Origin`. Wird immer im Backend
+konfiguriert, nie im Frontend.
+
+**Preflight** – Vorab-Anfrage mit der Methode `OPTIONS`, die der Browser bei „nicht einfachen"
+Anfragen (z. B. `PUT`, `DELETE`, eigene Header) schickt, bevor er die eigentliche sendet.
+
+**Server Component** – React-Komponente, die auf dem Server gerendert wird. Kein CORS, Zugriff auf
+Geheimnisse möglich, kein Zustand und keine Browser-APIs.
+
+**Client Component** (`'use client'`) – Läuft im Browser. Zustand, Effekte und Interaktion möglich –
+und CORS gilt.
+
+**`NEXT_PUBLIC_`** – Präfix, das eine Umgebungsvariable ins Browser-Bundle einbackt. Alles damit
+Markierte ist öffentlich lesbar; Änderungen erfordern einen neuen Build.
+
+**Hydration** – Der Vorgang, bei dem React im Browser das servergerenderte HTML „belebt", also
+Ereignis-Handler und Zustand daran knüpft.
+
+---
+
 ## PostgreSQL
 
 **`psql`** – Kommandozeilen-Client für PostgreSQL.

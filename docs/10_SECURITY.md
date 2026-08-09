@@ -34,6 +34,22 @@ Condition zwischen Prüfen und Schreiben.
 
 `postgres:18-alpine` statt `latest`. Verhindert unbemerkte Versionssprünge – siehe ADR-004.
 
+### CORS restriktiv konfiguriert
+
+Das Backend erlaubt ausschließlich die in `CORS_ORIGIN` genannten Herkünfte – lokal
+`http://localhost:3001`. **Kein `origin: '*'`**: Das erlaubte jeder beliebigen Webseite, im Namen
+angemeldeter Nutzer Anfragen zu stellen und die Antworten auszulesen. In Verbindung mit
+`credentials: true` verbietet die Spezifikation den Platzhalter ohnehin.
+
+Wichtige Einordnung fürs Verständnis: CORS verhindert das **Auslesen** fremder Antworten, nicht das
+Absenden der Anfrage. Gegen unerwünschte schreibende Aufrufe schützen `SameSite`-Cookies und
+CSRF-Maßnahmen – das wird in Sprint 1 mit der Authentifizierung relevant.
+
+### Keine Geheimnisse im Frontend-Bundle
+
+Variablen mit `NEXT_PUBLIC_`-Präfix landen beim Build im Browser-Bundle und sind öffentlich lesbar.
+Dort steht ausschließlich die API-Basis-URL.
+
 ---
 
 ## Bekannte offene Punkte
@@ -43,7 +59,6 @@ Condition zwischen Prüfen und Schreiben.
 | Port 5432 ist nach außen veröffentlicht | In Produktion hinge die Datenbank am Internet, geschützt nur durch ein Passwort | Sprint 6 |
 | Kein Rate Limiting | Brute-Force auf Login möglich | Sprint 1 |
 | Kein Helmet / Security-Header | XSS, Clickjacking | Sprint 1 |
-| CORS nicht konfiguriert | sobald das Frontend dazukommt | Sprint 0, Schritt 4 |
 | Keine einheitlichen Fehlerantworten | Stacktraces könnten nach außen gelangen | Sprint 1 |
 | Secrets aus `.env`-Datei statt Secret-Store | in Produktion unzureichend | Sprint 6 |
 

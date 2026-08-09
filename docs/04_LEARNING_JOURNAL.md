@@ -249,3 +249,72 @@ braucht und ein Interface zur Laufzeit nicht existiert.
 
 Sprint 0, Schritt 4: Next.js-Frontend, das `/health` aufruft und anzeigt. Damit ist das Walking
 Skeleton vollständig – von der UI bis zur Datenbank.
+
+---
+
+## Session 4 – 09.08.2026 · Sprint 0, Schritt 4
+
+**Thema:** Next.js-Frontend, CORS, Git-Wiederherstellung
+**Ergebnis:** Walking Skeleton vollständig – Browser → Next.js → NestJS → Prisma → PostgreSQL
+
+### Was ich gelernt habe
+
+**CORS – und zwar durch Erleben, nicht durch Lesen.**
+Die Seite lud, blieb bei „Frage Backend ab …" hängen, und im JavaScript kam nur an:
+
+```
+Failed to fetch
+```
+
+Der eigentliche Grund stand **nur in der Browser-Konsole**:
+
+```
+Access to fetch at 'http://localhost:3000/health' from origin 'http://localhost:3001'
+has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present
+```
+
+Zwei Erkenntnisse daraus:
+
+1. **Ein abweichender Port genügt für eine „fremde Herkunft".** Nicht nur eine andere Domain.
+2. **Der Browser verrät dem Skript absichtlich nichts.** Würde er den Grund durchreichen, wäre die
+   Sperre umgehbar. Deshalb ist bei `Failed to fetch` der erste Griff **F12**, nicht der Debugger.
+
+Behoben wird es im **Backend**, nicht im Frontend – der Server entscheidet, wer ihn aufrufen darf.
+Und bewusst nicht mit `origin: '*'`: Das erlaubte jeder beliebigen Webseite, im Namen angemeldeter
+Nutzer Anfragen zu stellen.
+
+**Server Components lösen kein CORS aus**, weil kein Browser beteiligt ist. Ein CORS-Fehler dadurch
+zu „beheben", dass man die Anfrage auf den Server verschiebt, ist manchmal richtig – oft aber nur
+eine Verlagerung.
+
+**`NEXT_PUBLIC_` bedeutet öffentlich.** Solche Variablen werden beim Build ins Browser-Bundle
+eingebacken und sind für jeden lesbar. Dort gehört nie ein Geheimnis hinein.
+
+**Next.js 16 cacht `fetch` nicht mehr standardmäßig.** In Next 13/14 war es umgekehrt – eine
+Umstellung, die viele Stunden gekostet hat, weil Daten scheinbar veraltet blieben. Nachgelesen habe
+ich das in der mitgelieferten Dokumentation unter `node_modules/next/dist/docs/`, nicht im Netz.
+Bei neuen Hauptversionen ist die lokale Doku verlässlicher als Suchergebnisse.
+
+**Git: nichts ist verloren, solange der Reflog existiert.**
+Zwei Commits verschwanden, weil Push und PR-Merge in einem Zug liefen (Details in
+`17_MISTAKES_AND_LESSONS.md`). `git reflog` fand sie, `git cherry-pick` holte sie zurück. Neu
+gelernt: `cherry-pick` überträgt einzelne Commits auf einen anderen Branch, und Commits ohne Branch
+werden nicht sofort gelöscht.
+
+### Was schwierig war
+
+Weniger die Technik als die **Anzahl gleichzeitig laufender Dinge**: Datenbank-Container, Backend auf
+3000, Frontend auf 3001. Wenn etwas nicht geht, ist die erste Frage nicht „wo ist der Bug", sondern
+**„läuft überhaupt alles?"**. Drei Prozesse, drei Prüfungen.
+
+### Offene Fragen für später
+
+- Wann lohnt sich ein Server-Component-Fetch, wann einer im Client?
+- Wie kommt TanStack Query ins Spiel, und was ersetzt es an dem `useEffect` von heute?
+- Wie sieht die CORS-Konfiguration in Produktion aus, wenn Frontend und Backend hinter demselben
+  nginx auf derselben Domain liegen – braucht man sie dann überhaupt noch?
+
+### Nächster Schritt
+
+Sprint 0, Schritt 5: ESLint/Prettier-Gates, Husky, und die GitHub-Actions-Pipeline, die Lint, Tests
+und Build bei jedem Push ausführt. Damit ist Sprint 0 abgeschlossen.

@@ -8,6 +8,11 @@ Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- Next.js-Frontend auf Port 3001 mit Statusseite, die `/health` abfragt
+- CORS im Backend über `CORS_ORIGIN` konfigurierbar, restriktiv statt `*`
+- Walking Skeleton geschlossen: Browser → Next.js → NestJS → Prisma → PostgreSQL
+- Fehlerprotokoll: Push und Merge nie verketten (Wiederherstellung über reflog und cherry-pick)
+- Interviewfragen 24–28 zu CORS, Server/Client Components und `NEXT_PUBLIC_`
 - Prisma 7 mit PostgreSQL-Driver-Adapter, erste Migration (`users`)
 - `GET /health` prüft die echte Datenbankverbindung, liefert 503 bei Ausfall
 - Umgebungsvariablen werden beim Start mit Zod validiert (fail fast)
