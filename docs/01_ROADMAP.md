@@ -15,14 +15,15 @@ Eine hauchdünne Scheibe durch alle Schichten, die von Tag 1 läuft: Next.js →
 Postgres im Container, dazu Tests und eine grüne CI-Pipeline.
 
 **Definition of Done**
-- [ ] Git-Repository initialisiert, Branch-Strategie und Commit-Konvention dokumentiert
-- [ ] `docker compose up` startet PostgreSQL mit persistentem Volume
-- [ ] NestJS läuft, `/health` prüft die echte DB-Verbindung
-- [ ] Prisma-Schema angelegt, erste Migration ausgeführt
-- [ ] Next.js zeigt einen Wert an, der nachweislich aus Postgres kommt
+- [x] Git-Repository initialisiert, Branch-Strategie und Commit-Konvention dokumentiert
+- [x] `docker compose up` startet PostgreSQL mit persistentem Volume
+- [x] NestJS läuft, `/health` prüft die echte DB-Verbindung
+- [x] Prisma-Schema angelegt, erste Migration ausgeführt
+- [x] Next.js zeigt einen Wert an, der nachweislich aus Postgres kommt
 - [ ] ESLint, Prettier, Husky + lint-staged aktiv
 - [ ] GitHub Actions: Lint, Test und Build laufen grün (mit Postgres-Service-Container)
-- [ ] ADR-001 bis ADR-006 in `16_DECISIONS.md` geschrieben
+- [x] ADR-001 bis ADR-006 in `16_DECISIONS.md` geschrieben
+- [ ] Branch-Schutz auf `main`: kein direkter Push, kein Merge ohne grüne Pipeline
 
 ---
 

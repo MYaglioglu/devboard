@@ -1,0 +1,114 @@
+name: CI
+
+# Laeuft bei jedem Push auf main und bei jedem Pull Request.
+# Der PR-Trigger ist der wichtige: Er blockiert spaeter den Merge, wenn etwas rot ist.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Ein laufender Durchlauf wird abgebrochen, wenn neue Commits nachkommen.
+# Spart Laufzeit und Wartezeit bei schneller Aufeinanderfolge.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+
+    # Ein echter PostgreSQL-Container fuer die Dauer des Jobs.
+    # Kein Mock: Die E2E-Tests sollen gegen dieselbe Datenbankversion laufen
+    # wie lokal und spaeter in Produktion.
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: devboard
+          POSTGRES_PASSWORD: devboard
+          POSTGRES_DB: devboard_test
+        ports:
+          - 5432:5432
+        # Ohne Healthcheck starten die Tests, bevor Postgres Verbindungen annimmt.
+        options: >-
+          --health-cmd "pg_isready -U devboard"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      PORT: 3000
+      CORS_ORIGIN: http://localhost:3001
+      DATABASE_URL: postgresql://devboard:devboard@localhost:5432/devboard_test?schema=public
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Node einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # `npm ci` statt `npm install`: installiert exakt die Versionen aus dem
+      # Lockfile und schlaegt fehl, wenn package.json und Lockfile auseinanderlaufen.
+      # Reproduzierbar - genau das, was eine Pipeline braucht.
+      - name: Abhaengigkeiten installieren
+        run: npm ci
+
+      - name: Prisma-Client erzeugen
+        run: npx prisma generate
+
+      # `migrate deploy` statt `migrate dev`: wendet nur vorhandene Migrationen an
+      # und erzeugt oder verwirft nichts. Das Einzige, was ausserhalb der lokalen
+      # Entwicklung laufen darf.
+      - name: Migrationen anwenden
+        run: npx prisma migrate deploy
+
+      - name: Lint
+        run: npm run lint:ci
+
+      - name: Unit-Tests
+        run: npm test
+
+      - name: E2E-Tests
+        run: npm run test:e2e
+
+      - name: Build
+        run: npm run build
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Node einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Abhaengigkeiten installieren
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint:ci
+
+      - name: Build
+        run: npm run build
