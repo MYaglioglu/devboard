@@ -270,3 +270,63 @@ herstellbar ist.
 
 Zusätzlich habe ich es manuell verifiziert: Datenbankcontainer gestoppt → `/health` liefert 503,
 Container zurück → 200. Attrappe prüft die Logik, der manuelle Versuch die Verdrahtung.
+
+---
+
+## Frontend & Browser
+
+### 24. Was ist CORS und warum gibt es das?
+
+**Cross-Origin Resource Sharing.** Eine „Herkunft" (Origin) besteht aus Schema, Host und Port –
+weicht eines davon ab, ist es eine fremde Herkunft. `http://localhost:3001` und
+`http://localhost:3000` sind verschieden.
+
+Standardmäßig verhindert die Same-Origin-Policy des Browsers, dass ein Skript die Antwort einer
+fremden Herkunft **auslesen** kann. CORS ist der Mechanismus, mit dem ein Server das gezielt
+erlaubt – über den Header `Access-Control-Allow-Origin`.
+
+**Wozu?** Ohne diese Regel könnte jede beliebige Webseite im Hintergrund Anfragen an eine API
+stellen, bei der man angemeldet ist, und die Antworten auslesen.
+
+Wichtig: Die Anfrage wird oft **gesendet** und vom Server verarbeitet – blockiert wird das *Auslesen
+der Antwort*. Deshalb schützt CORS nicht vor schreibenden Angriffen; dafür sind CSRF-Schutz und
+`SameSite`-Cookies zuständig.
+
+### 25. Wo behebt man einen CORS-Fehler – Frontend oder Backend?
+
+Im **Backend**. Der Server entscheidet, welche Herkunft ihn aufrufen darf. Im Frontend lässt sich
+nichts „erlauben" – jeder vermeintliche Frontend-Fix ist entweder ein Proxy (der die Anfrage über
+den eigenen Server umleitet) oder das Abschalten einer Sicherheitsfunktion.
+
+`origin: '*'` ist keine Lösung, sondern das Abschalten des Schutzes – und in Verbindung mit
+`credentials: true` von der Spezifikation ohnehin verboten.
+
+### 26. Im Browser steht nur „Failed to fetch". Wie gehst du vor?
+
+Erster Griff: **Konsole und Netzwerk-Tab öffnen (F12)**. Das JavaScript bekommt bei einem
+CORS-Verstoß bewusst keine Details – würde der Browser sie durchreichen, wäre die Sperre umgehbar.
+Der tatsächliche Grund steht nur in der Konsole.
+
+Danach der Reihe nach prüfen: Läuft der Zielserver überhaupt? Stimmt der Port? Steht in der Antwort
+ein `Access-Control-Allow-Origin`, und passt es zur Herkunft? Bei Methoden wie `PUT` oder `DELETE`
+und eigenen Headern kommt ein **Preflight** mit `OPTIONS` dazu – der muss ebenfalls beantwortet
+werden.
+
+### 27. Wann fetchst du in einer Server Component, wann im Client?
+
+**Server Component:** wenn die Daten beim ersten Rendern gebraucht werden, für Suchmaschinen
+sichtbar sein sollen oder wenn Geheimnisse im Spiel sind (API-Schlüssel bleiben auf dem Server).
+CORS entfällt, weil kein Browser beteiligt ist.
+
+**Client Component:** wenn die Daten sich nach Interaktion ändern, häufig aktualisiert werden oder
+optimistische Updates nötig sind – typisch für ein Kanban-Board.
+
+Häufiger Fehler: Einen CORS-Fehler dadurch „lösen", dass man die Anfrage in eine Server Component
+verschiebt. Das kann richtig sein, verschiebt aber oft nur das Problem, statt es zu verstehen.
+
+### 28. Was bedeutet das Präfix `NEXT_PUBLIC_`?
+
+Es macht eine Umgebungsvariable im Browser-Bundle verfügbar – der Wert wird beim **Build**
+eingebacken. Alles damit Markierte ist öffentlich lesbar. Geheimnisse dürfen dort nie stehen.
+
+Praktische Folge: Ändert sich der Wert, genügt kein Neustart – es braucht einen neuen Build.
