@@ -58,3 +58,6 @@ docker/data/
 
 # Claude Code: geteilte Settings ja, persoenliche nein
 .claude/settings.local.json
+
+# Erzeugtes Handbuch - jederzeit neu baubar mit scripts/build_handbuch.py
+DevBoard-Handbuch.pdf
