@@ -132,6 +132,91 @@ Aus einem anderen Container:   db:5432          (Service-Name aus docker-compose
 
 ---
 
+## CI-Pipeline
+
+Definiert in `.github/workflows/ci.yml`. Läuft bei jedem Push auf `main` und bei **jedem Pull
+Request** – der PR-Trigger ist der wichtige, denn er blockiert den Merge, wenn etwas rot ist.
+
+### Zwei Ebenen von Qualitätssicherung
+
+| Ebene | Werkzeug | Umfang | Dauer | Umgehbar? |
+|---|---|---|---|---|
+| **Lokal** | Husky + lint-staged | Formatierung der geänderten Dateien | ~2 s | ja (`--no-verify`) |
+| **Remote** | GitHub Actions | Lint, Tests, Build, beide Projekte | ~1 min | nein |
+
+Die Arbeitsteilung ist Absicht: Der Hook macht das **Schnelle**, die Pipeline das **Gründliche**.
+Ein Pre-Commit-Hook, der zwei Minuten braucht, wird nach einer Woche abgeschaltet – und ein Hook ist
+ohnehin nur Bequemlichkeit, keine Garantie. **Die Garantie ist die Pipeline.**
+
+### Aufbau
+
+Zwei parallele Jobs, `Backend` und `Frontend`. Parallel, weil sie nichts voneinander brauchen – das
+halbiert die Laufzeit.
+
+**Backend-Job:**
+
+```
+Repository auschecken
+Node einrichten (mit npm-Cache)
+npm ci
+npx prisma generate
+npx prisma migrate deploy
+npm run lint:ci
+npm test
+npm run test:e2e
+npm run build
+```
+
+Dazu ein **PostgreSQL-Service-Container** (`postgres:18-alpine`), der für die Dauer des Jobs läuft.
+Kein Mock: Die E2E-Tests laufen gegen dieselbe Datenbankversion wie lokal und später in Produktion.
+Der Healthcheck im Service ist Pflicht – ohne ihn starten die Tests, bevor Postgres Verbindungen
+annimmt.
+
+### Details, die im Gespräch gefragt werden
+
+**`npm ci` statt `npm install`.** `ci` installiert exakt die Versionen aus dem Lockfile, löscht
+`node_modules` vorher und **schlägt fehl**, wenn `package.json` und Lockfile auseinanderlaufen.
+`install` würde das Lockfile stillschweigend anpassen – in einer Pipeline genau falsch, weil das
+Ergebnis dann nicht mehr reproduzierbar ist.
+
+**`lint:ci` ohne `--fix`.** Das lokale `lint` korrigiert automatisch. In der Pipeline wäre das
+schädlich: Sie soll Fehler **melden**, nicht heimlich reparieren und dann grün werden.
+`--max-warnings 0` sorgt dafür, dass auch Warnungen den Lauf rot machen – sonst sammeln sich
+Warnungen jahrelang an, bis sie niemand mehr liest.
+
+**`migrate deploy` statt `migrate dev`.** `deploy` wendet nur vorhandene Migrationen an und erzeugt
+oder verwirft nichts. Das Einzige, was außerhalb der lokalen Entwicklung laufen darf.
+
+**`concurrency` mit `cancel-in-progress`.** Kommen neue Commits nach, wird der laufende Durchlauf
+abgebrochen. Spart Laufzeit und Wartezeit.
+
+**Cache.** `actions/setup-node` mit `cache: npm` speichert den npm-Cache zwischen den Läufen.
+Deshalb dauert der zweite Durchlauf spürbar kürzer als der erste.
+
+### Branch-Schutz
+
+Erst der Branch-Schutz macht die Pipeline wirksam. Ohne ihn kann man eine rote Pipeline einfach
+ignorieren.
+
+Aktiv auf `main`:
+
+- Pflicht-Checks: `Backend` und `Frontend` müssen grün sein
+- Branch muss aktuell mit `main` sein (`strict`)
+- Kein Force-Push, kein Löschen des Branches
+- Offene Kommentare müssen aufgelöst sein
+
+**Bewusst nicht aktiv:** Pflicht-Reviews. GitHub lässt niemanden den eigenen Pull Request freigeben –
+bei einer Einzelperson würde die Einstellung jeden Merge blockieren. Sobald jemand mitarbeitet, wird
+sie eingeschaltet.
+
+`enforce_admins` steht auf `false`, damit sich der Eigentümer nicht aussperrt. Einschalten mit:
+
+```bash
+gh api -X PUT repos/MYaglioglu/devboard/branches/main/protection/enforce_admins
+```
+
+---
+
 ## Offene Punkte für Produktion
 
 - `ports: "5432:5432"` **entfernen** – in Produktion spricht nur das Backend über das interne
