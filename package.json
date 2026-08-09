@@ -1,0 +1,18 @@
+{
+  "name": "devboard",
+  "private": true,
+  "description": "Repo-weite Werkzeuge: Git-Hooks und Formatierung. Kein Workspace - backend/ und frontend/ bleiben eigenstaendige npm-Projekte (siehe ADR-005).",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,mjs,json,yml,yaml,css}": [
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.6",
+    "prettier": "^3.6.2"
+  }
+}
