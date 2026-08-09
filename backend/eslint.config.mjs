@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['eslint.config.mjs'],
+    // Generierter Prisma-Client wird nicht gelintet - er wird nicht von Hand
+    // gepflegt und aendert sich mit jedem `prisma generate`.
+    ignores: ['eslint.config.mjs', 'src/generated/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
