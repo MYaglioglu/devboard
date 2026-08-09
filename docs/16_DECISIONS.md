@@ -164,6 +164,32 @@ Paketmanager-Feinheiten.
 
 ---
 
-## ADR-006
+## ADR-006: Prisma als ORM
 
-Folgt im Lauf von Sprint 0: Prisma als ORM.
+**Status:** Angenommen (08.08.2026)
+
+### Kontext
+Das Backend braucht Datenbankzugriff. Gefordert sind Typsicherheit bis in die Datenbank,
+versionierte Schemaänderungen und ein Lerneffekt, der später auf Spring Data JPA übertragbar ist.
+
+### Entscheidung
+**Prisma 7** mit dem Driver Adapter `@prisma/adapter-pg`.
+
+### Alternativen
+| Option | Bewertung |
+|---|---|
+| **Rohes SQL** (`pg`) | Volle Kontrolle, aber keine Typsicherheit, Migrationen von Hand, und string-gebautes SQL öffnet die Tür für SQL-Injection. |
+| **Query Builder** (Kysely, Knex) | SQL bleibt sichtbar und wird typsicher zusammengesetzt. Gute Wahl für Teams, die SQL sicher beherrschen – setzt aber genau das voraus. |
+| **TypeORM** | Klassisches Active-Record/Data-Mapper-ORM, näher an JPA. Schwächere Typsicherheit, wechselhafte Wartungslage. |
+| **Drizzle** | Sehr schlank, SQL-nah, hervorragende Typen. Jüngeres Ökosystem, weniger Material zum Lernen. |
+| **Prisma** | Deklaratives Schema, generierter Client mit exakten Typen, Migrationen als versionierte SQL-Dateien, gute Fehlermeldungen und Dokumentation. |
+
+### Konsequenzen
+- **Positiv:** Eine Schemaänderung wird sofort im Compiler sichtbar. Migrationen liegen als SQL im Repository und sind auf jedem Rechner, in der CI und auf dem Server reproduzierbar.
+- **Negativ:** Starke Abstraktion. Bei komplexen Abfragen (mehrere Joins, Fensterfunktionen, rekursive CTEs) muss auf `$queryRaw` ausgewichen werden. Wer nur mit ORM arbeitet, lernt kein SQL – deshalb wird zu jedem Modell das erzeugte SQL angesehen.
+- **Prisma 7 im Besonderen:** Die Rust-Query-Engine als Binärdatei entfällt, der Zugriff läuft über einen Node-Treiber (Driver Adapter). Das macht Container-Images kleiner. Preis: ein zusätzliches Paket und eine explizite Verbindungskonfiguration im Code.
+
+### Umsetzungsdetails, die Zeit gekostet haben
+- Prisma 7 lädt `.env` **nicht** mehr automatisch. Geladen wird sie explizit in `prisma.config.ts` – dort zeigt sie auf die Wurzel-`.env`, damit Compose, ConfigModule und Prisma dieselbe Quelle nutzen.
+- Der Generator muss auf `moduleFormat = "cjs"` und `importFileExtension = ""` gestellt werden, weil NestJS nach CommonJS kompiliert. Sonst scheitern Jest und der Node-Start an ESM-Syntax.
+- Der Client lädt seinen Query-Compiler als WASM per dynamischem Import. In Jest braucht das `NODE_OPTIONS=--experimental-vm-modules`; im echten Node-Prozess ist es unproblematisch.
