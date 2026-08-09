@@ -164,6 +164,64 @@ wird immer der gebaute Stand.
 ins Repository, damit alle dieselben Versionen installieren. `node_modules` dagegen nicht – es ist
 daraus rekonstruierbar.
 
+**Lifecycle-Hook** – Methode, die das Framework zu bestimmten Zeitpunkten aufruft, z. B.
+`onModuleInit` beim Hochfahren und `onModuleDestroy` beim Herunterfahren.
+
+---
+
+## Datenbank & Prisma
+
+**ORM (Object-Relational Mapping)** – Übersetzt zwischen Datenbanktabellen und Objekten im Code.
+
+**Query Builder** – Mittelweg zwischen rohem SQL und ORM: SQL bleibt sichtbar, wird aber typsicher
+zusammengesetzt (Kysely, Knex).
+
+**Migration** – Versionierte Schemaänderung als SQL-Datei im Repository. Wird nie nachträglich
+bearbeitet; Korrekturen kommen als neue Migration obendrauf.
+
+**`migrate dev` vs. `migrate deploy`** – `dev` erzeugt neue Migrationen und kann die Datenbank
+zurücksetzen (nur lokal). `deploy` wendet nur vorhandene an – das Einzige, was auf einem Server
+laufen darf.
+
+**Driver Adapter** – Seit Prisma 7 der Weg zur Datenbank: ein echter Node-Treiber (`pg`) statt einer
+Rust-Binärdatei. Macht Container-Images kleiner.
+
+**Constraint** – Regel, die die Datenbank selbst erzwingt (`UNIQUE`, `NOT NULL`, `FOREIGN KEY`).
+Stärker als eine Prüfung im Anwendungscode, weil dort immer eine Lücke zwischen Prüfen und
+Schreiben bleibt.
+
+**Index** – Datenstruktur, die Suchen beschleunigt. Ein `UNIQUE INDEX` erzwingt zusätzlich
+Eindeutigkeit.
+
+**UUID** – 128-Bit-Bezeichner. Als Primärschlüssel bevorzugt, weil fortlaufende Zahlen in URLs
+verraten, wie viele Datensätze existieren, und zum Durchprobieren fremder IDs einladen.
+
+**Connection Pool** – Wiederverwendete Datenbankverbindungen. Ohne sauberes Trennen beim
+Herunterfahren bleiben sie belegt.
+
+---
+
+## Betrieb & Tests
+
+**Fail fast** – siehe oben. Konkret: Konfiguration beim Start validieren, statt später umzufallen.
+
+**Liveness** – „Läuft der Prozess?" Bei rot hilft ein Neustart.
+
+**Readiness** – „Kann er Anfragen bedienen?" Bei rot hilft ein Neustart **nicht**, wenn eine
+Abhängigkeit fehlt – die Instanz gehört aus dem Verkehr genommen.
+
+**Health-Check** – Endpoint, der beides beantwortet. Wird von Maschinen über den **Statuscode**
+gelesen, nicht über den Body.
+
+**Unit-Test** – Prüft eine Klasse isoliert, alle Abhängigkeiten ersetzt. Millisekunden.
+
+**E2E-Test** – Startet die echte Anwendung und schickt echte HTTP-Anfragen.
+
+**Mock / Attrappe / Test Double** – Ersatzobjekt für eine Abhängigkeit im Test. Macht Szenarien
+prüfbar, die real kaum herstellbar sind (z. B. Datenbankausfall).
+
+**Testpyramide** – Viele schnelle Unit-Tests, wenige langsame E2E-Tests.
+
 ---
 
 ## PostgreSQL
