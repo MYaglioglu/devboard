@@ -124,6 +124,17 @@ geschützt: kein Merge ohne grüne Pipeline. Details in
 
 ## Dokumentation
 
+Die gesamte Dokumentation lässt sich als PDF-Handbuch erzeugen (Titelseite,
+Inhaltsverzeichnis, alle Kapitel):
+
+```bash
+python -m pip install reportlab
+python scripts/build_handbuch.py
+```
+
+Ergebnis: `DevBoard-Handbuch.pdf`. Die Datei ist bewusst **nicht** im Repository – sie lässt sich
+jederzeit aus den Markdown-Quellen neu erzeugen.
+
 | Datei | Inhalt |
 |---|---|
 | [01_ROADMAP.md](docs/01_ROADMAP.md) | Sprints mit Definition of Done |
