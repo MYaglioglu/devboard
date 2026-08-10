@@ -973,3 +973,110 @@ Solche Regeln gehören in die Anwendung, und zwar an *jede* Stelle, die sie verl
 
 Vier Wege, eine Regel. Deshalb liegt die Prüfung im Service und nicht im Controller – sonst
 vergisst man den vierten Weg. Umgesetzt in Scheibe 2.3.
+
+### 68. Warum muss das Anlegen einer Organisation eine Transaktion sein?
+
+Weil es **zwei** Schreibvorgänge sind: die Organisation und die Mitgliedschaft des Erstellers als
+`OWNER`. Gelingt der erste und scheitert der zweite – Verbindungsabbruch, Prozessende, Deadlock –,
+bleibt eine Organisation **ohne Eigentümer** zurück. Niemand kann sie verwalten, niemand löschen,
+und sie taucht in keiner Liste auf, weil Listen über Mitgliedschaften laufen. Eine Datenleiche.
+
+Eine Transaktion macht aus beiden Schritten einen einzigen: entweder beide oder keiner. Das ist das
+**A in ACID** – *Atomicity*.
+
+**Der Zusatz, der die Antwort stark macht:** In unserem Code steht gar kein `$transaction`. Wir
+benutzen einen *nested write*:
+
+```ts
+prisma.organization.create({
+  data: { name, memberships: { create: { userId, role: Role.OWNER } } },
+});
+```
+
+Prisma führt verschachtelte Schreibvorgänge **von sich aus** in einer Transaktion aus – das ist eine
+Zusage der Schnittstelle, keine Bequemlichkeit. Ausgeschrieben wäre es dasselbe Ergebnis mit mehr
+Code und einer zusätzlichen Runde zur Datenbank.
+
+**Wann man `$transaction` trotzdem braucht:** sobald zwischen den Schritten *gelesen und
+entschieden* wird („hat diese Organisation noch einen anderen `OWNER`?"), oder wenn Schritte
+betroffen sind, die nicht über eine Relation zusammenhängen. Ein verschachtelter Schreibvorgang
+kann nur, was der Beziehungsbaum hergibt.
+
+### 69. Warum kommt die Nutzer-ID aus dem Token und nicht aus dem Anfragekörper?
+
+Weil alles, was der Client schickt, eine **Behauptung** ist. Ein Körper wie
+`{ "name": "…", "userId": "…" }` wäre bequem – und wer die eigene ID mitschicken darf, darf auch
+eine fremde mitschicken und legt Organisationen im Namen anderer an.
+
+Die ID aus dem Token ist dagegen **signiert** und stammt vom Server selbst. Eine Manipulation
+zerstört die Signatur und der Guard weist die Anfrage mit `401` ab.
+
+> **Merksatz:** Identität kommt nie aus dem Anfragekörper.
+
+Dieselbe Klasse von Fehler in anderer Verkleidung: ein `role`-Feld im Registrierungsformular, ein
+`isAdmin`-Flag im Profil-Update, eine `organizationId`, die nicht gegen die Mitgliedschaft geprüft
+wird. Alle drei sind **Mass Assignment** – der Client schreibt Felder, die er nicht schreiben darf.
+Unser Schutz dagegen ist das Zod-Schema: Es akzeptiert ausschließlich `name`, alles andere fällt
+weg, bevor es den Service erreicht.
+
+### 70. Warum kein `409` bei doppeltem Organisationsnamen, obwohl es einen bei doppelter E-Mail gibt?
+
+Weil die Eindeutigkeit fachlich gar nicht gefordert ist. Zwei Kunden dürfen beide eine Organisation
+„Marketing" haben – sie sehen sich ohnehin nie. Es gibt keinen Grund, das zu verbieten.
+
+Wichtiger ist der zweite Teil: Ein globaler `UNIQUE`-Index wäre hier sogar **schädlich**. Er würde
+antworten „diesen Namen gibt es schon" – und damit Rückschlüsse auf fremde Mandanten erlauben. Man
+könnte Namen durchprobieren und herausfinden, welche Firmen das Produkt einsetzen. Dieselbe
+Klasse von Informationsleck wie bei der User Enumeration über Fehlermeldungen.
+
+Die E-Mail-Adresse ist der Gegenfall: Dort ist Eindeutigkeit *technisch notwendig*, weil sie die
+Anmeldekennung ist. Zwei Konten mit derselben Adresse wären nicht auseinanderzuhalten.
+
+### 71. Eure Liste zeigt bei einem Nutzer ohne Organisation `200` mit leerem Array. Warum nicht `404`?
+
+Weil `404` heißt: *„Diese Ressource gibt es nicht."* Die Ressource ist hier aber die **Liste meiner
+Organisationen**, und die existiert – sie ist nur leer. Ein leeres Regal ist kein fehlendes Regal.
+
+Praktisch ist das auch für den Client wichtig: Bei `200 []` schreibt das Frontend eine Schleife über
+null Einträge und zeigt einen Leerzustand. Bei `404` müsste es einen Fehlerpfad behandeln, der gar
+kein Fehler ist – und der ließe sich nicht mehr von einem echten „Endpoint existiert nicht"
+unterscheiden.
+
+**Faustregel:** `404` für ein *Element*, das es nicht gibt (`GET /organizations/<fremde-id>`).
+`200` mit leerer Liste für eine *Kollektion* ohne Treffer.
+
+### 72. Ihr habt einen Test, der prüft, dass ein Nutzer etwas NICHT sieht. Warum reicht der Erfolgspfad nicht?
+
+Weil der Erfolgspfad auch dann grün ist, wenn der Mandantenfilter komplett fehlt.
+
+Der übliche Test lautet: „Ich lege eine Organisation an, ich rufe die Liste ab, sie ist da." Wenn im
+Test nur *ein* Nutzer existiert, gehört ihm ohnehin alles. Ob der Service `where: { userId }` oder
+`where: {}` schreibt, macht für dieses Ergebnis keinen Unterschied. Die Lücke fällt erst mit einem
+**zweiten** Nutzer auf.
+
+Deshalb gibt es in jeder Scheibe von Sprint 2 einen Test dieser Form: Nutzer A legt an, Nutzer B
+fragt ab, und B darf nichts sehen.
+
+**Und wir haben es nachgewiesen statt behauptet:** Der Filter wurde versuchsweise auf `where: {}`
+geändert. Ergebnis – ein Unit-Test und drei E2E-Tests schlagen fehl. Das ist eine *Mutationsprobe*
+von Hand: Ein grüner Test beweist nur, dass er läuft. Erst wenn er bei kaputtem Code rot wird, weiß
+man, dass er etwas bewacht.
+
+### 73. Warum legt ihr bei der Registrierung nicht automatisch eine Organisation an?
+
+Das wäre bequem – der Nutzer landet nie in einem leeren Dashboard. Zwei Gründe sprechen dagegen.
+
+**Fachlich:** Ab Scheibe 2.4 gibt es Einladungen. Wer per Einladung dazustößt, schleppt dann eine
+automatisch erzeugte, nie benutzte Organisation mit sich herum – Datenmüll, der nie wieder
+verschwindet.
+
+**Strukturell:** Der `AuthService` müsste Organisationen kennen. Das ist eine Kopplung zwischen zwei
+Modulen, die fachlich nichts miteinander zu tun haben. Authentifizierung beantwortet „wer bist
+du?", Organisationen „wozu gehörst du?" – zwei getrennte Fragen.
+
+„Nutzer ohne Organisation" ist ein **gültiger Zustand**, kein Fehler. Das Frontend bekommt dafür
+einen ordentlichen Leerzustand.
+
+Nebenbei ist es die Entscheidung, die sich leichter zurücknehmen lässt: Automatisches Anlegen
+später einzubauen ist eine Zeile. Es wieder herauszunehmen, wenn schon Tausende leerer
+Organisationen existieren, ist eine Datenmigration.

@@ -281,3 +281,43 @@ import { AppModule } from '../src/app.module';
    („irgendwann kommt 429, und dann bleibt es dabei"), nicht die Buchhaltung.
 4. **Zwei der Fehlschläge waren falsche Erwartungen, kein Codefehler.** Ein Test, der etwas prüft,
    das der Code bewusst nicht tut (hier: E-Mail-Format beim Login), ist selbst der Fehler.
+
+---
+
+## 2026-08-11 – Der Prisma-Client war nach der Migration veraltet
+
+**Situation:** Nach `npm run db:migrate` für die Tabellen `organizations` und `memberships` meldete
+Prisma „Your database is now in sync with your schema." Lint, 83 Unit-Tests, 48 E2E-Tests und der
+Build liefen grün durch. Alles sah fertig aus.
+
+**Der Fehler:** Der generierte Client kannte die neuen Modelle **nicht**. In
+`src/generated/prisma/enums.ts` stand weiterhin:
+
+```ts
+// This file is empty because there are no enums in the schema.
+export {}
+```
+
+Und `src/generated/prisma/models/` enthielt nur `User.ts` und `RefreshToken.ts`.
+
+**Warum es niemandem aufgefallen wäre:** Weil noch kein einziger Codepfad `Role` oder
+`prisma.organization` benutzte. Der Compiler hatte nichts zu prüfen, die Tests nichts auszuführen.
+Der Fehler wäre erst in der nächsten Scheibe aufgeschlagen – als „`Property 'organization' does not
+exist`", also mit einer Meldung, die auf das Schema zeigt, obwohl das Schema korrekt war. Genau die
+Sorte Fehlersuche, die eine Stunde frisst.
+
+**Behebung:** `npm run db:generate`. Danach waren `Role`, `Organization.ts` und `Membership.ts` da.
+
+**Learnings:**
+
+1. **„Datenbank ist in sync" heißt nicht „Client ist in sync".** Das sind zwei Artefakte:
+   das Schema in PostgreSQL und der generierte TypeScript-Client. Eine Migration bringt zwingend
+   nur das erste auf Stand.
+2. **Eine grüne Testsuite beweist nur, was sie berührt.** Kein Test schlug fehl, weil kein Test
+   die neuen Modelle benutzte. Grün heißt „nichts Bekanntes kaputt", nicht „alles in Ordnung".
+3. **Verifiziert wird am Artefakt, nicht an der Erfolgsmeldung.** Ein `grep` nach `OWNER` im
+   generierten Verzeichnis hat die Frage in zwei Sekunden beantwortet. Der Werkzeug-Output war
+   nicht falsch – er beantwortete nur eine andere Frage als die, die ich hatte.
+4. **In der CI konnte das nicht auffallen.** `src/generated/` ist gitignored, die Pipeline generiert
+   den Client bei jedem Lauf neu. Der veraltete Stand existierte ausschließlich lokal – eine
+   Fehlerklasse, die sich strukturell nur auf dem eigenen Rechner zeigt.
