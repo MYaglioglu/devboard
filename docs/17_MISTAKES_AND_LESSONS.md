@@ -177,3 +177,62 @@ configure(consumer: MiddlewareConsumer): void {
 3. **Express 5 hat die Wildcard-Schreibweise geändert:** `'*'` wurde zu `'{*splat}'`. NestJS 11
    verwendet Express 5 – ältere Beispiele im Netz funktionieren nicht mehr. Wieder ein Fall von
    „Hauptversion ändert Konventionen, nicht nur Funktionen".
+
+---
+
+## 2026-08-10 – Zwei Fehler, gefunden von den ersten Frontend-Tests
+
+Die Frontend-Tests waren keine halbe Stunde alt, als sie zwei echte Defekte aufdeckten – beide in
+Code, der von Hand ausprobiert einwandfrei funktioniert hatte.
+
+### Fehler 1: `finally` statt `catch` beim Abmelden
+
+**Ursprünglich:**
+
+```ts
+try   { await api('/auth/logout', { method: 'POST' }); }
+finally { verwerfe(); }
+```
+
+**Symptom:** Der Test „meldet auch dann lokal ab, wenn der Server nicht erreichbar ist" schlug mit
+`TypeError: Failed to fetch` fehl.
+
+**Ursache:** `finally` räumt zwar lokal auf, **lässt den Fehler aber weiterfliegen**. Im Dashboard
+steht danach `router.replace('/login')` – diese Zeile wurde nie erreicht. Bei nicht erreichbarem
+Server wäre der Nutzer lokal abgemeldet, bliebe aber auf der geschützten Seite stehen. Dazu eine
+unbehandelte Promise-Ablehnung in der Konsole.
+
+**Behebung:** `catch` statt `finally` – ein fehlgeschlagener Serveraufruf darf das Abmelden nicht
+verhindern.
+
+**Learning:** `finally` bedeutet „führe das auch im Fehlerfall aus", **nicht** „schlucke den
+Fehler". Ein häufiger Irrtum, weil beides oft gleich aussieht – bis jemand den Rückgabewert
+weiterverwendet.
+
+### Fehler 2: Fehlermeldung im `<label>` verfälscht den Feldnamen
+
+**Symptom:** `getByLabelText('E-Mail')` fand das Feld nicht mehr, **sobald ein Fehler angezeigt
+wurde** – in allen anderen Tests derselben Datei aber schon.
+
+**Ursache:** Die Komponente umschloss Beschriftung, Eingabefeld und Fehlermeldung mit einem
+gemeinsamen `<label>`. Der **zugängliche Name** eines Feldes ist der gesamte Textinhalt seines
+Labels – also hieß das Feld plötzlich „E-Mail Bitte eine gueltige E-Mail-Adresse angeben". Genau das
+liest ein Screenreader als Feldnamen vor.
+
+**Behebung:** Trennung der Zuständigkeiten:
+
+| Attribut | Aufgabe |
+|---|---|
+| `htmlFor` / `id` | verbindet Label und Feld → der **Name** |
+| `aria-describedby` | verbindet Fehler und Feld → die **Beschreibung** |
+| `aria-invalid` | markiert den Fehlerzustand |
+
+**Learnings:**
+
+1. **Testing Library fragt so ab, wie ein Screenreader liest.** Dass die Abfrage fehlschlug, war
+   kein Test-Problem, sondern die korrekte Meldung eines Zugänglichkeitsfehlers. Wer solche Tests
+   mit `getByTestId` „repariert", schaltet genau diese Warnung ab.
+2. **Zugänglichkeit ist testbar** – und zwar nebenbei, ohne eigenes Werkzeug.
+3. **Beide Fehler waren von Hand nicht auffindbar.** Der erste braucht einen nicht erreichbaren
+   Server, der zweite einen Screenreader. Genau dafür gibt es automatisierte Tests: für die Fälle,
+   die man beim Ausprobieren nicht herstellt.
