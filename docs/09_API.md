@@ -375,6 +375,124 @@ Fehlbenennung und sorgt bis heute für Verwechslungen.
 
 ---
 
+## `POST /organizations`
+
+Legt eine Organisation an. Der Ersteller wird in **derselben Transaktion** ihr `OWNER`.
+
+Erfordert einen gültigen Access-Token.
+
+### Anfrage
+
+```json
+{ "name": "Acme GmbH" }
+```
+
+`name` wird getrimmt, dann geprüft: 2–100 Zeichen. Die Reihenfolge ist wichtig – stünde die
+Längenprüfung vor dem Trimmen, käme `"  "` durch und landete als leerer Name in der Datenbank.
+
+### Antwort · 201 Created
+
+```json
+{
+  "id": "9f1c…",
+  "name": "Acme GmbH",
+  "role": "OWNER",
+  "createdAt": "2026-08-11T10:00:00.000Z"
+}
+```
+
+### Warum die Nutzer-ID nicht im Anfragekörper steht
+
+Ein `{ "name": "…", "userId": "…" }` wäre bequem – und die Lücke. Alles, was der Client schickt,
+ist eine **Behauptung**. Wer die eigene ID mitschicken darf, darf auch eine fremde mitschicken und
+legt Organisationen im Namen anderer an. Die ID stammt deshalb aus dem signierten Token.
+
+> **Merksatz:** Identität kommt nie aus dem Anfragekörper.
+
+### Warum das eine Transaktion ist
+
+Es sind zwei Schreibvorgänge: Organisation und Mitgliedschaft. Gelingt der erste und scheitert der
+zweite, bleibt eine Organisation **ohne Eigentümer** zurück – unverwaltbar, unlöschbar, und in
+keiner Liste sichtbar, weil Listen über Mitgliedschaften laufen. Eine Leiche in der Datenbank.
+
+Umgesetzt als *nested write* (`memberships: { create: … }`), den Prisma von sich aus in einer
+Transaktion ausführt. Ein explizites `$transaction` wäre gleichwertig, aber mehr Code und eine
+zusätzliche Runde zur Datenbank. Es wird dort gebraucht, wo zwischen den Schritten **gelesen und
+entschieden** wird – etwa bei „hat diese Organisation noch einen anderen `OWNER`?" in Scheibe 2.3.
+
+### Fehler
+
+| Status | Wann |
+|---|---|
+| `400` | Name fehlt, zu kurz, zu lang oder nur Leerzeichen |
+| `401` | kein oder ungültiger Access-Token |
+
+**Kein `409` bei doppeltem Namen** – anders als bei der E-Mail-Adresse. Zwei Kunden dürfen beide
+eine Organisation „Marketing" haben; sie sehen sich ohnehin nie. Ein globaler `UNIQUE`-Index wäre
+hier sogar schädlich: Er verriete, dass der Name bereits vergeben ist, und ließe damit Rückschlüsse
+auf fremde Mandanten zu.
+
+---
+
+## `GET /organizations`
+
+Liefert alle Organisationen, in denen der angemeldete Nutzer Mitglied ist – **mit seiner Rolle**.
+
+### Antwort · 200 OK
+
+```json
+[
+  { "id": "9f1c…", "name": "Acme GmbH", "role": "OWNER",  "createdAt": "2026-08-11T10:00:00.000Z" },
+  { "id": "3b7e…", "name": "Kunde X",   "role": "MEMBER", "createdAt": "2026-08-11T11:30:00.000Z" }
+]
+```
+
+Leere Liste, wenn der Nutzer nirgends Mitglied ist – **kein `404`**. Die Liste *existiert*, sie ist
+nur leer. `404` hieße „diese Ressource gibt es nicht", und das stimmt nicht.
+
+### Warum die Rolle mitgeliefert wird
+
+Das Frontend muss entscheiden, ob es „Mitglied einladen" überhaupt anzeigt. Ohne die Rolle bräuchte
+es einen zweiten Aufruf **pro Organisation** – das N+1-Problem, ausführlich in Sprint 4.
+
+### Warum die Abfrage über die Mitgliedschaften läuft
+
+Naheliegend wäre, von den Organisationen auszugehen:
+
+```ts
+prisma.organization.findMany({ where: { memberships: { some: { userId } } } })
+```
+
+Gleiches Ergebnis, falsche Richtung. Die Frage lautet nicht „welche Organisationen haben diesen
+Nutzer?", sondern „welche Mitgliedschaften hat dieser Nutzer?". Von dort aus ist es ein Zugriff über
+den Index auf `memberships.userId` – genau der, der neben dem `UNIQUE (organizationId, userId)`
+auf den ersten Blick redundant aussieht (siehe `08_DATABASE.md`).
+
+### Das ist bereits Autorisierung auf Datenebene
+
+Es gibt hier keinen Rollen-Guard – und trotzdem kann niemand fremde Organisationen sehen. Der
+Grund: `userId` steht in der **Bedingung** der Abfrage, nicht in einer Prüfung danach.
+
+```ts
+// Die Lücke: erst laden, dann filtern. Die fremden Daten wurden bereits gelesen.
+const alle = await prisma.membership.findMany();
+return alle.filter((m) => m.userId === nutzerId);
+
+// Richtig: der Mandant ist Teil der Bedingung.
+return prisma.membership.findMany({ where: { userId: nutzerId } });
+```
+
+Es gibt über diesen Endpoint **keinen Weg**, fremde Organisationen abzufragen – kein Filterparameter,
+keine „alle"-Option. Die Einschränkung ist nicht optional.
+
+### Bewusst ohne Paginierung
+
+Ein Mensch ist in einer Handvoll Organisationen, nicht in Tausenden. Paginierung kommt in Sprint 4
+dort, wo Listen tatsächlich unbegrenzt wachsen. Ein Cursor, den niemand benutzt, ist trotzdem Code,
+der getestet und gepflegt werden muss.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |
