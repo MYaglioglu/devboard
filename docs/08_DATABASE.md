@@ -31,10 +31,26 @@ db:5432          wenn das Backend selbst im Container laeuft (Service-Name)
 | Spalte | Typ | Constraints |
 |---|---|---|
 | `id` | `uuid` | Primärschlüssel, Default `uuid()` |
-| `email` | `text` | **UNIQUE** |
+| `email` | `text` | **UNIQUE**, immer kleingeschrieben gespeichert |
 | `name` | `text` | nullable |
+| `passwordHash` | `text` | **NOT NULL**, argon2id-Hash – nie das Passwort selbst |
 | `createdAt` | `timestamp(3)` | Default `CURRENT_TIMESTAMP` |
 | `updatedAt` | `timestamp(3)` | von Prisma bei jedem Update gesetzt |
+
+**Zur Spalte `passwordHash`:** Der Name benennt den Inhalt ausdrücklich. `password` wäre eine
+Einladung zum Fehler – irgendwann schreibt jemand den Klartext hinein. Der gespeicherte Wert enthält
+Verfahren, Version, Parameter und Salt in einem String:
+`$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>`.
+
+**Zur Kleinschreibung von `email`:** Der `UNIQUE`-Index vergleicht zeichengenau. Ohne Normalisierung
+wären `Max@example.com` und `max@example.com` zwei Konten, obwohl der Domain-Teil einer
+E-Mail-Adresse nicht zwischen Groß- und Kleinschreibung unterscheidet. Normalisiert wird im
+Zod-Schema, also am Rand der Anwendung.
+
+**Migration `add_password_hash`:** Eine `NOT NULL`-Spalte ohne Default ließ sich hier nur hinzufügen,
+**weil die Tabelle leer war**. Bei vorhandenen Daten hätte die Migration abgebrochen. Der
+professionelle Weg heißt **Expand and Contract**: Spalte zuerst nullbar hinzufügen, Daten füllen,
+dann auf `NOT NULL` umstellen – drei Migrationen statt einer.
 
 Erzeugtes SQL:
 

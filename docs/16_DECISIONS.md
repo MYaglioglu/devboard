@@ -189,6 +189,45 @@ versionierte Schemaänderungen und ein Lerneffekt, der später auf Spring Data J
 - **Negativ:** Starke Abstraktion. Bei komplexen Abfragen (mehrere Joins, Fensterfunktionen, rekursive CTEs) muss auf `$queryRaw` ausgewichen werden. Wer nur mit ORM arbeitet, lernt kein SQL – deshalb wird zu jedem Modell das erzeugte SQL angesehen.
 - **Prisma 7 im Besonderen:** Die Rust-Query-Engine als Binärdatei entfällt, der Zugriff läuft über einen Node-Treiber (Driver Adapter). Das macht Container-Images kleiner. Preis: ein zusätzliches Paket und eine explizite Verbindungskonfiguration im Code.
 
+---
+
+## ADR-007: Access-Token im Speicher, Refresh-Token im httpOnly-Cookie
+
+**Status:** Angenommen (09.08.2026)
+
+### Kontext
+Sprint 1 baut die Authentifizierung. Die Frage, wo der Token im Browser liegt, bestimmt Backend,
+Frontend und Sicherheitskonzept gleichermaßen – sie muss vor der ersten Zeile Code entschieden sein.
+Frontend (`:3001`) und Backend (`:3000`) laufen lokal auf getrennten Ports.
+
+### Entscheidung
+Ein **kurzlebiger Access-Token** (Laufzeit ca. 15 Minuten) wird ausschließlich in einer
+JavaScript-Variablen im Speicher gehalten. Ein **langlebiger Refresh-Token** liegt in einem
+`httpOnly`-Cookie mit `SameSite` und `Secure`, wird bei jeder Erneuerung **rotiert** und ist
+serverseitig widerrufbar.
+
+### Alternativen
+| Option | Bewertung |
+|---|---|
+| **`localStorage`** | Am einfachsten und in Tutorials allgegenwärtig. Jedes eingeschleuste Skript kann darauf zugreifen – eine XSS-Lücke bedeutet sofort übernommene Sitzungen. Zudem überlebt der Token das Schließen des Browsers ohne serverseitige Kontrolle. |
+| **Beide Token im httpOnly-Cookie** | JavaScript kommt nicht heran, XSS kann nichts stehlen. Solide und gut verteidigbar. Preis: Cookies werden automatisch mitgeschickt, also ist CSRF-Schutz zwingend; außerdem ist die Token-Lebensdauer schwerer feingranular zu steuern. |
+| **Speicher + httpOnly-Cookie** | Der Access-Token ist für Skripte unerreichbar *und* überlebt kein Neuladen. Der Refresh-Token ist für JavaScript unsichtbar und serverseitig widerrufbar. Deckt XSS, CSRF und Token-Lebensdauer in einem Konzept ab. |
+
+### Konsequenzen
+- **Positiv:** Ein gestohlener Access-Token ist nach spätestens 15 Minuten wertlos. Der Refresh-Token
+  ist per XSS nicht auslesbar. Ein Logout wirkt tatsächlich, weil der Refresh-Token serverseitig
+  ungültig gemacht wird.
+- **Negativ:** Mehr bewegliche Teile. Nach dem Neuladen der Seite ist der Access-Token weg und muss
+  still über den Refresh-Endpoint erneuert werden – das braucht im Frontend einen kurzen
+  Ladezustand und eine Wiederholungslogik bei `401`.
+- **Zwingend mitzudenken:** `SameSite=Lax` (bzw. `None` + `Secure`, sobald Frontend und Backend auf
+  verschiedenen Domains liegen), CSRF-Schutz für den Refresh-Endpoint, und **Rotation mit Erkennung
+  wiederverwendeter Token** – wird ein bereits verbrauchter Refresh-Token noch einmal vorgelegt, ist
+  das ein Diebstahlverdacht und die gesamte Token-Familie wird widerrufen.
+- **Lokale Besonderheit:** Solange Frontend und Backend auf verschiedenen Ports laufen, gelten
+  Cookies als „third-party". In Produktion liegen beide hinter demselben nginx auf derselben
+  Domain – das entschärft die Cookie-Frage erheblich und ist ein weiterer Grund für diesen Aufbau.
+
 ### Umsetzungsdetails, die Zeit gekostet haben
 - Prisma 7 lädt `.env` **nicht** mehr automatisch. Geladen wird sie explizit in `prisma.config.ts` – dort zeigt sie auf die Wurzel-`.env`, damit Compose, ConfigModule und Prisma dieselbe Quelle nutzen.
 - Der Generator muss auf `moduleFormat = "cjs"` und `importFileExtension = ""` gestellt werden, weil NestJS nach CommonJS kompiliert. Sonst scheitern Jest und der Node-Start an ESM-Syntax.
