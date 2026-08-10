@@ -496,4 +496,91 @@ describe('Auth (e2e)', () => {
         .expect(200);
     });
   });
+
+  describe('GET /auth/me (geschuetzt)', () => {
+    let token: string;
+    let adresse: string;
+
+    beforeAll(async () => {
+      adresse = email('me');
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({ email: adresse, password: 'einSicheresPasswort', name: 'Max' })
+        .expect(201);
+
+      const login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse, password: 'einSicheresPasswort' })
+        .expect(200);
+
+      token = (login.body as LoginAntwort).accessToken;
+    });
+
+    it('liefert mit gueltigem Token das eigene Profil', async () => {
+      const antwort = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const koerper = antwort.body as { id: string; email: string };
+
+      expect(koerper.email).toBe(adresse);
+      expect(koerper.id).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it('lehnt eine Anfrage ohne Token mit 401 ab', () => {
+      // 401, nicht 403: Der Server weiss nicht, WER anfragt.
+      return request(app.getHttpServer()).get('/auth/me').expect(401);
+    });
+
+    it('lehnt einen erfundenen Token mit 401 ab', () => {
+      return request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', 'Bearer voellig.erfundener.token')
+        .expect(401);
+    });
+
+    it('lehnt einen Token mit manipuliertem Payload ab', async () => {
+      const [kopf, , signatur] = token.split('.');
+      const gefaelscht = Buffer.from(
+        JSON.stringify({ sub: 'fremde-id', email: 'angreifer@example.com' }),
+      ).toString('base64url');
+
+      // Lesbar ja, faelschbar nein: Die alte Signatur passt nicht mehr.
+      await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${kopf}.${gefaelscht}.${signatur}`)
+        .expect(401);
+    });
+
+    it('lehnt ein falsches Authentifizierungsschema ab', () => {
+      return request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Basic ${token}`)
+        .expect(401);
+    });
+
+    it('akzeptiert KEIN Cookie als Ersatz fuer den Header', async () => {
+      const login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse, password: 'einSicheresPasswort' })
+        .expect(200);
+
+      const cookies = login.headers['set-cookie'] as unknown as string[];
+      const refresh = cookies.find((c) => c.startsWith('devboard_refresh='));
+
+      // Der Refresh-Token ist KEIN Zugangsnachweis fuer normale Endpoints.
+      // Nur ueber /auth/refresh laesst sich damit ein Access-Token holen.
+      await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Cookie', refresh?.split(';')[0] ?? '')
+        .expect(401);
+    });
+
+    it('laesst den Health-Endpoint weiterhin ohne Token durch', () => {
+      // Der Guard laeuft global. Ohne @Oeffentlich() waere /health jetzt
+      // gesperrt - und Docker koennte den Container nicht mehr pruefen.
+      return request(app.getHttpServer()).get('/health').expect(200);
+    });
+  });
 });
