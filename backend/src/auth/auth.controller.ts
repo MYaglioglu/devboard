@@ -9,6 +9,7 @@ import {
   Res,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
@@ -18,6 +19,7 @@ import { AktuellerNutzer } from './decorators/current-user.decorator';
 import { Oeffentlich } from './decorators/public.decorator';
 import { loginSchema } from './dto/login.dto';
 import { registerSchema } from './dto/register.dto';
+import { ANMELDE_GRENZE } from './throttle';
 import type { Env } from '../config/env.schema';
 import type { LoginErgebnis, OeffentlicherNutzer } from './auth.service';
 import type { LoginDto } from './dto/login.dto';
@@ -45,6 +47,9 @@ export class AuthController {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
+  // Strenger als die globale Grenze: Ohne Beschraenkung koennte jemand
+  // massenhaft Konten anlegen (Spam, Erschoepfen des Adressraums).
+  @Throttle({ default: ANMELDE_GRENZE })
   @Oeffentlich()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
@@ -65,6 +70,11 @@ export class AuthController {
    * der Rueckgabewert der Methode wuerde ignoriert. Mit `passthrough` darf man
    * nur das Cookie setzen und den Rest weiterhin NestJS ueberlassen.
    */
+  // Der wichtigste Endpoint fuer Rate Limiting: Hier werden Passwoerter
+  // durchprobiert. argon2 macht jeden EINZELNEN Versuch teuer, das Limit
+  // begrenzt die ANZAHL - erst beides zusammen macht Brute Force
+  // unwirtschaftlich.
+  @Throttle({ default: ANMELDE_GRENZE })
   @Oeffentlich()
   @Post('login')
   @HttpCode(HttpStatus.OK)

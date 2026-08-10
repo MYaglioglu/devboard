@@ -42,6 +42,18 @@ export const envSchema = z.object({
   // wird.
   REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
+  // Rate Limiting, getrennt fuer normale und fuer Anmelde-Endpoints.
+  //
+  // Warum konfigurierbar statt fest im Code: In Tests muessen die Grenzen
+  // hochgesetzt werden koennen, sonst wuerden sich die eigenen Testlaeufe
+  // gegenseitig aussperren. Und in Produktion kann man nachjustieren, ohne
+  // neu zu bauen.
+  THROTTLE_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+
+  // 0 schaltet das Rate Limiting vollstaendig ab. Gedacht fuer Testlaeufe, die
+  // sich sonst selbst aussperren wuerden - in Produktion niemals 0.
+  THROTTLE_LIMIT: z.coerce.number().int().nonnegative().default(100),
+
   // Kein Default: Ohne Datenbank-URL darf das Backend nicht starten.
   DATABASE_URL: z
     .string()
