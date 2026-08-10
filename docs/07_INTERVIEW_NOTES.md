@@ -880,3 +880,96 @@ Angreifer darüber, wonach sie suchen sollen.
 
 Nicht mehr gesetzt wird `X-XSS-Protection` – der Header ist veraltet und war in manchen Browsern
 selbst eine Lücke.
+
+---
+
+## Mandanten & Datenmodell
+
+### 64. Wann macht man aus einer n:m-Beziehung eine eigene Entität?
+
+**Sobald die Verbindung selbst Attribute trägt.**
+
+Eine reine n:m-Beziehung („Nutzer gehört zu Organisationen") lässt sich von Prisma implizit
+abbilden – im Hintergrund entsteht eine Verbindungstabelle mit genau zwei Fremdschlüsseln. Sobald
+aber etwas an der *Beziehung* hängt, reicht das nicht mehr.
+
+Bei uns ist das die Rolle. Sie gehört nicht an den Nutzer – derselbe Mensch ist `OWNER` in seiner
+eigenen Organisation und `MEMBER` in der eines Kunden. Sie gehört auch nicht an die Organisation –
+die hat viele Mitglieder mit verschiedenen Rollen. Sie beschreibt ausschließlich das Verhältnis der
+beiden zueinander. Also wird `Membership` ein eigenes Modell mit `id`, `role` und Zeitstempeln.
+
+Weitere typische Attribute an einer Mitgliedschaft: Beitrittsdatum, wer eingeladen hat, Status
+(eingeladen / aktiv / gesperrt). Die kämen alle an dieselbe Stelle.
+
+Gegenprobe: „Task hat Labels" ohne weitere Angaben bleibt eine implizite n:m-Beziehung. „Task hat
+Labels, und wer wann welches gesetzt hat" ist wieder eine eigene Entität.
+
+### 65. Ihr habt `UNIQUE (organizationId, userId)` und *zusätzlich* einen Index auf `userId` allein. Ist das nicht redundant?
+
+Nein – und das ist die häufigste Fehlannahme bei zusammengesetzten Indizes.
+
+Ein zusammengesetzter Index ist ein B-Baum, sortiert **erst** nach der ersten Spalte, **dann** nach
+der zweiten. Bildlich: ein Telefonbuch nach Nachname, dann Vorname. Damit findet man
+„alle Müller" sofort und „Müller, Anna" auch. Aber „alle Annas" findet man nicht – die stehen über
+das ganze Buch verstreut. Das ist die **Präfix-Regel** (*leftmost prefix*): Ein zusammengesetzter
+Index hilft nur von links gelesen.
+
+Konkret bei uns:
+
+| Abfrage | Nutzt `(organizationId, userId)`? |
+|---|---|
+| „alle Mitglieder dieser Organisation" (`organizationId`) | ja – linkes Präfix |
+| „ist dieser Nutzer Mitglied hier?" (beide) | ja – vollständig |
+| „meine Organisationen" (`userId` allein) | **nein** |
+
+Der letzte Fall ist `GET /organizations` – die Abfrage, die bei jedem Seitenaufruf läuft. Ohne den
+zweiten Index müsste PostgreSQL dafür jedes Mal die ganze Tabelle lesen. Nachweisen lässt sich das
+mit `EXPLAIN ANALYZE`: `Seq Scan` statt `Index Scan`.
+
+Umgekehrt gilt: Hätten wir die Spalten als `(userId, organizationId)` herum definiert, bräuchten wir
+den Extra-Index nicht – dafür aber einen auf `organizationId`. Die Reihenfolge in einem
+zusammengesetzten Index ist eine Entscheidung, keine Formalie.
+
+### 66. Warum ein Postgres-Enum für die Rolle und nicht einfach `TEXT`?
+
+Weil die **Datenbank** die gültigen Werte erzwingt, nicht der Anwendungscode. `'Admn'` kommt gar
+nicht erst hinein – auch nicht über ein Migrationsskript, einen anderen Dienst oder eine manuelle
+Korrektur in `psql`. Zusätzlich erzeugt Prisma daraus einen TypeScript-Union-Typ, sodass der
+Compiler jeden Tippfehler findet.
+
+Der Preis ist Starrheit: Ein neuer Wert braucht eine Migration (`ALTER TYPE ... ADD VALUE`), und
+Werte zu entfernen oder umzusortieren ist in PostgreSQL umständlich, weil bestehende Zeilen darauf
+zeigen.
+
+Die Abwägung lautet also **Sicherheit gegen Beweglichkeit**. Bei einer Rollenliste, die sich alle
+paar Jahre ändert, gewinnt Sicherheit. Bei etwas Volatilem – frei definierbare Task-Status pro
+Organisation – wäre `TEXT` mit Referenztabelle richtig, weil sich die Werte dann zur *Laufzeit*
+ändern müssen, nicht zur Deploy-Zeit.
+
+Dritte Möglichkeit: `TEXT` mit `CHECK`-Constraint. Erzwingt ebenfalls, ist leichter zu ändern,
+liefert aber keinen generierten Typ.
+
+**Fallstrick, den wir bewusst vermieden haben:** Die Enum-Werte sind absteigend nach Rechten
+notiert, weil sie sich so leichter lesen. Der Code darf daraus **keine Ordnung ableiten** –
+`rolle <= ADMIN` wäre ein Zahlenvergleich auf einem Enum und bricht still, sobald jemand einen Wert
+dazwischenschiebt. Rechte werden über eine explizite Zuordnung geprüft, nicht über Sortierung.
+
+### 67. Ihr habt `ON DELETE CASCADE` von der Mitgliedschaft zum Nutzer. Was passiert, wenn der letzte Eigentümer sein Konto löscht?
+
+Die Organisation bleibt **ohne Eigentümer** zurück – niemand kann sie mehr verwalten, obwohl ihre
+Daten weiterexistieren.
+
+Das ist die richtige Antwort auf diese Frage, weil sie zeigt, wo die Grenze zwischen Datenbank- und
+Anwendungslogik liegt. `ON DELETE CASCADE` ist korrekt: Eine Mitgliedschaft ohne Nutzer beschreibt
+nichts mehr, sie *muss* verschwinden. Die Datenbank kann aber nicht wissen, dass eine Organisation
+mindestens einen `OWNER` braucht – das ist eine fachliche Regel.
+
+Solche Regeln gehören in die Anwendung, und zwar an *jede* Stelle, die sie verletzen könnte:
+
+- Mitglied entfernen
+- eigene Mitgliedschaft aufgeben („Organisation verlassen")
+- Rolle des letzten Eigentümers herabstufen
+- Konto löschen
+
+Vier Wege, eine Regel. Deshalb liegt die Prüfung im Service und nicht im Controller – sonst
+vergisst man den vierten Weg. Umgesetzt in Scheibe 2.3.
