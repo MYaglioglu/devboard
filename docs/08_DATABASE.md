@@ -81,6 +81,36 @@ im Plural und Kleinschreibung (`users`) – abgebildet über `@@map`.
 Zusätzlich verwaltet Prisma die Tabelle `_prisma_migrations`. Darin steht, welche Migrationen bereits
 angewendet wurden – so weiß Prisma auf jedem Server, was noch fehlt.
 
+### `refresh_tokens`
+
+| Spalte | Typ | Constraints |
+|---|---|---|
+| `id` | `uuid` | Primärschlüssel |
+| `tokenHash` | `text` | **UNIQUE**, SHA-256 des Tokens – nie der Token selbst |
+| `familyId` | `uuid` | Index; verbindet alle durch Rotation entstandenen Token |
+| `userId` | `uuid` | Fremdschlüssel auf `users`, Index, `ON DELETE CASCADE` |
+| `expiresAt` | `timestamp(3)` | 30 Tage nach Ausstellung |
+| `revokedAt` | `timestamp(3)` | nullable – gesetzt, sobald verbraucht oder widerrufen |
+| `createdAt` | `timestamp(3)` | Default `CURRENT_TIMESTAMP` |
+
+**Warum hier SHA-256 und nicht argon2?** Der Token besteht aus 256 Bit Zufall und ist kein
+erratbares Passwort – gegen Durchprobieren muss nichts gebremst werden. Geschwindigkeit ist hier
+sogar erwünscht, weil bei jedem Erneuern geprüft wird. Bei Passwörtern ist es genau umgekehrt.
+
+**Warum entwertete Zeilen nicht gelöscht werden:** Nur ein aufbewahrter, entwerteter Token erlaubt
+es, seine Wiederverwendung überhaupt zu bemerken. Würde man ihn löschen, wäre ein gestohlener Token
+nicht von einem erfundenen zu unterscheiden – und die Familie bliebe unangetastet.
+
+**Warum `ON DELETE CASCADE`:** Wird ein Konto gelöscht, verschwinden auch seine Token. Sonst blieben
+verwaiste Zeilen zurück, die auf nichts zeigen.
+
+**Warum zwei Indizes:** `userId` für „alle Sitzungen dieses Nutzers", `familyId` für das Widerrufen
+einer ganzen Familie. Ohne sie müsste PostgreSQL die Tabelle bei jedem Erneuern vollständig lesen –
+bei wachsender Nutzerzahl der erste Engpass.
+
+**Aufräumen (offen):** Abgelaufene und widerrufene Zeilen wachsen unbegrenzt. Ein regelmäßiger
+Löschauftrag für alles, was älter als die maximale Lebensdauer ist, gehört später dazu.
+
 ---
 
 ## Arbeiten mit Migrationen

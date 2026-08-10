@@ -223,6 +223,83 @@ Signaturprüfung schlicht abschaltet.
 
 ---
 
+## `POST /auth/refresh`
+
+Stellt einen neuen Access-Token aus und **rotiert** dabei den Refresh-Token.
+
+**Kein Anfragekörper.** Der Nachweis ist allein das Cookie – der Browser schickt es automatisch mit,
+der Client muss nichts tun und kann den Wert auch gar nicht lesen (`httpOnly`).
+
+Beachte: Hier wird **kein Passwort geprüft**. Der Besitz eines gültigen, unverbrauchten
+Refresh-Tokens *ist* der Nachweis. Genau deshalb muss er so gut geschützt sein.
+
+### Antwort · 200 OK
+
+Wie beim Login: `accessToken` und `user`. Zusätzlich wird ein **neues** Refresh-Cookie gesetzt; das
+alte ist ab sofort entwertet.
+
+### Antwort · 401 Unauthorized
+
+Bei fehlendem, unbekanntem, abgelaufenem oder **bereits verbrauchtem** Token – in allen Fällen mit
+derselben Meldung, damit ein Angreifer nicht erkennt, ob sein Token jemals gültig war.
+
+---
+
+## `POST /auth/logout`
+
+Beendet die Sitzung: widerruft die gesamte Token-Familie und löscht das Cookie.
+
+### Antwort · 204 No Content
+
+**Immer 204** – auch ohne Cookie oder mit ungültigem Token. Ein fehlschlagender Logout wäre für
+Nutzer unverständlich und würde verraten, ob ein Token gültig war.
+
+Der **Access-Token bleibt bis zu seinem Ablauf technisch gültig** (maximal 15 Minuten). Das ist die
+bekannte Schwäche zustandsloser Token und der Grund für die kurze Lebensdauer. Neue bekommt der
+Angreifer aber nicht mehr.
+
+---
+
+## Der Refresh-Token
+
+| Eigenschaft | Wert |
+|---|---|
+| Ablage | `httpOnly`-Cookie `devboard_refresh` |
+| Lebensdauer | 30 Tage |
+| Inhalt | 32 Byte Zufall, base64url |
+| Gespeichert als | SHA-256-Hash in `refresh_tokens` |
+| `SameSite` | `Lax` |
+| `Path` | `/auth` |
+| `Secure` | nur in Produktion (lokal kein HTTPS) |
+
+### Rotation
+
+Bei jedem Erneuern wird der benutzte Token entwertet und ein neuer ausgestellt – ein Refresh-Token
+ist ein **Einmal-Token**.
+
+### Wiederverwendungs-Erkennung – der eigentliche Trick
+
+Wird ein bereits entwerteter Token noch einmal vorgelegt, gibt es zwei Erklärungen: ein
+Netzwerkfehler beim letzten Erneuern, oder ein Diebstahl mit paralleler Nutzung. Beide sind nicht
+unterscheidbar – also wird der schlimmere Fall angenommen:
+
+> **Die gesamte Token-Familie wird widerrufen.** Angreifer *und* rechtmäßiger Nutzer fliegen raus.
+> Der Nutzer meldet sich neu an, der Angreifer kann das nicht.
+
+Alle durch Rotation auseinander hervorgegangenen Token teilen sich eine `familyId`. Entwertete Token
+werden deshalb **nicht gelöscht**: Nur eine aufbewahrte, entwertete Zeile erlaubt es, die
+Wiederverwendung überhaupt zu bemerken.
+
+Jeder Login startet eine **eigene** Familie – Abmelden am Laptop wirft das Handy nicht mit hinaus.
+
+### Warum das Cookie und nicht der Antwortkörper
+
+Stünde der Refresh-Token im JSON, könnte JavaScript ihn lesen – und der ganze Zweck des
+`httpOnly`-Cookies wäre dahin. Er erscheint deshalb **nirgends** in einer Antwort, nur im
+`Set-Cookie`-Header.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |
