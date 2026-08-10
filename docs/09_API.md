@@ -68,6 +68,78 @@ die Readiness-Frage. Bei wachsender Anwendung trennt man das in `/health/live` u
 
 ---
 
+## `POST /auth/register`
+
+Legt ein Benutzerkonto an.
+
+### Anfrage
+
+```json
+{
+  "email": "max@example.com",
+  "password": "einSicheresPasswort",
+  "name": "Max"
+}
+```
+
+| Feld | Regeln |
+|---|---|
+| `email` | Pflicht, gültige Adresse, max. 255 Zeichen. Wird getrimmt und **kleingeschrieben** gespeichert |
+| `password` | Pflicht, 10–128 Zeichen. Keine Zeichenklassen-Pflicht |
+| `name` | Optional, 1–100 Zeichen |
+
+**Warum keine Sonderzeichen-Pflicht?** Das NIST empfiehlt seit 2017 (SP 800-63B) ausdrücklich
+Länge statt Zeichenvielfalt. Erzwungene Sonderzeichen führen zu vorhersagbaren Mustern wie
+`Passwort1!` und zu aufgeschriebenen Passwörtern.
+
+**Warum eine Obergrenze?** Gegen Denial-of-Service: argon2 ist absichtlich rechenintensiv. Ohne
+Obergrenze ließe sich der Server mit wenigen sehr langen Passwörtern lahmlegen.
+
+### Antwort · 201 Created
+
+```json
+{
+  "id": "b3f1c2d4-...",
+  "email": "max@example.com",
+  "name": "Max",
+  "createdAt": "2026-08-10T10:00:00.000Z"
+}
+```
+
+Der Passwort-Hash wird **niemals** zurückgegeben. Er wird gar nicht erst aus der Datenbank geladen
+(`select` statt nachträglichem Entfernen) – wer Felder hinterher löscht, vergisst irgendwann eines.
+
+### Antwort · 400 Bad Request
+
+```json
+{
+  "message": "Validierung fehlgeschlagen",
+  "errors": {
+    "email": ["Bitte eine gueltige E-Mail-Adresse angeben"],
+    "password": ["Das Passwort muss mindestens 10 Zeichen lang sein"]
+  }
+}
+```
+
+Feldbezogen, damit das Frontend die Meldungen direkt am passenden Eingabefeld anzeigen kann.
+
+### Antwort · 409 Conflict
+
+Die Adresse ist bereits registriert.
+
+**Bewusste Abwägung:** Ein 409 verrät einem Angreifer, dass diese Adresse existiert – das nennt man
+*User Enumeration*. Vermeiden ließe sich das nur, indem die Registrierung immer 201 liefert und den
+Hinweis per E-Mail zustellt. Ohne E-Mail-Versand wäre das für Nutzer unbrauchbar („warum kann ich
+mich nicht einloggen?"). Beim späteren **Login** bleibt die Fehlermeldung dagegen generisch – dort
+gibt es keinen Grund, etwas preiszugeben.
+
+**Technisch wichtig:** Der Konflikt wird nicht durch eine Vorab-Prüfung erkannt, sondern aus dem
+Fehlercode `P2002` der Datenbank abgeleitet. Eine Prüfung im Code enthielte eine Race Condition
+zwischen Prüfen und Schreiben. Der `UNIQUE`-Index ist die einzige Instanz, die das atomar
+beantworten kann.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |
