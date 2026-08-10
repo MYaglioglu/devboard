@@ -14,6 +14,16 @@ interface NutzerAntwort {
   passwordHash?: string;
 }
 
+interface LoginAntwort {
+  accessToken: string;
+  user: { id: string; email: string; name: string | null };
+}
+
+interface FehlerAntwort {
+  message: string;
+  statusCode: number;
+}
+
 describe('Auth (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -171,6 +181,124 @@ describe('Auth (e2e)', () => {
       expect(Object.keys(koerper.errors ?? {})).toEqual(
         expect.arrayContaining(['email', 'password']),
       );
+    });
+  });
+
+  describe('POST /auth/login', () => {
+    const adresse = () => email('login');
+    const passwort = 'einSicheresPasswort';
+
+    beforeAll(async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({ email: adresse(), password: passwort, name: 'Max' })
+        .expect(201);
+    });
+
+    it('meldet mit richtigen Zugangsdaten an und liefert 200', async () => {
+      const antwort = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse(), password: passwort })
+        .expect(200);
+
+      const koerper = antwort.body as LoginAntwort;
+
+      // 200, nicht 201: Ein Login erzeugt keine Ressource, er prueft
+      // Zugangsdaten.
+      expect(koerper.user.email).toBe(adresse());
+      expect(koerper.user.name).toBe('Max');
+      expect(koerper.accessToken.split('.')).toHaveLength(3);
+    });
+
+    it('gibt weder Hash noch Passwort zurueck', async () => {
+      const antwort = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse(), password: passwort })
+        .expect(200);
+
+      expect(JSON.stringify(antwort.body)).not.toContain('argon2');
+      expect(JSON.stringify(antwort.body)).not.toContain(passwort);
+    });
+
+    it('legt Nutzer-ID und E-Mail lesbar in den Token, aber nichts Geheimes', async () => {
+      const antwort = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse(), password: passwort })
+        .expect(200);
+
+      const koerper = antwort.body as LoginAntwort;
+
+      // Der Payload ist nur base64-KODIERT, nicht verschluesselt - jeder mit
+      // dem Token kann ihn lesen. Genau deshalb duerfen dort keine
+      // Geheimnisse stehen.
+      const payload = JSON.parse(
+        Buffer.from(koerper.accessToken.split('.')[1], 'base64url').toString(),
+      ) as { sub: string; email: string; exp: number; iat: number };
+
+      expect(payload.email).toBe(adresse());
+      expect(payload.sub).toMatch(/^[0-9a-f-]{36}$/);
+      expect(JSON.stringify(payload)).not.toContain('argon2');
+
+      // Ablaufzeit ist gesetzt und liegt in der Zukunft (15 Minuten).
+      expect(payload.exp).toBeGreaterThan(payload.iat);
+    });
+
+    it('akzeptiert die Adresse auch in abweichender Schreibweise', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse().toUpperCase(), password: passwort })
+        .expect(200);
+    });
+
+    it('lehnt ein falsches Passwort mit 401 ab', () => {
+      return request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse(), password: 'falschesPasswort' })
+        .expect(401);
+    });
+
+    it('lehnt eine unbekannte Adresse mit 401 ab', () => {
+      return request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: email('gibt-es-nicht'), password: passwort })
+        .expect(401);
+    });
+
+    // Der wichtigste Test dieses Blocks.
+    it('antwortet bei unbekannter Adresse und falschem Passwort identisch', async () => {
+      const unbekannt = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: email('gibt-es-nicht'), password: passwort })
+        .expect(401);
+
+      const falsch = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse(), password: 'falschesPasswort' })
+        .expect(401);
+
+      // Unterschiedliche Meldungen wuerden verraten, welche Adressen
+      // registriert sind - User Enumeration.
+      expect((unbekannt.body as FehlerAntwort).message).toBe(
+        (falsch.body as FehlerAntwort).message,
+      );
+    });
+
+    it('lehnt eine leere Anfrage mit 400 ab', () => {
+      return request(app.getHttpServer())
+        .post('/auth/login')
+        .send({})
+        .expect(400);
+    });
+
+    it('prueft beim Login KEINE Mindestlaenge des Passworts', async () => {
+      // Wichtige Abgrenzung zur Registrierung: Eine Laengenpruefung beim Login
+      // wuerde verraten, welche Passwoerter ueberhaupt moeglich sind, und
+      // Nutzer mit aelteren Passwoertern aussperren. Erwartet wird 401
+      // (falsche Zugangsdaten), nicht 400 (ungueltige Eingabe).
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse(), password: 'kurz' })
+        .expect(401);
     });
   });
 });
