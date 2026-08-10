@@ -3,11 +3,18 @@
 Aufruf aus dem Wurzelverzeichnis des Repositories:
 
     python -m pip install reportlab
-    python scripts/build_handbuch.py
+    python scripts/build_handbuch.py                 -> DevBoard-Handbuch.pdf
+    python scripts/build_handbuch.py --sprint 1      -> DevBoard-Handbuch-Sprint-1.pdf
 
-Ergebnis: DevBoard-Handbuch.pdf (gitignored - es laesst sich jederzeit neu
-erzeugen und gehoert deshalb nicht ins Repository).
+Die Sprint-Angabe erzeugt eine eigene Datei und vermerkt den Stand auf der
+Titelseite. So bleiben aeltere Ausgaben daneben bestehen - man sieht, wie das
+Handbuch mit dem Projekt gewachsen ist.
+
+Ergebnis ist gitignored: Es laesst sich jederzeit aus den Markdown-Quellen neu
+erzeugen und gehoert deshalb nicht ins Repository.
 """
+
+import argparse
 
 import re
 import pathlib
@@ -438,10 +445,25 @@ class Handbuch(BaseDocTemplate):
 # Zusammenbau
 # --------------------------------------------------------------------------
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--sprint",
+        type=int,
+        default=None,
+        help="Sprintnummer fuer Dateiname und Titelseite (z. B. 1)",
+    )
+    argumente = parser.parse_args()
+
     docs_pfad = REPO / "docs"
     dateien = [REPO / "README.md"] + sorted(docs_pfad.glob("*.md"))
 
-    ziel = REPO / "DevBoard-Handbuch.pdf"
+    if argumente.sprint is None:
+        ziel = REPO / "DevBoard-Handbuch.pdf"
+        stand = None
+    else:
+        ziel = REPO / f"DevBoard-Handbuch-Sprint-{argumente.sprint}.pdf"
+        stand = f"Stand: nach Sprint {argumente.sprint}"
+
     doc = Handbuch(str(ziel), title="DevBoard - Entwicklerhandbuch", author="Murat Yaglioglu")
     nutzbreite = A4[0] - 4 * cm
 
@@ -451,6 +473,9 @@ def main():
     story.append(Spacer(1, 6 * cm))
     story.append(Paragraph("DevBoard", S["titel"]))
     story.append(Paragraph("Entwicklerhandbuch", S["untertitel"]))
+    if stand:
+        story.append(Spacer(1, 0.3 * cm))
+        story.append(Paragraph(stand, S["untertitel"]))
     story.append(Spacer(1, 1.2 * cm))
     story.append(
         Table([[""]], colWidths=[6 * cm], rowHeights=[1.2],

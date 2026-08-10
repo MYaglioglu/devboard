@@ -8,6 +8,10 @@ Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Sprint 1 abgeschlossen** – Authentifizierung von der Datenbank bis zur UI, 155 Tests
+- **Sprint 1, Scheibe 6:** Rate Limiting (5/min für Anmelden), Helmet-Security-Header,
+  globaler Exception-Filter ohne Stacktraces nach außen
+- **Sprint 1, Scheibe 5b:** Vitest-Suite fürs Frontend (26 Tests) – fand sofort zwei echte Fehler
 - **Sprint 1, Scheibe 5:** Anmelde- und Registrierungsformular (React Hook Form + Zod),
   Access-Token im Arbeitsspeicher, stilles Erneuern über das httpOnly-Cookie, geschütztes Dashboard
   mit TanStack Query

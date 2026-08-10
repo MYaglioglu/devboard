@@ -41,6 +41,18 @@ rotieren · wo ein Token im Browser sicher liegt · Guards als NestJS-Pendant zu
 **Parallel (nicht an den Schluss schieben):** GitHub-Profil aufräumen – Bio, Profil-README,
 gepinnte Repos. LinkedIn aktualisieren.
 
+**Abgeschlossen am 11.08.2026**, in sechs Scheiben plus einer nachgezogenen für Frontend-Tests:
+
+- [x] Registrierung mit argon2id
+- [x] Login mit JWT, Schutz gegen Timing-Angriffe
+- [x] Refresh-Token mit Rotation und Wiederverwendungs-Erkennung
+- [x] Globaler Guard (secure by default), `GET /auth/me`
+- [x] Anmelde- und Registrierungsformular, geschütztes Dashboard
+- [x] Frontend-Tests (Vitest), nachgezogen statt aufgeschoben
+- [x] Rate Limiting, Security-Header, einheitliche Fehlerantworten
+
+**155 Tests** (83 Backend-Unit, 48 Backend-E2E, 26 Frontend), alle in der CI.
+
 ---
 
 ## Sprint 2 – Organisationen, Teams & Multi-Tenancy

@@ -393,3 +393,94 @@ und einem Beleg im Repository.
 **Sprint 1: Authentifizierung.** Registrierung, Login, Passwort-Hashing mit argon2, JWT mit
 Access- und Refresh-Token, Guards, geschützte Seiten im Frontend – der erste vollständige vertikale
 Slice von der Datenbank bis zur UI.
+
+---
+
+## Session 6 – 10./11.08.2026 · Sprint 1 abgeschlossen
+
+**Thema:** Authentifizierung von der Datenbank bis zur UI
+**Ergebnis:** Registrierung, Login, Refresh-Rotation, Guard, Frontend, Härtung – 155 Tests
+
+### Die sieben Scheiben
+
+Der Sprint war in kleine, jeweils mergebare Stücke geschnitten. Das hat sich bewährt: Nach jeder
+Scheibe stand ein lauffähiger, vorzeigbarer Stand – nicht ein halbfertiger Riesen-PR.
+
+### Was ich gelernt habe
+
+**Passwörter.** Hashen statt verschlüsseln (die Umkehrung braucht man nie). Nicht SHA-256, weil
+Geschwindigkeit hier ein Nachteil ist. argon2id, weil speicherhart. Der Salt steckt im Hash, ebenso
+die Parameter – deshalb lassen sie sich später erhöhen, ohne alte Passwörter zu brechen.
+
+**Die Datenbank ist die einzige Instanz, die Eindeutigkeit garantieren kann.** Eine Vorab-Prüfung
+„gibt es die E-Mail schon?" enthält eine Race Condition. Richtig: schreiben und den Fehlercode
+`P2002` auswerten. *Die Prüfung im Code ist für die Fehlermeldung da, der Constraint für die
+Garantie.*
+
+**Sicherheit ist mehr als die Fehlermeldung.** Beim Login ist sie generisch – aber das genügt nicht:
+Auch die **Antwortzeit** verrät etwas. Deshalb wird das Passwort selbst dann gegen einen
+Platzhalter-Hash geprüft, wenn der Nutzer gar nicht existiert. Ein früher `return` wäre hier ein
+Sicherheitsfehler, kein Performance-Gewinn.
+
+**JWT: lesbar, aber nicht fälschbar.** base64 ist Kodierung, keine Verschlüsselung – ich habe den
+Payload selbst mit zwei Zeilen PowerShell gelesen, ohne das Geheimnis. Daraus folgt: nie etwas
+Geheimes hineinlegen. Und das Signaturverfahren wird serverseitig festgelegt, nie dem Token
+entnommen (`alg: none`).
+
+**Rotation ist Erkennung, keine Vorbeugung.** Ein gestohlener Refresh-Token funktioniert einmal.
+Der Gewinn: Sobald der zweite ihn vorlegt, ist er verbraucht – und *daran* erkennt der Server den
+Diebstahl. Die Reaktion ist hart: Die ganze Familie fliegt raus, auch der rechtmäßige Nutzer. Weil
+sich beide nicht unterscheiden lassen und die Kosten ungleich verteilt sind – er kennt sein
+Passwort, der Angreifer nicht.
+
+**Secure by Default.** Der Guard läuft global, Ausnahmen werden ausdrücklich markiert. Der
+Unterschied zeigt sich im Fehlerfall: Ein vergessener Guard wäre ein *stiller* Fehler, ein
+vergessenes `@Oeffentlich()` ein *lauter*.
+
+**Langsam hashen, wo die Eingabe erratbar ist. Schnell hashen, wo sie es nicht ist.** Passwort →
+argon2. Refresh-Token (256 Bit Zufall) → SHA-256.
+
+**Frontend-Schutz ist Benutzerführung, Backend-Schutz ist Sicherheit.** Die Weiterleitung auf
+`/login` verhindert nur eine leere Seite. Dasselbe gilt für Zod im Browser: Bequemlichkeit, nicht
+Kontrolle.
+
+**Rate Limiting begrenzt die Anzahl, argon2 die Kosten.** Beides zusammen macht Brute Force
+unwirtschaftlich – eines allein nicht.
+
+### Was schwierig war
+
+**Nicht die Konzepte, sondern die Werkzeug-Eigenheiten.** Drei Sackgassen kosteten mehr Zeit als
+die eigentliche Fachlogik:
+
+- `ConfigModule.forRoot()` wird beim **Import** ausgewertet, nicht beim Instanziieren – deshalb
+  wirkte das Abschalten des Rate Limitings im Test nicht.
+- `overrideGuard` greift nicht bei Guards, die über `APP_GUARD` registriert sind.
+- Benannte Throttler gelten **alle** für **jede** Route – die strenge Anmelde-Grenze hätte global
+  gewirkt.
+
+Alle drei stehen im Fehlerprotokoll. Das Muster dahinter: Die Konzepte sind übertragbar, die
+Framework-Details muss man nachschlagen oder sich verbrennen.
+
+### Was sich bewährt hat
+
+**Die Tests haben sich mehrfach bezahlt gemacht** – und zwar nicht als Formalität:
+
+| Gefunden von | Fehler |
+|---|---|
+| E2E-Test (401 statt 200) | `cookieParser` stand in `main.ts` und fehlte damit im Test |
+| Frontend-Test | `finally` statt `catch`: Nutzer blieb auf geschützter Seite stehen |
+| Frontend-Test | Fehlermeldung im `<label>` verfälschte den zugänglichen Feldnamen |
+
+Keiner davon wäre beim Ausprobieren von Hand aufgefallen.
+
+### Offene Fragen für später
+
+- Wie kommt ein gemeinsamer Rate-Limit-Zähler (Redis) dazu, wenn mehrere Instanzen laufen?
+- Wie räumt man abgelaufene Refresh-Token regelmäßig auf?
+- Wie sähe ein „Alle Sitzungen beenden"-Knopf aus – und was kostet er an Komplexität?
+
+### Nächster Schritt
+
+**Sprint 2: Organisationen und Multi-Tenancy.** Der stärkste Senioritäts-Marker im ganzen Projekt:
+Autorisierung auf Datenebene, nicht nur am Endpoint. Und der erste `403` – bisher gab es
+ausschließlich `401`.
