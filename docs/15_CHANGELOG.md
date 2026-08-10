@@ -8,6 +8,16 @@ Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Sprint 1, Scheibe 5:** Anmelde- und Registrierungsformular (React Hook Form + Zod),
+  Access-Token im Arbeitsspeicher, stilles Erneuern über das httpOnly-Cookie, geschütztes Dashboard
+  mit TanStack Query
+- **Sprint 1, Scheibe 4:** Globaler Access-Token-Guard (secure by default), `GET /auth/me`
+- **Sprint 1, Scheibe 3:** Refresh-Token mit Rotation und Wiederverwendungs-Erkennung,
+  `POST /auth/refresh` und `POST /auth/logout`
+- **Sprint 1, Scheibe 2:** `POST /auth/login` mit JWT, Schutz gegen Timing-Angriffe
+- **Sprint 1, Scheibe 1:** `POST /auth/register` mit argon2id
+- ADR-007: Access-Token im Speicher, Refresh-Token im httpOnly-Cookie
+- Interviewfragen 36–57 zu Passwörtern, JWT, Sitzungen und Guards
 - **Sprint 0 abgeschlossen**
 - GitHub-Actions-Pipeline: Lint, Unit-Tests, E2E-Tests und Build für Backend und Frontend,
   mit PostgreSQL-18-Service-Container
