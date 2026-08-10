@@ -172,11 +172,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const abmelden = useCallback(async () => {
     try {
       await api('/auth/logout', { method: 'POST' });
-    } finally {
-      // Auch wenn der Server nicht erreichbar war: lokal wird in jedem Fall
-      // abgemeldet. Alles andere waere fuer Nutzer unverstaendlich.
-      verwerfe();
+    } catch {
+      // Bewusst `catch` und nicht `finally`: Mit `finally` wuerde zwar lokal
+      // aufgeraeumt, der Fehler flöge aber weiter - und der Aufrufer im
+      // Dashboard kaeme nie bis zur Weiterleitung auf /login. Der Nutzer
+      // stuende dann auf einer Seite, fuer die er keine Sitzung mehr hat.
+      //
+      // Ein fehlgeschlagener Serveraufruf darf das Abmelden nicht verhindern.
+      // Das Refresh-Cookie bleibt in diesem Fall bestehen - unschoen, aber
+      // besser als ein Nutzer, der nicht herauskommt. Beim naechsten
+      // erreichbaren Server wird es beim Anmelden ohnehin ersetzt.
     }
+
+    verwerfe();
   }, [verwerfe]);
 
   const wert = useMemo<AuthZustand>(
