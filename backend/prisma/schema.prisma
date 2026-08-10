@@ -23,11 +23,18 @@ datasource db {
   // Die URL kommt aus prisma.config.ts (Prisma 7), nicht mehr aus dieser Datei.
 }
 
-/// Ein Benutzerkonto. Wird in Sprint 1 um Authentifizierung erweitert.
+/// Ein Benutzerkonto.
 model User {
-  id        String   @id @default(uuid()) @db.Uuid
-  email     String   @unique
-  name      String?
+  id    String  @id @default(uuid()) @db.Uuid
+  /// Immer kleingeschrieben gespeichert - siehe AuthService.
+  /// Sonst waeren "Max@example.com" und "max@example.com" zwei Konten.
+  email String  @unique
+  name  String?
+
+  /// NIE das Passwort selbst, immer nur der argon2-Hash.
+  /// Der Name sagt das ausdruecklich - "password" waere eine Einladung zum Fehler.
+  passwordHash String
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
