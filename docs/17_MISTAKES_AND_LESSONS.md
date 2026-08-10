@@ -236,3 +236,48 @@ liest ein Screenreader als Feldnamen vor.
 3. **Beide Fehler waren von Hand nicht auffindbar.** Der erste braucht einen nicht erreichbaren
    Server, der zweite einen Screenreader. Genau dafür gibt es automatisierte Tests: für die Fälle,
    die man beim Ausprobieren nicht herstellt.
+
+---
+
+## 2026-08-11 – `ConfigModule.forRoot()` wird beim Import ausgewertet
+
+**Symptom:** Nach Einführung des Rate Limitings schlugen zwölf E2E-Tests mit `429 Too Many Requests`
+fehl – die Suite meldet sich dutzendfach an und sperrte sich selbst aus. Der naheliegende Versuch,
+das Limit im Test abzuschalten, wirkte nicht:
+
+```ts
+beforeAll(async () => {
+  process.env.THROTTLE_LIMIT = '0';        // wirkungslos
+  const modul = await Test.createTestingModule({ imports: [AppModule] }).compile();
+```
+
+**Ursache:** `ConfigModule.forRoot({...})` steht als Argument im `@Module`-Decorator. Dieses Argument
+wird ausgewertet, **sobald `app.module.ts` importiert wird** – also beim Laden der Testdatei, lange
+bevor `beforeAll` läuft. Jede Zuweisung an `process.env` dort kommt grundsätzlich zu spät.
+
+**Zweiter Fehlversuch:** `overrideGuard(ThrottlerGuard)`. Wirkt ebenfalls nicht – über `APP_GUARD`
+registrierte Guards hängen am Token `APP_GUARD`, nicht an ihrer eigenen Klasse.
+
+**Behebung:** Die garantierte Reihenfolge von Import-Nebenwirkungen ausnutzen. Das npm-Skript für
+E2E setzt `THROTTLE_LIMIT=0`; die eine Datei, die das Limit prüfen will, importiert vorher ein
+Modul, das den Wert wieder hochsetzt:
+
+```ts
+import './aktiviere-throttling';              // setzt process.env, läuft zuerst
+import { AppModule } from '../src/app.module';
+```
+
+**Learnings:**
+
+1. **Decorator-Argumente laufen beim Import, nicht beim Instanziieren.** Das gilt für jedes
+   `forRoot()` in einem `@Module`. Wer Konfiguration im Test ändern will, muss vor dem Import daran
+   sein – oder das Modul dynamisch laden.
+2. **Import-Reihenfolge ist eine Zusicherung, keine Kosmetik.** Ein Import allein für seine
+   Nebenwirkung sieht ungewöhnlich aus und braucht deshalb einen Kommentar, der erklärt, warum er
+   ganz oben stehen muss.
+3. **Zustandsbehaftete Tests sind nicht beliebig umsortierbar.** Der Zähler des Rate Limiters liegt
+   im Arbeitsspeicher; die Tests, die ihn aufbrauchen, mussten ans Ende der Datei. Und die
+   Erwartungen dürfen nicht auf einem unberührten Zähler beruhen – geprüft wird die **Aussage**
+   („irgendwann kommt 429, und dann bleibt es dabei"), nicht die Buchhaltung.
+4. **Zwei der Fehlschläge waren falsche Erwartungen, kein Codefehler.** Ein Test, der etwas prüft,
+   das der Code bewusst nicht tut (hier: E-Mail-Format beim Login), ist selbst der Fehler.

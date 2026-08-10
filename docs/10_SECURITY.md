@@ -61,6 +61,39 @@ CSRF-Maßnahmen – das wird in Sprint 1 mit der Authentifizierung relevant.
 - Zugangsnachweis über den `Authorization`-Header, nicht über ein Cookie – dadurch ist CSRF für
   geschützte Endpoints strukturell ausgeschlossen
 
+### Härtung (Sprint 1, Scheibe 6)
+
+**Rate Limiting** – 100 Anfragen pro Minute und IP global, **5 pro Minute** für Anmelden und
+Registrieren.
+
+Warum das nötig ist, obwohl argon2 schon bremst: argon2 macht **einen** Versuch teuer
+(~50–100 ms) – das schützt gegen das Durchprobieren eines geklauten Hashes, nicht gegen jemanden,
+der einfach viele Anfragen schickt. Rate Limiting begrenzt die **Anzahl**, argon2 die **Kosten pro
+Versuch**. Erst beides zusammen macht Brute Force unwirtschaftlich.
+
+Die strengen Grenzen stehen fest im Code (`auth/throttle.ts`), nicht in der Konfiguration: Das ist
+eine Sicherheitsentscheidung, keine Betriebseinstellung. Wer sie pro Umgebung lockern kann, lockert
+sie irgendwann versehentlich in Produktion.
+
+**Guard-Reihenfolge:** Das Rate Limiting läuft **vor** der Token-Prüfung. Ein Angreifer, der den
+Server flutet, soll abgewiesen werden, bevor für jede Anfrage eine Signatur geprüft wird – sonst
+wäre die Prüfung selbst der Angriffspunkt.
+
+**Security-Header (Helmet)** – unter anderem `X-Content-Type-Options: nosniff` (verbietet das
+Erraten des Inhaltstyps), `X-Frame-Options` (Clickjacking), `Strict-Transport-Security` (erzwingt
+HTTPS, wirkt erst in Produktion). Außerdem entfällt `X-Powered-By` – eine kostenlose Auskunft an
+Angreifer darüber, wonach sie suchen sollen.
+
+**Einheitliche Fehlerantworten** – ein globaler Exception-Filter. Absichtliche Fehler
+(`HttpException`) werden unverändert durchgereicht, damit feldbezogene Validierungsmeldungen
+erhalten bleiben. Alles andere wird vollständig **ins Log** geschrieben und nach außen zu
+„Interner Serverfehler". Ein Stacktrace verrät Dateipfade, Bibliotheksversionen und Teile des
+Quelltexts – genau daraus baut ein Angreifer sein Bild vom System.
+
+> **Bekannte Grenze:** Der Zähler des Rate Limiters liegt im Arbeitsspeicher. Bei einer Instanz
+> genügt das. Laufen später mehrere hinter einem Loadbalancer, hat jede ihren eigenen Zähler und
+> die tatsächliche Grenze vervielfacht sich. Dann braucht es einen gemeinsamen Speicher (Redis).
+
 ### Keine Geheimnisse im Frontend-Bundle
 
 Variablen mit `NEXT_PUBLIC_`-Präfix landen beim Build im Browser-Bundle und sind öffentlich lesbar.
