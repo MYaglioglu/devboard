@@ -140,6 +140,89 @@ beantworten kann.
 
 ---
 
+## `POST /auth/login`
+
+Prüft Zugangsdaten und stellt einen Access-Token aus.
+
+### Anfrage
+
+```json
+{ "email": "max@example.com", "password": "einSicheresPasswort" }
+```
+
+Beim Login wird **keine Mindestlänge** geprüft – anders als bei der Registrierung. Eine
+Längenprüfung hier würde verraten, welche Passwörter überhaupt in Frage kommen, und Nutzer mit
+älteren Passwörtern aussperren. Die Obergrenze bleibt (Denial-of-Service).
+
+Die E-Mail wird identisch zur Registrierung normalisiert – sonst könnte sich niemand mit
+`Max@example.com` anmelden, obwohl er sich so registriert hat.
+
+### Antwort · 200 OK
+
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIuLi4ifQ.4f2b9c...",
+  "user": { "id": "b3f1c2d4-...", "email": "max@example.com", "name": "Max" }
+}
+```
+
+**200, nicht 201:** Ein Login erzeugt keine Ressource, er prüft Zugangsdaten.
+
+### Antwort · 401 Unauthorized
+
+```json
+{ "statusCode": 401, "message": "E-Mail oder Passwort ist falsch" }
+```
+
+**Immer dieselbe Meldung** – unabhängig davon, ob die Adresse unbekannt oder das Passwort falsch
+war. Unterschiedliche Meldungen wären ein Geschenk an Angreifer: Wer eine Liste geleakter Adressen
+hat, könnte damit in Minuten herausfinden, welche davon hier ein Konto haben.
+
+**Und der Teil, den man leicht vergisst:** Auch die *Antwortzeit* darf nichts verraten. Deshalb wird
+das Passwort selbst dann gegen einen Platzhalter-Hash geprüft, wenn die Adresse gar nicht existiert.
+Ohne diesen Schritt antwortete der Server bei unbekannten Adressen messbar schneller, weil argon2
+absichtlich langsam ist – User Enumeration über die Zeitmessung.
+
+---
+
+## Der Access-Token
+
+Ein **JWT** aus drei base64url-kodierten Teilen:
+
+```
+eyJhbGciOiJIUzI1NiJ9 . eyJzdWIiOiJhYmMifQ . 4f2b9c...
+\__________________/   \________________/   \______/
+      Header                Payload         Signatur
+```
+
+| Claim | Bedeutung |
+|---|---|
+| `sub` | Nutzer-ID (RFC 7519: „Subject") |
+| `email` | zur Bequemlichkeit im Frontend, keine geheime Angabe |
+| `iat` | ausgestellt am |
+| `exp` | läuft ab am – 15 Minuten nach Ausstellung |
+
+**Der wichtigste Satz zu JWTs: lesbar, aber nicht fälschbar.** base64 ist eine Kodierung, keine
+Verschlüsselung – jeder mit dem Token kann den Payload lesen (`jwt.io` tut genau das). Was er nicht
+kann: den Inhalt ändern, denn dann passt die Signatur nicht mehr.
+
+Daraus folgt: **niemals Geheimnisse in den Payload.**
+
+**Warum die Laufzeit kurz ist:** Ein JWT lässt sich nicht widerrufen. Der Server speichert ihn
+nirgends, er prüft nur die Signatur. Ein gestohlener Token gilt bis zu seinem Ablauf – auch nach
+Logout oder Passwortänderung. Die kurze Lebensdauer ist der einzige Schutz. Den Komfort liefert der
+Refresh-Token, der sehr wohl widerrufbar ist.
+
+Signiert wird mit **HS256** (symmetrisch: ein Geheimnis signiert und prüft). Das passt, solange
+derselbe Dienst beides tut. Bei mehreren Diensten wäre RS256 richtig – privater Schlüssel signiert,
+öffentlicher prüft.
+
+Das Verfahren wird **serverseitig festgelegt** und nicht dem Header des eingehenden Tokens
+entnommen. Sonst wäre der bekannte `alg: none`-Angriff möglich, bei dem ein Angreifer die
+Signaturprüfung schlicht abschaltet.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |
