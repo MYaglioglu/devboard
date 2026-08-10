@@ -2,8 +2,10 @@ import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { AuthService } from './auth.service';
+import { loginSchema } from './dto/login.dto';
 import { registerSchema } from './dto/register.dto';
-import type { OeffentlicherNutzer } from './auth.service';
+import type { LoginErgebnis, OeffentlicherNutzer } from './auth.service';
+import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
 
 /**
@@ -35,5 +37,20 @@ export class AuthController {
     @Body(new ZodValidationPipe(registerSchema)) daten: RegisterDto,
   ): Promise<OeffentlicherNutzer> {
     return this.authService.register(daten);
+  }
+
+  /**
+   * POST /auth/login
+   *
+   * 200 OK, nicht 201: Ein Login ERZEUGT keine Ressource, er prueft
+   * Zugangsdaten. NestJS wuerde bei POST von sich aus 201 liefern - deshalb
+   * steht der Statuscode hier ausdruecklich.
+   */
+  @Post('login')
+  @HttpCode(HttpStatus.OK)
+  async login(
+    @Body(new ZodValidationPipe(loginSchema)) daten: LoginDto,
+  ): Promise<LoginErgebnis> {
+    return this.authService.login(daten);
   }
 }

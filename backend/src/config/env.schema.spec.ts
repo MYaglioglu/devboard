@@ -3,6 +3,7 @@ import { validateEnv } from './env.schema';
 /** Minimal gueltige Konfiguration - Basis fuer alle Tests. */
 const gueltig = {
   DATABASE_URL: 'postgresql://user:pass@localhost:5432/db?schema=public',
+  JWT_SECRET: 'ein-geheimnis-mit-mindestens-32-zeichen-laenge',
 };
 
 describe('validateEnv', () => {
@@ -27,7 +28,28 @@ describe('validateEnv', () => {
   });
 
   it('lehnt eine fehlende DATABASE_URL ab', () => {
-    expect(() => validateEnv({})).toThrow(/DATABASE_URL/);
+    expect(() => validateEnv({ JWT_SECRET: gueltig.JWT_SECRET })).toThrow(
+      /DATABASE_URL/,
+    );
+  });
+
+  it('lehnt ein fehlendes JWT_SECRET ab', () => {
+    // Kein Default: Ein voreingestelltes Signiergeheimnis waere kein
+    // Geheimnis - jeder, der das Repository kennt, koennte sich damit
+    // beliebige Token ausstellen.
+    expect(() => validateEnv({ DATABASE_URL: gueltig.DATABASE_URL })).toThrow(
+      /JWT_SECRET/,
+    );
+  });
+
+  it('lehnt ein zu kurzes JWT_SECRET ab', () => {
+    expect(() => validateEnv({ ...gueltig, JWT_SECRET: 'zu-kurz' })).toThrow(
+      /JWT_SECRET/,
+    );
+  });
+
+  it('setzt die Lebensdauer des Access-Tokens auf 15 Minuten', () => {
+    expect(validateEnv(gueltig).JWT_ACCESS_TTL).toBe('15m');
   });
 
   it('lehnt eine DATABASE_URL mit falschem Protokoll ab', () => {

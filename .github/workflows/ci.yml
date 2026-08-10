@@ -42,6 +42,13 @@ jobs:
       PORT: 3000
       CORS_ORIGIN: http://localhost:3001
       DATABASE_URL: postgresql://devboard:devboard@localhost:5432/devboard_test?schema=public
+      # Wegwerf-Geheimnis nur fuer den Testlauf. Es signiert ausschliesslich
+      # Token, die innerhalb dieses Jobs erzeugt und wieder verworfen werden -
+      # deshalb darf es hier im Klartext stehen und muss KEIN GitHub-Secret
+      # sein. Ein echtes Produktionsgeheimnis in einer Workflow-Datei waere
+      # dagegen ein schwerer Fehler: Die Datei ist im Repository sichtbar.
+      JWT_SECRET: nur-fuer-die-ci-ein-wegwerf-geheimnis-mit-32-zeichen
+      JWT_ACCESS_TTL: 15m
 
     defaults:
       run:

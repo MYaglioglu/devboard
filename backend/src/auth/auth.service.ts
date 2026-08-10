@@ -1,8 +1,44 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
+import { TokenService } from './token.service';
+import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
+
+/**
+ * Ein gueltiger argon2id-Hash eines zufaelligen, nirgends verwendeten Wertes.
+ *
+ * ============================================================================
+ * WOZU EIN PLATZHALTER-HASH?
+ * ============================================================================
+ * Gegen einen TIMING-ANGRIFF.
+ *
+ * Naiver Login-Code:
+ *
+ *     const nutzer = await findeNutzer(email);
+ *     if (!nutzer) throw new UnauthorizedException();   // <- kehrt SOFORT zurueck
+ *     if (!await verify(nutzer.passwordHash, passwort)) throw ...;
+ *
+ * Existiert die Adresse nicht, antwortet der Server nach wenigen
+ * Millisekunden. Existiert sie, laeuft vorher argon2 - absichtlich langsam,
+ * ~50-100 ms. Diesen Unterschied kann ein Angreifer messen und damit
+ * herausfinden, welche Adressen registriert sind, ganz ohne dass sich die
+ * Fehlermeldung unterscheidet (User Enumeration ueber die Antwortzeit).
+ *
+ * Loesung: Auch wenn kein Nutzer gefunden wurde, wird `verify` ausgefuehrt -
+ * gegen diesen Platzhalter. Beide Wege kosten dann etwa gleich viel Zeit.
+ *
+ * Der Wert ist KEIN Geheimnis: Es ist der Hash einer Zufallszeichenkette, die
+ * niemand kennt und die zu keinem Konto gehoert. Er darf im Quelltext stehen.
+ */
+const PLATZHALTER_HASH =
+  '$argon2id$v=19$m=19456,t=2,p=1$db7cH2nHJpDs8Q+M4Qa3XA$IkAV9Tqs96zzOMK47sZP3lTz9B1beTfO0b/H1f4eVc0';
 
 /**
  * Oeffentliche Sicht auf ein Benutzerkonto.
@@ -19,6 +55,12 @@ export interface OeffentlicherNutzer {
   createdAt: Date;
 }
 
+/** Antwort auf einen erfolgreichen Login. */
+export interface LoginErgebnis {
+  accessToken: string;
+  user: { id: string; email: string; name: string | null };
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -26,6 +68,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly passwords: PasswordService,
+    private readonly tokens: TokenService,
   ) {}
 
   /**
@@ -102,6 +145,65 @@ export class AuthService {
       }
       throw fehler;
     }
+  }
+
+  /**
+   * Meldet einen Nutzer an und gibt einen Access-Token zurueck.
+   *
+   * ==========================================================================
+   * WARUM IMMER DIESELBE FEHLERMELDUNG?
+   * ==========================================================================
+   * Egal ob die Adresse unbekannt ist oder das Passwort falsch: Es kommt
+   * immer 401 mit "E-Mail oder Passwort ist falsch".
+   *
+   * Unterschiedliche Meldungen ("Diese E-Mail ist nicht registriert" vs.
+   * "Falsches Passwort") waeren bequemer - und ein Geschenk an Angreifer. Wer
+   * eine Liste geleakter Adressen hat, koennte damit in Minuten herausfinden,
+   * welche davon bei uns Konten haben, und sich dann auf die konzentrieren.
+   *
+   * Unterschied zur Registrierung: Dort geben wir mit 409 zu, dass die
+   * Adresse existiert - weil ohne E-Mail-Versand die Alternative fuer Nutzer
+   * unbrauchbar waere. Hier gibt es keinen solchen Grund, also wird nichts
+   * preisgegeben. Siehe ADR-007 und 10_SECURITY.md.
+   *
+   * ==========================================================================
+   * WARUM WIRD AUCH BEI UNBEKANNTER ADRESSE GEPRUEFT?
+   * ==========================================================================
+   * Weil sonst die ANTWORTZEIT verraet, was die Fehlermeldung verschweigt -
+   * siehe Kommentar bei PLATZHALTER_HASH. Ein frueher `return` waere hier ein
+   * Sicherheitsfehler, kein Performance-Gewinn.
+   */
+  async login(daten: LoginDto): Promise<LoginErgebnis> {
+    const nutzer = await this.prisma.user.findUnique({
+      where: { email: daten.email },
+      select: { id: true, email: true, name: true, passwordHash: true },
+    });
+
+    // Bewusst KEIN frueher Ausstieg bei `!nutzer` - siehe oben.
+    const passwortStimmt = await this.passwords.verify(
+      nutzer?.passwordHash ?? PLATZHALTER_HASH,
+      daten.password,
+    );
+
+    if (!nutzer || !passwortStimmt) {
+      // Ohne E-Mail-Adresse im Log: Fehlgeschlagene Logins sind haeufig, und
+      // die Logs waeren sonst eine Sammlung personenbezogener Daten. Fuer die
+      // Angriffserkennung reicht die Anzahl - das kommt mit dem Rate Limiting
+      // in Scheibe 6.
+      this.logger.warn('Fehlgeschlagener Login-Versuch');
+      throw new UnauthorizedException('E-Mail oder Passwort ist falsch');
+    }
+
+    const accessToken = await this.tokens.erstelleAccessToken(
+      nutzer.id,
+      nutzer.email,
+    );
+
+    return {
+      accessToken,
+      // Der `passwordHash` aus der Abfrage wird bewusst NICHT durchgereicht.
+      user: { id: nutzer.id, email: nutzer.email, name: nutzer.name },
+    };
   }
 
   /**
