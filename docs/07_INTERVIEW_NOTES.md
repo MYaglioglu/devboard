@@ -548,3 +548,117 @@ Usability-Grund, etwas preiszugeben – „E-Mail oder Passwort ist falsch", una
 von beidem nicht stimmte.
 
 Genau diese Unterscheidung – wo eine Abwägung nötig ist und wo nicht – ist die eigentliche Antwort.
+
+---
+
+## JWT & Login
+
+### 44. Ein JWT ist „lesbar, aber nicht fälschbar". Erklär beide Hälften.
+
+**Lesbar:** Header und Payload sind lediglich **base64url-kodiert**, nicht verschlüsselt. Jeder mit
+dem Token kann den Inhalt im Klartext anzeigen – `jwt.io` tut genau das, und zwei Zeilen Code
+genügen dafür auch ohne Werkzeug.
+
+**Nicht fälschbar:** Der dritte Teil ist eine Signatur über Header und Payload, berechnet mit einem
+geheimen Schlüssel. Ändert jemand ein Zeichen im Payload, passt die Signatur nicht mehr – und ohne
+das Geheimnis kann er keine neue berechnen.
+
+Der Server muss den Token deshalb **nirgends speichern**. Er prüft nur die Signatur. Das ist der
+Vorteil (zustandslos, gut skalierbar) und zugleich die Schwäche (nicht widerrufbar).
+
+### 45. Warum darf im Payload kein Passwort-Hash stehen? Der Token ist doch signiert.
+
+Weil Signatur **Integrität** garantiert, nicht **Vertraulichkeit**. Sie verhindert Veränderung,
+nicht das Lesen. Alles im Payload ist für jeden sichtbar, der den Token in die Hände bekommt – und
+das ist mindestens der Nutzer selbst, oft auch Proxys, Logs und Browser-Erweiterungen.
+
+Faustregel: In den Payload gehört nur, was der Nutzer ohnehin über sich wissen darf. Nutzer-ID,
+E-Mail, Rollen – ja. Passwort-Hash, interne Schlüssel, Kontostände – nein.
+
+Wer Vertraulichkeit braucht, nimmt **JWE** (verschlüsselte Token) statt JWS. In der Praxis fast
+immer unnötig: Man legt einfach nichts Geheimes hinein.
+
+### 46. Warum prüfst du das Passwort auch dann, wenn es den Nutzer gar nicht gibt?
+
+Weil sonst die **Antwortzeit** verrät, was die Fehlermeldung verschweigt.
+
+Naiver Code kehrt bei unbekannter Adresse sofort zurück – nach wenigen Millisekunden. Existiert die
+Adresse, läuft vorher argon2, das absichtlich 50–100 ms braucht. Diesen Unterschied kann ein
+Angreifer messen und damit herausfinden, welche Adressen registriert sind. **User Enumeration über
+einen Seitenkanal**, ganz ohne unterschiedliche Fehlermeldung.
+
+Lösung: Auch ohne gefundenen Nutzer wird `verify` ausgeführt – gegen einen konstanten
+Platzhalter-Hash. Beide Wege kosten dann etwa gleich viel Zeit.
+
+Der Platzhalter ist kein Geheimnis: Es ist der Hash einer Zufallszeichenkette, die zu keinem Konto
+gehört. Er darf im Quelltext stehen.
+
+**Der entscheidende Satz:** Ein früher `return` ist hier kein Performance-Gewinn, sondern ein
+Sicherheitsfehler.
+
+### 47. Warum ist die Login-Meldung generisch, obwohl die Registrierung mit 409 zugibt, dass die Adresse existiert?
+
+Weil die Abwägung unterschiedlich ausfällt.
+
+Bei der **Registrierung** gibt es einen zwingenden Usability-Grund: Ohne Rückmeldung bekäme der
+Nutzer scheinbar ein Konto und könnte sich nicht anmelden. Vermeiden ließe sich das nur mit
+E-Mail-Versand – den gibt es (noch) nicht.
+
+Beim **Login** gibt es keinen solchen Grund. „E-Mail oder Passwort ist falsch" ist genauso
+hilfreich wie eine genauere Meldung, verrät aber nichts. Also wird nichts verraten.
+
+Die eigentliche Antwort auf diese Frage ist nicht „generisch ist besser", sondern: **Man trifft die
+Abwägung bewusst und dokumentiert sie** – statt beide Fälle gleich zu behandeln, ohne
+darüber nachgedacht zu haben.
+
+### 48. Was ist der `alg: none`-Angriff, und was verhindert ihn?
+
+Im Header eines JWT steht das Signaturverfahren, etwa `{"alg":"HS256"}`. Frühe Bibliotheken haben
+dieses Feld **gelesen und befolgt**. Ein Angreifer konnte es auf `{"alg":"none"}` setzen, die
+Signatur weglassen und den Payload frei bestimmen – die Bibliothek prüfte dann pflichtgemäß gar
+nichts.
+
+Verwandte Variante: `HS256` statt `RS256` angeben. Die Bibliothek verwendet dann den *öffentlichen*
+Schlüssel als symmetrisches Geheimnis – und der ist öffentlich.
+
+**Schutz:** Das erwartete Verfahren wird serverseitig festgelegt, nicht dem Token entnommen. In
+unserem Code:
+
+```ts
+signOptions:   { algorithm: 'HS256' },
+verifyOptions: { algorithms: ['HS256'] },
+```
+
+Die Kernaussage dahinter, die weit über JWTs hinausgeht: **Nichts, was aus einer Anfrage stammt,
+darf bestimmen, wie diese Anfrage geprüft wird.**
+
+### 49. Warum nur 15 Minuten Lebensdauer? Und was kann der Server mit einem gestohlenen JWT nicht tun?
+
+Er kann ihn **nicht widerrufen**. Der Server speichert ihn nirgends – er prüft nur die Signatur.
+Ein gestohlener Token gilt bis zu seinem Ablauf, auch wenn der Nutzer sich abmeldet oder das
+Passwort ändert.
+
+Die kurze Lebensdauer ist deshalb der einzige Schutz: Sie begrenzt das Zeitfenster, in dem ein
+gestohlener Token nützlich ist.
+
+Die naheliegende Frage ist dann, warum man nicht doch eine Sperrliste führt – und die Antwort:
+Damit gäbe man die Zustandslosigkeit auf, also genau den Grund für JWTs. Jede Anfrage bräuchte einen
+Datenbankzugriff.
+
+Der übliche Kompromiss ist ein **Refresh-Token**: kurzlebiger Access-Token für die Zustandslosigkeit,
+langlebiger Refresh-Token, der serverseitig gespeichert und damit widerrufbar ist. Erst damit wirkt
+ein Logout wirklich.
+
+### 50. HS256 oder RS256 – wann brauchst du welches?
+
+**HS256** ist symmetrisch: Ein Geheimnis signiert und prüft. Einfacher, schneller, weniger zu
+verwalten. Passt, solange **derselbe Dienst** beides tut.
+
+**RS256** ist asymmetrisch: Ein privater Schlüssel signiert, ein öffentlicher prüft. Nötig, sobald
+weitere Dienste Token **prüfen** sollen, ohne selbst welche ausstellen zu dürfen – Microservices,
+externe Partner, ein API-Gateway. Der öffentliche Schlüssel darf dann veröffentlicht werden (JWKS).
+
+Faustregel: **Ein Dienst signiert und prüft → HS256. Mehrere prüfen, einer signiert → RS256.**
+
+Bei HS256 gilt zusätzlich: Das Geheimnis muss mindestens so viel Entropie haben wie die Ausgabe des
+Hashverfahrens – bei HS256 also 256 Bit. Deshalb die Mindestlänge von 32 Zeichen im Schema.

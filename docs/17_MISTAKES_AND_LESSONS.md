@@ -144,3 +144,36 @@ git log --oneline -3                        # Ergebnis geprueft
 5. **Automatisierung ersetzt kein Nachsehen.** Mehrere Befehle in einem Block sparen Sekunden und
    kosten im Fehlerfall Stunden. Bei allem, was auf einem Server oder Remote wirkt, gilt: ein
    Schritt, eine Prüfung.
+
+---
+
+## 2026-08-10 – Middleware in `main.ts` statt im Modul
+
+**Symptom:** Vier E2E-Tests für den Refresh-Endpoint schlugen mit `401` statt `200` fehl. Von Hand
+über den laufenden Server funktionierte alles einwandfrei.
+
+**Ursache:** `app.use(cookieParser())` stand in `main.ts`. E2E-Tests bauen die Anwendung aber mit
+`Test.createTestingModule()` **direkt aus dem Modul** – `bootstrap()` läuft dabei nie. Ohne
+`cookieParser` blieb `request.cookies` leer, der Controller bekam `undefined` und antwortete
+korrekt mit 401.
+
+**Behebung:** `AppModule` implementiert `NestModule` und registriert die Middleware in `configure()`.
+Damit gilt sie für die echte Anwendung *und* für jeden Test.
+
+```ts
+configure(consumer: MiddlewareConsumer): void {
+  consumer.apply(cookieParser()).forRoutes('{*splat}');
+}
+```
+
+**Learnings:**
+
+1. **In `main.ts` gehört nur, was den PROZESS betrifft** – Port, Logger, Shutdown-Hooks. Alles, was
+   die **Anwendung** ausmacht, gehört ins Modul. Sonst testet man eine andere Anwendung als die, die
+   später läuft.
+2. **Der Test hatte recht.** Der erste Reflex war, den Test für kaputt zu halten, weil es „von Hand
+   ja funktioniert". Tatsächlich war die Anwendung falsch zusammengebaut – und der Test hat genau
+   den Unterschied zwischen Test- und Produktionsaufbau aufgedeckt, für den es ihn gibt.
+3. **Express 5 hat die Wildcard-Schreibweise geändert:** `'*'` wurde zu `'{*splat}'`. NestJS 11
+   verwendet Express 5 – ältere Beispiele im Netz funktionieren nicht mehr. Wieder ein Fall von
+   „Hauptversion ändert Konventionen, nicht nur Funktionen".
