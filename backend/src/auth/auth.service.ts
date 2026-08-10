@@ -7,6 +7,7 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from './password.service';
+import { RefreshTokenService } from './refresh-token.service';
 import { TokenService } from './token.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
@@ -58,6 +59,8 @@ export interface OeffentlicherNutzer {
 /** Antwort auf einen erfolgreichen Login. */
 export interface LoginErgebnis {
   accessToken: string;
+  /** Geht ausschliesslich ins Cookie, niemals in den Antwortkoerper. */
+  refreshToken: { token: string; expiresAt: Date };
   user: { id: string; email: string; name: string | null };
 }
 
@@ -69,6 +72,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
+    private readonly refreshTokens: RefreshTokenService,
   ) {}
 
   /**
@@ -198,12 +202,70 @@ export class AuthService {
       nutzer.id,
       nutzer.email,
     );
+    const refreshToken = await this.refreshTokens.erstelleNeueFamilie(
+      nutzer.id,
+    );
 
     return {
       accessToken,
+      refreshToken: {
+        token: refreshToken.token,
+        expiresAt: refreshToken.expiresAt,
+      },
       // Der `passwordHash` aus der Abfrage wird bewusst NICHT durchgereicht.
       user: { id: nutzer.id, email: nutzer.email, name: nutzer.name },
     };
+  }
+
+  /**
+   * Stellt einen neuen Access-Token aus und rotiert den Refresh-Token.
+   *
+   * Beachte: Es wird KEIN Passwort geprueft. Der Besitz eines gueltigen,
+   * unverbrauchten Refresh-Tokens IST der Nachweis. Genau deshalb muss dieser
+   * Token so gut geschuetzt sein - httpOnly-Cookie, Rotation, und Widerruf
+   * der ganzen Familie bei Wiederverwendung.
+   */
+  async erneuere(rohToken: string | undefined): Promise<LoginErgebnis> {
+    if (!rohToken) {
+      throw new UnauthorizedException('Sitzung ungueltig');
+    }
+
+    const rotiert = await this.refreshTokens.rotiere(rohToken);
+
+    const nutzer = await this.prisma.user.findUnique({
+      where: { id: rotiert.userId },
+      select: { id: true, email: true, name: true },
+    });
+
+    if (!nutzer) {
+      // Konto wurde zwischenzeitlich geloescht. Kann durch `onDelete: Cascade`
+      // eigentlich nicht auftreten - aber ein Fehler hier waere ein 500er,
+      // und der verriete mehr als noetig.
+      throw new UnauthorizedException('Sitzung ungueltig');
+    }
+
+    const accessToken = await this.tokens.erstelleAccessToken(
+      nutzer.id,
+      nutzer.email,
+    );
+
+    return {
+      accessToken,
+      refreshToken: { token: rotiert.token, expiresAt: rotiert.expiresAt },
+      user: nutzer,
+    };
+  }
+
+  /**
+   * Beendet die Sitzung.
+   *
+   * Widerrufen wird die ganze Token-Familie. Der Access-Token bleibt bis zu
+   * seinem Ablauf technisch gueltig - das ist die bekannte Schwaeche
+   * zustandsloser Token und der Grund fuer die kurze Lebensdauer. Neue
+   * bekommt der Angreifer aber nicht mehr.
+   */
+  async abmelden(rohToken: string | undefined): Promise<void> {
+    await this.refreshTokens.beendeSitzung(rohToken);
   }
 
   /**
