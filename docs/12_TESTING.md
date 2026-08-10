@@ -94,6 +94,26 @@ liefern. Sicherheitsverhalten muss getestet sein, sonst ist es nur eine Behauptu
 
 ---
 
+## Offene Lücke: das Frontend hat keine Tests
+
+Ehrlich benannt, statt stillschweigend übergangen: Für `frontend/` gibt es derzeit **keine Tests**.
+Die CI prüft dort nur Linting und Build.
+
+Das ist die auffälligste Lücke im Projekt – gerade weil Tests hier ausdrücklich nicht verhandelbar
+sind. Was fehlt und warum es zählt:
+
+| Was | Warum |
+|---|---|
+| Anmeldeformular: Validierung, Fehlermeldung des Servers | Der häufigste Weg, auf dem Nutzer ins Produkt kommen |
+| `AuthProvider`: stilles Erneuern, Wiederholung bei 401 | Die trickreichste Logik im Frontend – genau hier entstehen Endlosschleifen |
+| `<Geschuetzt>`: Weiterleitung, kein Aufblitzen von Inhalten | Ein Fehler hier zeigt Unbefugten kurz Daten |
+
+**Geplant:** Vitest plus Testing Library für Komponenten und Hooks, Playwright für einen einzigen
+durchgehenden Pfad (Registrieren → Dashboard → Neuladen → Abmelden). Beides wird in die
+CI-Pipeline aufgenommen, damit der Frontend-Job nicht länger nur baut, sondern auch prüft.
+
+---
+
 ## Offene Punkte
 
 - **Testdatenbank** für Integrationstests ab Sprint 1 – eigener Container oder Testcontainers,

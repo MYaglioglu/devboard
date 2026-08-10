@@ -88,6 +88,68 @@ kein Browser beteiligt ist. Wer einen CORS-Fehler dadurch „behebt", dass er di
 Server verschiebt, hat ihn nicht verstanden – manchmal ist es die richtige Lösung, oft ist es eine
 Verlagerung des Problems.
 
+### Anmeldung im Frontend
+
+```
+Seitenaufruf
+   │
+   ▼
+AuthProvider ruft einmal POST /auth/refresh auf   (Cookie geht automatisch mit)
+   │
+   ├── 200 → Access-Token in eine JS-Variable, Nutzer in den State
+   └── 401 → abgemeldet
+   │
+   ▼
+authFetch(pfad)  hängt "Authorization: Bearer …" an
+   │
+   ├── 200 → fertig
+   └── 401 → einmal erneuern, dann genau einen Wiederholungsversuch
+```
+
+**Der Access-Token liegt in `useRef`, nicht in `localStorage` und nicht in `useState`.**
+
+- Nicht `localStorage`: Dort ist er für jedes Skript auf der Seite lesbar – eine XSS-Lücke, auch in
+  einer fremden Bibliothek, genügt. Siehe ADR-007.
+- Nicht `useState`: Der Token ist kein Anzeigezustand. Seine Änderung soll kein Neuzeichnen
+  auslösen. Der *Nutzer* dagegen schon – der steht in `useState`.
+
+Beim Neuladen ist der Token weg. Das ist gewollt: Die Sitzung wird still über das
+httpOnly-Refresh-Cookie wiederhergestellt, an das JavaScript nicht herankommt. Deshalb gibt es den
+Zustand `laedt` – ohne ihn blitzte beim Neuladen kurz die Anmeldemaske auf.
+
+**Genau ein Wiederholungsversuch bei 401.** Ohne diese Grenze entstünde bei dauerhaft ungültiger
+Sitzung eine Endlosschleife aus 401 und Erneuerungsversuchen.
+
+### `credentials: 'include'` – wo CORS ein zweites Mal zuschlägt
+
+Bei Anfragen über Herkunftsgrenzen schickt der Browser Cookies standardmäßig **nicht** mit – auch
+dann nicht, wenn CORS grundsätzlich erlaubt ist. Ohne diese Angabe käme das Refresh-Cookie nie beim
+Backend an und `/auth/refresh` antwortete immer mit 401.
+
+Die Erlaubnis muss auf **beiden** Seiten stehen:
+
+```
+Client:  credentials: 'include'
+Server:  enableCors({ credentials: true, origin: <konkrete Herkunft> })
+```
+
+Und genau deshalb verbietet die Spezifikation `origin: '*'` in Verbindung mit Anmeldedaten: Sonst
+könnte jede beliebige Webseite Anfragen mit den Cookies des angemeldeten Nutzers stellen **und die
+Antworten lesen**.
+
+### Geschützte Seiten sind kein Sicherheitsmechanismus
+
+Die Komponente `<Geschuetzt>` verhindert nur, dass ein nicht angemeldeter Nutzer eine leere Seite
+sieht. Sie schützt **keine Daten** – alles dort läuft im Browser und ist mit den
+Entwicklerwerkzeugen in Sekunden auszuhebeln. Ein Angreifer würde die Seite ohnehin nicht aufrufen,
+sondern die API direkt.
+
+Der echte Schutz sitzt im globalen Guard des Backends. Selbst wer die Weiterleitung umgeht, bekommt
+nichts zu sehen: Die Daten kämen gar nicht erst an.
+
+**Frontend-Schutz ist Benutzerführung, Backend-Schutz ist Sicherheit.** Dasselbe gilt für die
+Formularvalidierung: Zod im Browser ist Bequemlichkeit, Zod im Backend ist Kontrolle.
+
 ### Umgebungsvariablen im Frontend
 
 Variablen mit dem Präfix `NEXT_PUBLIC_` werden beim **Build** in das Browser-Bundle eingebacken.
