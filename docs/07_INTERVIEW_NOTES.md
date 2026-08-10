@@ -408,3 +408,143 @@ manueller Freigabe – Continuous Delivery statt Continuous Deployment.
 Dafür nötig: Multi-Stage-Dockerfiles, ein Registry-Push der gebauten Images, getrennte Umgebungen
 mit eigener Konfiguration, Secrets aus dem Secret-Store, und eine Rollback-Strategie. Das ist
 Sprint 6 in DevBoard.
+
+---
+
+## Passwörter & Registrierung
+
+### 36. Warum ist SHA-256 als Passwort-Hash ungeeignet, obwohl es kryptografisch sicher ist?
+
+Weil „sicher" hier zwei verschiedene Dinge bedeutet. SHA-256 ist als **Prüfsumme** sicher: Es ist
+praktisch unmöglich, zwei Eingaben mit demselben Hash zu finden. Aber es wurde auf
+**Geschwindigkeit** optimiert – gedacht für Prüfsummen über Dateien.
+
+Genau das macht es als Passwort-Hash untauglich. Eine moderne Grafikkarte rechnet Milliarden
+SHA-256-Hashes pro Sekunde. Bei einer geklauten Datenbank probiert ein Angreifer damit ganze
+Wörterbücher in Stunden durch.
+
+Ein Passwort-Hash braucht die gegenteiligen Eigenschaften:
+- **absichtlich langsam** – bremst das Durchprobieren
+- **speicherhungrig** – verhindert massives Parallelisieren auf GPUs. Rechenkerne hat eine
+  Grafikkarte viele, Speicher pro Kern dagegen wenig.
+
+Deshalb argon2 (oder bcrypt/scrypt) mit einstellbaren Kostenparametern.
+
+### 37. Wo liegt der Salt bei argon2, und warum musst du ihn nicht selbst speichern?
+
+Im Hash-String selbst:
+
+```
+$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>
+```
+
+argon2 erzeugt für jeden Aufruf einen zufälligen Salt und legt ihn zusammen mit Verfahren, Version
+und Parametern im Ergebnis ab. Deshalb liefert zweimaliges Hashen desselben Passworts zwei
+**verschiedene** Hashes.
+
+Ein Salt ist kein Geheimnis – er verhindert nur, dass identische Passwörter identische Hashes
+ergeben. Ohne ihn sähe ein Angreifer in der geklauten Tabelle sofort, welche Nutzer dasselbe
+Passwort haben, und könnte mit vorberechneten Tabellen (Rainbow Tables) arbeiten.
+
+**Warnsignal im Code Review:** Wenn jemand den Salt von Hand erzeugt und in einer eigenen Spalte
+speichert, hat er die Bibliothek nicht verstanden.
+
+Dass auch die **Parameter** im Hash stehen, hat einen praktischen Nutzen: Man kann sie später
+erhöhen, ohne bestehende Passwörter unbrauchbar zu machen – alte Hashes werden weiterhin mit ihren
+eigenen Parametern geprüft.
+
+### 38. Warum prüfst du vor dem Anlegen nicht, ob die E-Mail schon existiert?
+
+Weil das eine **Race Condition** enthält:
+
+```ts
+const vorhanden = await prisma.user.findUnique({ where: { email } });
+if (vorhanden) throw new ConflictException();
+await prisma.user.create({ ... });          // <- Lücke dazwischen
+```
+
+Zwischen Prüfung und Schreiben liegt ein Zeitfenster. Zwei gleichzeitige Registrierungen mit
+derselben Adresse können beide die Prüfung bestehen. Ohne Datenbank-Constraint entstünden zwei
+Konten; mit Constraint fliegt trotzdem ein Fehler, den man dann doch behandeln muss.
+
+Richtig ist: schreiben und den Fehler der **Datenbank** auswerten – Prisma meldet einen Verstoß
+gegen den `UNIQUE`-Index mit dem Code `P2002`. Der Constraint ist die einzige Instanz, die diese
+Frage atomar beantworten kann.
+
+**Merksatz:** Die Prüfung im Code ist für die *Fehlermeldung* da, der Constraint für die *Garantie*.
+
+Wichtig dabei: Nur der bekannte Fehlercode wird übersetzt. Ein Verbindungsabbruch darf nicht als
+„E-Mail bereits vergeben" beim Nutzer ankommen.
+
+### 39. Warum darf `verify()` niemals eine Exception nach oben durchlassen?
+
+Ist ein gespeicherter Hash beschädigt, leer oder in einem fremden Format, wirft die Bibliothek. Für
+den Aufrufer bedeutet das aber dasselbe wie „Passwort falsch" – also wird der Fehler abgefangen und
+`false` zurückgegeben.
+
+Der Grund ist eine Sicherheitsfrage: Schlüge die Exception durch, antwortete der Server bei solchen
+Datensätzen mit **500** statt **401**. Ein Angreifer könnte aus dem abweichenden Statuscode ableiten,
+dass dieses Konto existiert und in einem besonderen Zustand ist – **User Enumeration** über einen
+Umweg. Dazu kommt: Ein Absturz ist immer auch ein Verfügbarkeitsproblem.
+
+Verwandter Punkt: Der eigentliche Vergleich läuft in der Bibliothek in **konstanter Zeit**. Ein
+naiver Vergleich mit `===` wäre angreifbar, weil er bei der ersten abweichenden Stelle abbricht und
+damit messbar früher zurückkehrt.
+
+### 40. Warum lädst du den Hash gar nicht erst, statt ihn nachträglich aus der Antwort zu entfernen?
+
+Weil Nachträgliches vergessen wird. `select: { id, email, name, createdAt }` ist eine
+**Positivliste**: Was nicht darin steht, verlässt die Datenbank nicht. Ein `delete user.passwordHash`
+nach dem Laden ist dagegen eine Negativliste – kommt später ein Feld dazu (etwa ein
+Zwei-Faktor-Secret), muss jemand daran denken, es ebenfalls zu entfernen.
+
+Zusätzlich macht ein eigener Rückgabetyp ohne `passwordHash` daraus eine Compiler-Regel statt einer
+Absichtserklärung: Wer den Hash herausgeben wollte, müsste den Typ ändern – und fällt damit im
+Review auf.
+
+Das Prinzip heißt **Secure by Default**: Der sichere Weg muss der bequemste sein.
+
+### 41. Warum wird die E-Mail kleingeschrieben gespeichert, wo der `UNIQUE`-Index doch schon Dubletten verhindert?
+
+Weil der Index **zeichengenau** vergleicht. `Max@example.com` und `max@example.com` sind für ihn
+zwei verschiedene Werte – beide kämen durch, und es entstünden zwei Konten für dieselbe Person.
+
+Der Domain-Teil einer E-Mail-Adresse unterscheidet technisch nicht zwischen Groß- und
+Kleinschreibung; beim lokalen Teil erlaubt der Standard es theoretisch, praktisch behandelt ihn
+kein relevanter Anbieter unterschiedlich.
+
+Normalisiert wird **am Rand** der Anwendung, im Zod-Schema – zusammen mit der Validierung, bevor der
+Wert irgendeine Schicht tiefer erreicht.
+
+Alternative wäre der PostgreSQL-Typ `citext` oder ein funktionaler Index auf `lower(email)`. Beides
+verlagert die Regel in die Datenbank; die Normalisierung im Schema ist sichtbarer und im Code
+nachvollziehbar.
+
+### 42. Warum hat das Passwort eine Obergrenze von 128 Zeichen?
+
+Nicht aus Bequemlichkeit, sondern gegen **Denial-of-Service**. argon2 ist absichtlich rechen- und
+speicherintensiv. Ohne Obergrenze könnte jemand Passwörter mit mehreren Megabyte schicken und den
+Server mit wenigen Anfragen lahmlegen – der Schutzmechanismus würde zur Waffe.
+
+Nach oben begrenzen ja, nach unten aber großzügig sein: mindestens 10 Zeichen, **keine**
+Zeichenklassen-Pflicht. Das NIST empfiehlt seit 2017 (SP 800-63B) ausdrücklich Länge statt
+Zeichenvielfalt – erzwungene Sonderzeichen führen zu vorhersagbaren Mustern wie `Passwort1!` und zu
+aufgeschriebenen Passwörtern.
+
+### 43. Der 409 bei einer vergebenen Adresse verrät etwas. Was – und warum machst du es trotzdem?
+
+Er verrät, dass diese Adresse registriert ist: **User Enumeration**. Ein Angreifer kann damit
+prüfen, wer bei einem Dienst Kunde ist – bei manchen Diensten allein schon eine heikle Information.
+
+Vollständig vermeiden ließe sich das nur, indem die Registrierung **immer** 201 zurückgibt und der
+eigentliche Hinweis per E-Mail zugestellt wird („Sie haben bereits ein Konto"). Das setzt einen
+funktionierenden E-Mail-Versand voraus.
+
+Ohne den wäre die Alternative für Nutzer unbrauchbar: Sie bekämen scheinbar ein Konto, könnten sich
+aber nicht anmelden. Deshalb die bewusste Entscheidung für 409 – dokumentiert, nicht übersehen.
+
+Der entscheidende Zusatz: **Beim Login bleibt die Meldung generisch.** Dort gibt es keinen
+Usability-Grund, etwas preiszugeben – „E-Mail oder Passwort ist falsch", unabhängig davon, welches
+von beidem nicht stimmte.
+
+Genau diese Unterscheidung – wo eine Abwägung nötig ist und wo nicht – ist die eigentliche Antwort.
