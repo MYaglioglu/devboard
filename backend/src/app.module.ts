@@ -1,13 +1,17 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 
 import { AuthModule } from './auth/auth.module';
 import { AccessTokenGuard } from './auth/guards/access-token.guard';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { validateEnv } from './config/env.schema';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
+import type { Env } from './config/env.schema';
 
 @Module({
   imports: [
@@ -22,12 +26,66 @@ import { PrismaModule } from './prisma/prisma.module';
       // Laeuft beim Start. Wirft bei ungueltiger Konfiguration.
       validate: validateEnv,
     }),
+
+    /**
+     * Rate Limiting.
+     *
+     * ========================================================================
+     * WARUM DAS NOETIG IST, OBWOHL ARGON2 SCHON BREMST
+     * ========================================================================
+     * argon2 macht EINEN Versuch teuer (~50-100 ms). Das schuetzt gegen das
+     * Durchprobieren eines geklauten Hashes - aber nicht gegen jemanden, der
+     * einfach viele Anfragen schickt. Zehn Versuche pro Sekunde ueber Stunden
+     * reichen fuer eine Liste haeufiger Passwoerter.
+     *
+     * Rate Limiting begrenzt die ANZAHL, argon2 die KOSTEN pro Versuch. Beides
+     * zusammen macht Brute Force unwirtschaftlich.
+     *
+     * ========================================================================
+     * GRENZE DES AKTUELLEN AUFBAUS
+     * ========================================================================
+     * Der Zaehler liegt im Arbeitsspeicher. Das genuegt bei einer Instanz -
+     * laufen spaeter mehrere hinter einem Loadbalancer, hat jede ihren eigenen
+     * Zaehler, und die tatsaechliche Grenze vervielfacht sich. Dann braucht es
+     * einen gemeinsamen Speicher (Redis). Vermerkt in 10_SECURITY.md.
+     */
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) => {
+        const limit = config.get('THROTTLE_LIMIT', { infer: true });
+
+        return {
+          throttlers: [
+            {
+              ttl: config.get('THROTTLE_TTL_SECONDS', { infer: true }) * 1000,
+              // Bei 0 wird ohnehin uebersprungen; 1 nur, damit die Angabe
+              // gueltig bleibt.
+              limit: limit || 1,
+            },
+          ],
+          // Bewusst EIN unbenannter Throttler statt mehrerer benannter:
+          // Benannte Throttler gelten alle fuer jede Route - die strenge
+          // Anmelde-Grenze wuerde damit global wirken. Strengere Grenzen
+          // werden stattdessen gezielt per @Throttle ueberschrieben.
+          skipIf: () => limit === 0,
+        };
+      },
+    }),
+
     PrismaModule,
     HealthModule,
     AuthModule,
   ],
   providers: [
-    // Der Guard laeuft fuer JEDEN Endpoint der Anwendung. Einzelne Routen
+    // ========================================================================
+    // REIHENFOLGE DER GUARDS IST WICHTIG
+    // ========================================================================
+    // Guards laufen in der Reihenfolge ihrer Registrierung. Das Rate Limiting
+    // steht ZUERST: Ein Angreifer, der den Server mit Anfragen flutet, soll
+    // abgewiesen werden, BEVOR fuer jede davon ein Token geprueft wird.
+    // Andersherum waere die Signaturpruefung selbst der Angriffspunkt.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Der Access-Token-Guard laeuft fuer JEDEN Endpoint. Einzelne Routen
     // werden mit @Oeffentlich() ausdruecklich freigegeben.
     //
     // Warum global statt @UseGuards pro Route: Vergisst man den Guard an einer
@@ -37,6 +95,9 @@ import { PrismaModule } from './prisma/prisma.module';
     //
     // SECURE BY DEFAULT: Ein Versehen muss zur sicheren Seite ausschlagen.
     { provide: APP_GUARD, useClass: AccessTokenGuard },
+
+    // Einheitliche Fehlerantworten - und keine Stacktraces nach aussen.
+    { provide: APP_FILTER, useClass: HttpExceptionFilter },
   ],
 })
 export class AppModule implements NestModule {
@@ -57,7 +118,34 @@ export class AppModule implements NestModule {
    * Alles, was die ANWENDUNG ausmacht, gehoert ins Modul.
    */
   configure(consumer: MiddlewareConsumer): void {
-    // `{*splat}` ist die Wildcard-Schreibweise von Express 5 (frueher '*').
-    consumer.apply(cookieParser()).forRoutes('{*splat}');
+    consumer
+      .apply(
+        cookieParser(),
+        /**
+         * Helmet setzt eine Reihe von Sicherheits-Kopfzeilen. Die wichtigsten
+         * fuer eine reine API:
+         *
+         *   X-Content-Type-Options: nosniff
+         *     Verbietet dem Browser, den Inhaltstyp zu "erraten". Ohne das
+         *     koennte eine als Text ausgelieferte Datei als Skript ausgefuehrt
+         *     werden.
+         *
+         *   Strict-Transport-Security
+         *     Erzwingt HTTPS fuer alle weiteren Aufrufe. Wirkt erst in
+         *     Produktion, weil lokal kein HTTPS laeuft.
+         *
+         *   X-Frame-Options / frame-ancestors
+         *     Verhindert das Einbetten in fremde Seiten (Clickjacking).
+         *
+         *   Content-Security-Policy
+         *     Fuer eine API ohne HTML von geringem Nutzen, schadet aber nicht.
+         *
+         * Nicht mehr enthalten: X-XSS-Protection. Der Header ist veraltet und
+         * war in manchen Browsern selbst eine Luecke.
+         */
+        helmet(),
+      )
+      // `{*splat}` ist die Wildcard-Schreibweise von Express 5 (frueher '*').
+      .forRoutes('{*splat}');
   }
 }

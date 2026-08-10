@@ -37,6 +37,10 @@ describe('Auth (e2e)', () => {
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
+      // Rate Limiting ist fuer den gesamten E2E-Lauf abgeschaltet
+      // (THROTTLE_LIMIT=0 im npm-Skript): Diese Suite meldet sich dutzendfach
+      // an und wuerde sich sonst selbst aussperren. Dass das Limit WIRKT,
+      // prueft security.e2e-spec.ts gezielt.
     }).compile();
 
     app = moduleFixture.createNestApplication();

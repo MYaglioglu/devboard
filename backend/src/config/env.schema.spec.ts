@@ -52,6 +52,20 @@ describe('validateEnv', () => {
     expect(validateEnv(gueltig).JWT_ACCESS_TTL).toBe('15m');
   });
 
+  it('erlaubt THROTTLE_LIMIT=0 zum Abschalten des Rate Limitings', () => {
+    // 0 ist ausdruecklich gueltig (nonnegative statt positive): Testlaeufe
+    // muessen das Limit abschalten koennen, sonst sperren sie sich selbst aus.
+    expect(
+      validateEnv({ ...gueltig, THROTTLE_LIMIT: '0' }).THROTTLE_LIMIT,
+    ).toBe(0);
+  });
+
+  it('lehnt ein negatives THROTTLE_LIMIT ab', () => {
+    expect(() => validateEnv({ ...gueltig, THROTTLE_LIMIT: '-5' })).toThrow(
+      /THROTTLE_LIMIT/,
+    );
+  });
+
   it('lehnt eine DATABASE_URL mit falschem Protokoll ab', () => {
     expect(() =>
       validateEnv({ ...gueltig, DATABASE_URL: 'mysql://localhost:3306/db' }),
