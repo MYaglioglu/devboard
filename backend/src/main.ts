@@ -22,6 +22,9 @@ async function bootstrap(): Promise<void> {
   // Bewusst KEIN origin: '*' - das erlaubte jeder beliebigen Webseite, im Namen
   // eingeloggter Nutzer Anfragen zu stellen. Mit credentials: true verbietet die
   // Spezifikation den Platzhalter ohnehin.
+  // Hinweis: cookieParser steht bewusst NICHT hier, sondern in AppModule -
+  // sonst fehlte es in den E2E-Tests, die die Anwendung direkt aus dem Modul
+  // bauen. Hier gehoert nur hinein, was den Prozess betrifft.
   app.enableCors({
     origin: config
       .get('CORS_ORIGIN', { infer: true })

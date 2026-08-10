@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
 import { PasswordService } from './password.service';
+import { RefreshTokenService } from './refresh-token.service';
 import { TokenService } from './token.service';
 
 describe('AuthService', () => {
@@ -28,6 +29,15 @@ describe('AuthService', () => {
   const hash = jest.fn<Promise<string>, [string]>();
   const verify = jest.fn<Promise<boolean>, [string, string]>();
   const erstelleAccessToken = jest.fn<Promise<string>, [string, string]>();
+  const erstelleNeueFamilie = jest.fn<
+    Promise<{ token: string; expiresAt: Date; userId: string }>,
+    [string]
+  >();
+  const rotiere = jest.fn<
+    Promise<{ token: string; expiresAt: Date; userId: string }>,
+    [string]
+  >();
+  const beendeSitzung = jest.fn<Promise<void>, [string | undefined]>();
 
   beforeEach(async () => {
     create.mockReset();
@@ -35,9 +45,18 @@ describe('AuthService', () => {
     hash.mockReset();
     verify.mockReset();
     erstelleAccessToken.mockReset();
+    erstelleNeueFamilie.mockReset();
+    rotiere.mockReset();
+    beendeSitzung.mockReset();
 
     hash.mockResolvedValue('$argon2id$v=19$m=19456,t=2,p=1$salt$hash');
     erstelleAccessToken.mockResolvedValue('signierter.jwt.token');
+    erstelleNeueFamilie.mockResolvedValue({
+      token: 'refresh-token-neu',
+      expiresAt: new Date(Date.now() + 86_400_000),
+      userId: 'b3f1c2d4-0000-4000-8000-000000000001',
+    });
+    beendeSitzung.mockResolvedValue(undefined);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -45,6 +64,10 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: { user: { create, findUnique } } },
         { provide: PasswordService, useValue: { hash, verify } },
         { provide: TokenService, useValue: { erstelleAccessToken } },
+        {
+          provide: RefreshTokenService,
+          useValue: { erstelleNeueFamilie, rotiere, beendeSitzung },
+        },
       ],
     }).compile();
 
@@ -246,6 +269,89 @@ describe('AuthService', () => {
 
       // Geprueft wird gegen den Platzhalter-Hash, nicht gegen `undefined`.
       expect(verify.mock.calls[0][0]).toMatch(/^\$argon2id\$/);
+    });
+
+    it('legt beim Login eine neue Token-Familie an', async () => {
+      findUnique.mockResolvedValue(gefunden);
+      verify.mockResolvedValue(true);
+
+      const ergebnis = await service.login(zugangsdaten);
+
+      // Jeder Login startet eine EIGENE Familie. Sonst wuerde das Abmelden auf
+      // einem Geraet alle anderen Geraete mit hinauswerfen.
+      expect(erstelleNeueFamilie).toHaveBeenCalledWith(gefunden.id);
+      expect(ergebnis.refreshToken.token).toBe('refresh-token-neu');
+    });
+  });
+
+  describe('erneuere', () => {
+    const nutzer = {
+      id: 'b3f1c2d4-0000-4000-8000-000000000001',
+      email: 'max@example.com',
+      name: 'Max',
+    };
+
+    it('rotiert den Token und stellt einen neuen Access-Token aus', async () => {
+      rotiere.mockResolvedValue({
+        token: 'refresh-token-rotiert',
+        expiresAt: new Date(Date.now() + 86_400_000),
+        userId: nutzer.id,
+      });
+      findUnique.mockResolvedValue(nutzer);
+
+      const ergebnis = await service.erneuere('alter-refresh-token');
+
+      expect(rotiere).toHaveBeenCalledWith('alter-refresh-token');
+      expect(ergebnis.accessToken).toBe('signierter.jwt.token');
+      expect(ergebnis.refreshToken.token).toBe('refresh-token-rotiert');
+    });
+
+    it('prueft dabei KEIN Passwort', async () => {
+      rotiere.mockResolvedValue({
+        token: 'refresh-token-rotiert',
+        expiresAt: new Date(Date.now() + 86_400_000),
+        userId: nutzer.id,
+      });
+      findUnique.mockResolvedValue(nutzer);
+
+      await service.erneuere('alter-refresh-token');
+
+      // Der Besitz eines gueltigen, unverbrauchten Refresh-Tokens IST der
+      // Nachweis - genau deshalb muss er so gut geschuetzt sein.
+      expect(verify).not.toHaveBeenCalled();
+    });
+
+    it('lehnt eine Anfrage ohne Token mit 401 ab', async () => {
+      await expect(service.erneuere(undefined)).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(rotiere).not.toHaveBeenCalled();
+    });
+
+    it('lehnt ab, wenn das Konto inzwischen geloescht wurde', async () => {
+      rotiere.mockResolvedValue({
+        token: 'refresh-token-rotiert',
+        expiresAt: new Date(Date.now() + 86_400_000),
+        userId: nutzer.id,
+      });
+      findUnique.mockResolvedValue(null);
+
+      await expect(service.erneuere('alter-token')).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+    });
+  });
+
+  describe('abmelden', () => {
+    it('beendet die Sitzung', async () => {
+      await service.abmelden('refresh-token');
+
+      expect(beendeSitzung).toHaveBeenCalledWith('refresh-token');
+    });
+
+    it('wirft nicht, wenn kein Token vorliegt', async () => {
+      // Ein Logout soll immer gelingen.
+      await expect(service.abmelden(undefined)).resolves.toBeUndefined();
     });
   });
 });

@@ -36,6 +36,12 @@ export const envSchema = z.object({
   // Refresh-Token (Scheibe 3).
   JWT_ACCESS_TTL: z.string().min(1).default('15m'),
 
+  // Lebensdauer des Refresh-Tokens in Tagen. Deutlich laenger als der
+  // Access-Token, weil er der Bequemlichkeit dient ("nicht staendig neu
+  // anmelden") - dafuer ist er widerrufbar, weil er serverseitig gespeichert
+  // wird.
+  REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
+
   // Kein Default: Ohne Datenbank-URL darf das Backend nicht starten.
   DATABASE_URL: z
     .string()

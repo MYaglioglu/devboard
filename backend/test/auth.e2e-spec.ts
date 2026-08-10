@@ -290,6 +290,36 @@ describe('Auth (e2e)', () => {
         .expect(400);
     });
 
+    it('setzt den Refresh-Token als httpOnly-Cookie', async () => {
+      const antwort = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse(), password: passwort })
+        .expect(200);
+
+      const cookies = antwort.headers['set-cookie'] as unknown as string[];
+      const refresh = cookies.find((c) => c.startsWith('devboard_refresh='));
+
+      expect(refresh).toBeDefined();
+      // httpOnly: JavaScript kommt nicht heran - der eigentliche Schutz
+      // gegen XSS-Diebstahl.
+      expect(refresh).toContain('HttpOnly');
+      // SameSite=Lax: schuetzt den POST-Endpoint gegen CSRF.
+      expect(refresh).toMatch(/SameSite=Lax/i);
+      // Pfadbegrenzung: Das Cookie wird nur an /auth-Endpoints geschickt.
+      expect(refresh).toContain('Path=/auth');
+    });
+
+    it('legt den Refresh-Token NICHT in den Antwortkoerper', async () => {
+      const antwort = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse(), password: passwort })
+        .expect(200);
+
+      // Stuende er dort, koennte JavaScript ihn lesen - und der ganze Zweck
+      // des httpOnly-Cookies waere dahin.
+      expect(antwort.body).not.toHaveProperty('refreshToken');
+    });
+
     it('prueft beim Login KEINE Mindestlaenge des Passworts', async () => {
       // Wichtige Abgrenzung zur Registrierung: Eine Laengenpruefung beim Login
       // wuerde verraten, welche Passwoerter ueberhaupt moeglich sind, und
@@ -299,6 +329,171 @@ describe('Auth (e2e)', () => {
         .post('/auth/login')
         .send({ email: adresse(), password: 'kurz' })
         .expect(401);
+    });
+  });
+
+  describe('POST /auth/refresh und /auth/logout', () => {
+    /** Liest den Wert des Refresh-Cookies aus einer Antwort. */
+    const holeCookie = (antwort: request.Response): string => {
+      const cookies = antwort.headers['set-cookie'] as unknown as string[];
+      const eintrag = cookies.find((c) => c.startsWith('devboard_refresh='));
+      return eintrag?.split(';')[0] ?? '';
+    };
+
+    /** Registriert einen frischen Nutzer und meldet ihn an. */
+    const frischAngemeldet = async (kennung: string): Promise<string> => {
+      const adresse = email(kennung);
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({ email: adresse, password: 'einSicheresPasswort' })
+        .expect(201);
+
+      const login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: adresse, password: 'einSicheresPasswort' })
+        .expect(200);
+
+      return holeCookie(login);
+    };
+
+    it('stellt mit gueltigem Cookie einen neuen Access-Token aus', async () => {
+      const cookie = await frischAngemeldet('refresh-ok');
+
+      const antwort = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', cookie)
+        .expect(200);
+
+      const koerper = antwort.body as LoginAntwort;
+
+      expect(koerper.accessToken.split('.')).toHaveLength(3);
+      // Kein Passwort noetig: Der Besitz des Cookies IST der Nachweis.
+    });
+
+    it('rotiert dabei den Refresh-Token', async () => {
+      const cookie = await frischAngemeldet('refresh-rotation');
+
+      const antwort = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', cookie)
+        .expect(200);
+
+      expect(holeCookie(antwort)).not.toBe(cookie);
+    });
+
+    it('lehnt eine Anfrage ohne Cookie mit 401 ab', () => {
+      return request(app.getHttpServer()).post('/auth/refresh').expect(401);
+    });
+
+    it('lehnt einen erfundenen Token mit 401 ab', () => {
+      return request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', 'devboard_refresh=voellig-erfunden')
+        .expect(401);
+    });
+
+    // ========================================================================
+    // Der wichtigste Test des Sprints.
+    // ========================================================================
+    it('macht bei Wiederverwendung die GANZE Familie ungueltig', async () => {
+      const tokenA = await frischAngemeldet('diebstahl');
+
+      // 1. Rechtmaessige Erneuerung: A wird verbraucht, B entsteht.
+      const ersteErneuerung = await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', tokenA)
+        .expect(200);
+      const tokenB = holeCookie(ersteErneuerung);
+
+      // 2. Ein Angreifer legt den gestohlenen (bereits verbrauchten) A vor.
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', tokenA)
+        .expect(401);
+
+      // 3. UND JETZT DER PUNKT: Auch B ist nun wertlos - obwohl B nie
+      //    wiederverwendet wurde und beim rechtmaessigen Nutzer liegt.
+      //
+      //    Ein verbrauchter Token, der erneut auftaucht, bedeutet entweder
+      //    einen abgebrochenen Versuch oder einen Diebstahl. Beides ist nicht
+      //    unterscheidbar, also wird der schlimmere Fall angenommen: Die
+      //    gesamte Kette fliegt raus. Der Nutzer meldet sich neu an, der
+      //    Angreifer kann das nicht.
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', tokenB)
+        .expect(401);
+    });
+
+    it('beendet die Sitzung beim Logout', async () => {
+      const cookie = await frischAngemeldet('logout');
+
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Cookie', cookie)
+        .expect(204);
+
+      // Erst durch die serverseitige Speicherung wirkt ein Logout wirklich.
+      // Bei einem reinen JWT-Ansatz waere der Token weiterhin gueltig.
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', cookie)
+        .expect(401);
+    });
+
+    it('loescht beim Logout das Cookie', async () => {
+      const cookie = await frischAngemeldet('logout-cookie');
+
+      const antwort = await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Cookie', cookie)
+        .expect(204);
+
+      const cookies = antwort.headers['set-cookie'] as unknown as string[];
+      const geloescht = cookies.find((c) => c.startsWith('devboard_refresh='));
+
+      // Zum Loeschen setzt der Server das Cookie mit leerem Wert und einem
+      // Ablauf in der Vergangenheit.
+      expect(geloescht).toContain('devboard_refresh=;');
+    });
+
+    it('gelingt auch ohne Cookie mit 204', () => {
+      // Ein Logout soll immer gelingen - alles andere waere fuer Nutzer
+      // unverstaendlich und wuerde verraten, ob ein Token gueltig war.
+      return request(app.getHttpServer()).post('/auth/logout').expect(204);
+    });
+
+    it('wirft andere Sitzungen desselben Nutzers NICHT hinaus', async () => {
+      const adresse = email('zwei-geraete');
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({ email: adresse, password: 'einSicheresPasswort' })
+        .expect(201);
+
+      const geraet1 = holeCookie(
+        await request(app.getHttpServer())
+          .post('/auth/login')
+          .send({ email: adresse, password: 'einSicheresPasswort' })
+          .expect(200),
+      );
+      const geraet2 = holeCookie(
+        await request(app.getHttpServer())
+          .post('/auth/login')
+          .send({ email: adresse, password: 'einSicheresPasswort' })
+          .expect(200),
+      );
+
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('Cookie', geraet1)
+        .expect(204);
+
+      // Jeder Login startet eine EIGENE Familie. Abmelden am Laptop darf das
+      // Handy nicht mit hinauswerfen.
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .set('Cookie', geraet2)
+        .expect(200);
     });
   });
 });

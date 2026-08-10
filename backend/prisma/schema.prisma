@@ -38,5 +38,50 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  refreshTokens RefreshToken[]
+
   @@map("users")
+}
+
+/// Ein ausgestellter Refresh-Token.
+///
+/// Anders als der Access-Token wird dieser SERVERSEITIG gespeichert - nur
+/// deshalb ist er widerrufbar, und nur deshalb wirkt ein Logout wirklich.
+model RefreshToken {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// NIE der Token selbst, sondern sein SHA-256-Hash.
+  /// Bei einem Datenbankleck sind die gespeicherten Werte damit wertlos -
+  /// dasselbe Prinzip wie bei Passwoertern.
+  ///
+  /// Warum hier SHA-256 und nicht argon2? Weil dieser Token bereits 256 Bit
+  /// Zufall enthaelt und kein erratbares Passwort ist. Gegen Durchprobieren
+  /// muss nichts gebremst werden; Geschwindigkeit ist hier sogar erwuenscht,
+  /// weil bei jedem Erneuern geprueft wird.
+  tokenHash String @unique
+
+  /// Alle Token, die durch Rotation auseinander hervorgegangen sind, teilen
+  /// sich diese Kennung. Wird ein bereits verbrauchter Token noch einmal
+  /// vorgelegt, gilt die gesamte FAMILIE als kompromittiert und wird
+  /// widerrufen - siehe RefreshTokenService.
+  familyId String @db.Uuid
+
+  userId String @db.Uuid
+  /// onDelete: Cascade - wird ein Konto geloescht, verschwinden auch seine
+  /// Token. Sonst blieben verwaiste Zeilen zurueck, die auf nichts zeigen.
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  /// Gesetzt, sobald der Token verbraucht oder widerrufen wurde.
+  /// Die Zeile wird NICHT geloescht - nur ein aufbewahrter, entwerteter Token
+  /// erlaubt es, seine Wiederverwendung ueberhaupt zu bemerken.
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  /// Index auf userId: fuer "alle Sitzungen dieses Nutzers beenden".
+  /// Index auf familyId: fuer das Widerrufen einer ganzen Familie.
+  /// Ohne beide muesste PostgreSQL die Tabelle jedes Mal vollstaendig lesen.
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
 }
