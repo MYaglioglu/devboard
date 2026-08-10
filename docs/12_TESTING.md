@@ -86,31 +86,57 @@ liefern. Sicherheitsverhalten muss getestet sein, sonst ist es nur eine Behauptu
 
 ## Aktueller Stand
 
-| Suite | Tests | Was abgedeckt ist |
-|---|---|---|
-| `env.schema.spec.ts` | 8 | Standardwerte, Typumwandlung, Ablehnung ungültiger Werte |
-| `health.service.spec.ts` | 6 | Status bei erreichbarer und ausgefallener Datenbank |
-| `health.e2e-spec.ts` | 2 | `/health` über echtes HTTP, entfernte Route |
+| Bereich | Tests |
+|---|---|
+| Backend, Unit | 81 |
+| Backend, E2E (echte Datenbank) | 39 |
+| Frontend, Komponenten und Hooks | 26 |
+| **Gesamt** | **146** |
+
+Alle laufen bei jedem Pull Request in der CI. Der Backend-Job startet dafür einen echten
+PostgreSQL-Container.
 
 ---
 
-## Offene Lücke: das Frontend hat keine Tests
+## Frontend: Vitest und Testing Library
 
-Ehrlich benannt, statt stillschweigend übergangen: Für `frontend/` gibt es derzeit **keine Tests**.
-Die CI prüft dort nur Linting und Build.
+```bash
+cd frontend
+npm test         # einmaliger Lauf
+npm run test:watch
+```
 
-Das ist die auffälligste Lücke im Projekt – gerade weil Tests hier ausdrücklich nicht verhandelbar
-sind. Was fehlt und warum es zählt:
+**Warum Vitest und nicht Jest?** Next.js baut mit einem Vite-nahen Unterbau; Vitest versteht TSX,
+Pfad-Aliasse und ESM ohne zusätzliche Übersetzer. Bei Jest bräuchte es dafür Babel- oder
+SWC-Konfiguration. Im Backend bleibt Jest – es kam mit NestJS mit und funktioniert dort einwandfrei.
+Zwei Testläufer in einem Repository sind kein Schönheitsfehler, sondern die Folge davon, dass beide
+Projekte eigenständig sind (ADR-005).
 
-| Was | Warum |
+### Testing Library fragt ab, wie ein Mensch liest
+
+`getByLabelText('E-Mail')`, `getByRole('button', { name: 'Anmelden' })` – gesucht wird über das,
+was ein Nutzer sieht oder ein Screenreader vorliest, nicht über CSS-Klassen oder `data-testid`.
+
+Das hat zwei Folgen: Ein Refactoring am Markup bricht die Tests nicht, solange die Bedeutung gleich
+bleibt. **Und Zugänglichkeitsfehler fallen nebenbei auf** – genau so wurde hier ein falsch
+aufgebautes Label entdeckt (siehe `17_MISTAKES_AND_LESSONS.md`).
+
+Wer eine solche fehlschlagende Abfrage mit `getByTestId` „repariert", schaltet genau diese Warnung
+ab.
+
+### Was geprüft wird
+
+| Datei | Schwerpunkt |
 |---|---|
-| Anmeldeformular: Validierung, Fehlermeldung des Servers | Der häufigste Weg, auf dem Nutzer ins Produkt kommen |
-| `AuthProvider`: stilles Erneuern, Wiederholung bei 401 | Die trickreichste Logik im Frontend – genau hier entstehen Endlosschleifen |
-| `<Geschuetzt>`: Weiterleitung, kein Aufblitzen von Inhalten | Ein Fehler hier zeigt Unbefugten kurz Daten |
+| `lib/auth-context.test.tsx` | stilles Erneuern, Bearer-Token, **genau eine** Wiederholung bei 401, Abmelden bei Serverausfall |
+| `app/login/page.test.tsx` | Validierung ohne Serveranfrage, Fehlermeldung des Servers unverändert, `aria-invalid` |
+| `components/geschuetzt.test.tsx` | keine Weiterleitung während der Prüfung, kein Aufblitzen von Inhalten |
 
-**Geplant:** Vitest plus Testing Library für Komponenten und Hooks, Playwright für einen einzigen
-durchgehenden Pfad (Registrieren → Dashboard → Neuladen → Abmelden). Beides wird in die
-CI-Pipeline aufgenommen, damit der Frontend-Job nicht länger nur baut, sondern auch prüft.
+Der wichtigste ist die Endlosschleifen-Prüfung: Bei dauerhaft ungültiger Sitzung darf `authFetch`
+den Server nicht in einer Schleife aus 401 und Erneuerungsversuchen bombardieren.
+
+**Die Tests haben sich am ersten Tag bezahlt gemacht** – sie fanden sofort zwei echte Fehler, die
+beim Ausprobieren von Hand nicht auffallen konnten. Details im Fehlerprotokoll.
 
 ---
 
