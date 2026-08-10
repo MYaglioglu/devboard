@@ -1,7 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+import { useAuth } from '@/lib/auth-context';
 import { API_BASE_URL, fetchHealth, type HealthStatus } from '@/lib/api';
 
 type Zustand =
@@ -11,6 +13,7 @@ type Zustand =
 
 export default function Home() {
   const [zustand, setZustand] = useState<Zustand>({ art: 'laedt' });
+  const { nutzer, laedt } = useAuth();
 
   useEffect(() => {
     let abgebrochen = false;
@@ -23,7 +26,8 @@ export default function Home() {
         if (!abgebrochen) {
           setZustand({
             art: 'fehler',
-            meldung: fehler instanceof Error ? fehler.message : 'Unbekannter Fehler',
+            meldung:
+              fehler instanceof Error ? fehler.message : 'Unbekannter Fehler',
           });
         }
       });
@@ -48,26 +52,31 @@ export default function Home() {
 
         {zustand.art === 'fehler' && (
           <div className="space-y-2">
-            <StatusZeile bezeichnung="Backend" wert="nicht erreichbar" gut={false} />
+            <StatusZeile
+              bezeichnung="Backend"
+              wert="nicht erreichbar"
+              gut={false}
+            />
             <p className="text-sm text-red-600 dark:text-red-400">
               {zustand.meldung}
             </p>
             <p className="text-xs text-zinc-500">
-              Konsole des Browsers öffnen (F12) – dort steht der eigentliche Grund.
+              Konsole des Browsers öffnen (F12) – dort steht der eigentliche
+              Grund.
             </p>
           </div>
         )}
 
         {zustand.art === 'geladen' && (
           <dl className="space-y-3">
-            <StatusZeile
-              bezeichnung="Backend"
-              wert="erreichbar"
-              gut={true}
-            />
+            <StatusZeile bezeichnung="Backend" wert="erreichbar" gut={true} />
             <StatusZeile
               bezeichnung="Datenbank"
-              wert={zustand.daten.checks.database === 'up' ? 'verbunden' : 'ausgefallen'}
+              wert={
+                zustand.daten.checks.database === 'up'
+                  ? 'verbunden'
+                  : 'ausgefallen'
+              }
               gut={zustand.daten.checks.database === 'up'}
             />
             <StatusZeile
@@ -78,6 +87,32 @@ export default function Home() {
           </dl>
         )}
       </section>
+
+      <nav className="flex gap-3">
+        {!laedt && nutzer ? (
+          <Link
+            href="/dashboard"
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+          >
+            Zum Dashboard
+          </Link>
+        ) : (
+          <>
+            <Link
+              href="/login"
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700"
+            >
+              Anmelden
+            </Link>
+            <Link
+              href="/register"
+              className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+            >
+              Konto anlegen
+            </Link>
+          </>
+        )}
+      </nav>
 
       <footer className="text-xs text-zinc-500">
         Frontend :3001 → Backend {API_BASE_URL} → PostgreSQL :5432
