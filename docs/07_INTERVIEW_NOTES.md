@@ -662,3 +662,131 @@ Faustregel: **Ein Dienst signiert und prüft → HS256. Mehrere prüfen, einer s
 
 Bei HS256 gilt zusätzlich: Das Geheimnis muss mindestens so viel Entropie haben wie die Ausgabe des
 Hashverfahrens – bei HS256 also 256 Bit. Deshalb die Mindestlänge von 32 Zeichen im Schema.
+
+---
+
+## Refresh-Token & Sitzungen
+
+### 51. Warum reicht ein JWT allein nicht? Wozu ein zweiter Token?
+
+Weil zwei Anforderungen im Widerspruch stehen:
+
+- **Sicherheit** verlangt eine kurze Lebensdauer – ein JWT ist nicht widerrufbar, ein gestohlener
+  gilt bis zum Ablauf.
+- **Bequemlichkeit** verlangt eine lange – niemand will sich alle 15 Minuten neu anmelden.
+
+Mit nur einem Token muss man sich für eine Seite entscheiden. Zwei Token lösen den Konflikt:
+
+| | Access-Token | Refresh-Token |
+|---|---|---|
+| Lebensdauer | 15 Minuten | 30 Tage |
+| Gespeichert? | nein (zustandslos) | ja, serverseitig |
+| Widerrufbar? | nein | **ja** |
+| Wo im Browser | JS-Variable | `httpOnly`-Cookie |
+| Wie oft benutzt | bei jeder Anfrage | nur zum Erneuern |
+
+Der Access-Token bleibt zustandslos und schnell, der Refresh-Token macht Sitzungen kontrollierbar.
+Erst dadurch wirkt ein Logout überhaupt.
+
+### 52. Was ist Token-Rotation, und was bringt sie – ein gestohlener Token funktioniert doch trotzdem einmal?
+
+Rotation heißt: Bei jedem Erneuern wird der benutzte Token entwertet und ein neuer ausgestellt. Ein
+Refresh-Token ist ein **Einmal-Token**.
+
+Der Einwand stimmt: Rotation allein verhindert die erste Nutzung durch einen Dieb nicht. Ihr Zweck
+ist ein anderer – sie macht Diebstahl **bemerkbar**.
+
+Ohne Rotation könnte ein Angreifer einen gestohlenen Token 30 Tage lang unbemerkt neben dem
+rechtmäßigen Nutzer verwenden. Mit Rotation können beide denselben Token nur einmal einlösen: Sobald
+der zweite ihn vorlegt, ist er bereits verbraucht – und genau daran erkennt der Server, dass etwas
+nicht stimmt.
+
+**Rotation ist keine Vorbeugung, sondern eine Erkennung.** Die Reaktion darauf ist der nächste Punkt.
+
+### 53. Warum fliegt bei einer Wiederverwendung auch der rechtmäßige Nutzer raus?
+
+Weil der Server nicht unterscheiden kann, wer wer ist. Beide legen einen technisch einwandfreien
+Token vor. Es gibt kein Merkmal, an dem sich Dieb und Bestohlener trennen ließen – IP-Adressen und
+User-Agents sind fälschbar und wechseln bei echten Nutzern ständig.
+
+Zwei mögliche Erklärungen für einen erneut vorgelegten, verbrauchten Token:
+- ein abgebrochenes Erneuern (Netzwerkfehler, doppelter Klick), oder
+- ein Diebstahl mit paralleler Nutzung.
+
+Da beides gleich aussieht, wird der **schlimmere Fall angenommen**: Die gesamte Familie wird
+widerrufen. Das Prinzip heißt **fail closed** – im Zweifel sperren, nicht durchlassen.
+
+Der entscheidende Zusatz, der die Härte rechtfertigt: **Die Kosten sind ungleich verteilt.** Der
+rechtmäßige Nutzer meldet sich neu an – lästig, aber machbar, er kennt sein Passwort. Der Angreifer
+kann das nicht.
+
+Die kundenfreundliche Alternative („nur den verdächtigen Token sperren") setzt voraus, dass man weiß,
+welcher der verdächtige ist. Genau das weiß man nicht.
+
+### 54. Warum SHA-256 für den Refresh-Token, aber argon2 für Passwörter? War SHA-256 nicht „zu schnell"?
+
+Der Unterschied liegt nicht im Verfahren, sondern in der **Entropie der Eingabe**.
+
+Ein Passwort ist von Menschen gewählt, kurz und erratbar – oft aus einer Menge, die ein Angreifer
+durchprobieren kann. Deshalb muss das Verfahren bremsen: Jeder Versuch soll teuer sein.
+
+Ein Refresh-Token besteht aus **32 Byte kryptografischem Zufall** – 2²⁵⁶ Möglichkeiten. Da gibt es
+nichts zu erraten, egal wie schnell das Hashverfahren ist. Das Durchprobieren ist nicht „langsam",
+sondern praktisch unmöglich.
+
+Der Grund fürs Hashen ist hier ein anderer: Bei einem Datenbankleck wären gespeicherte Rohwerte
+sofort verwendbare Sitzungen. Der Hash macht die Zeilen wertlos.
+
+Und Geschwindigkeit ist hier sogar **erwünscht**, weil bei jedem Erneuern geprüft wird – argon2
+würde jede Anfrage um 50–100 ms verzögern, ohne etwas zu verbessern.
+
+**Merksatz:** Langsam hashen, wo die Eingabe erratbar ist. Schnell hashen, wo sie es nicht ist.
+
+### 55. Was schützt den Refresh-Token gegen XSS – und was gegen CSRF?
+
+Zwei verschiedene Angriffe, zwei verschiedene Antworten.
+
+**Gegen XSS: `httpOnly`.** Ein so gesetztes Cookie ist für JavaScript unsichtbar – `document.cookie`
+zeigt es nicht. Selbst wenn ein Angreifer Code einschleust, kann er den Token nicht auslesen. Läge
+er in `localStorage`, wäre er sofort weg.
+
+**Gegen CSRF: `SameSite=Lax` plus POST.** Cookies werden vom Browser automatisch mitgeschickt – auch
+bei Anfragen, die eine fremde Seite ausgelöst hat. Genau das ist CSRF. `Lax` sorgt dafür, dass das
+Cookie von fremden Seiten aus nur bei normaler Navigation mitgeht, nicht bei Hintergrund-POSTs. Da
+der Refresh-Endpoint ein POST ist, greift der Schutz.
+
+Zusätzlich begrenzt `Path=/auth` den Radius: Andere Anfragen tragen das Cookie gar nicht erst mit
+sich – weniger Gelegenheiten, es in Logs oder Proxys zu verlieren.
+
+Wichtig zu wissen: **`httpOnly` hilft nicht gegen CSRF und `SameSite` nicht gegen XSS.** Wer beide
+Angriffe mit einer Maßnahme abdecken will, hat einen davon nicht verstanden.
+
+### 56. Warum läuft die Rotation in einer Transaktion?
+
+Weil zwei Schreibvorgänge zusammengehören: den alten Token entwerten und den neuen anlegen.
+
+Ohne Transaktion könnte der erste gelingen und der zweite scheitern – etwa bei einem
+Verbindungsabbruch. Der Nutzer hätte dann einen entwerteten Token im Cookie und keinen neuen: **ohne
+eigenes Zutun ausgesperrt**, und beim nächsten Versuch würde sein Token sogar als Wiederverwendung
+gewertet.
+
+Eine Transaktion macht beide Schritte zu einer Einheit: entweder beide oder keiner. Das ist das
+**A** in ACID – Atomarität.
+
+### 57. Was ist nach dem Logout sofort ungültig, und was bleibt gültig?
+
+**Sofort ungültig:** die gesamte Refresh-Token-Familie. Es lassen sich keine neuen Access-Token mehr
+holen.
+
+**Weiter gültig:** der bereits ausgestellte Access-Token – bis zu 15 Minuten. Er ist zustandslos, der
+Server kennt ihn nicht und kann ihn deshalb nicht zurücknehmen.
+
+Vertretbar ist das wegen der kurzen Lebensdauer: Das Zeitfenster ist klein und begrenzt.
+
+Wer es dichter braucht (Banking, Gesundheitsdaten), führt eine **Sperrliste** – gibt damit aber die
+Zustandslosigkeit auf, also genau den Grund für JWTs. Jede Anfrage bräuchte einen Datenbank- oder
+Redis-Zugriff.
+
+**Das ist die eigentliche Antwort:** Es gibt keine kostenlose Lösung, nur eine Abwägung zwischen
+Zustandslosigkeit und sofortigem Widerruf – und man sollte sagen können, welche man warum gewählt
+hat.

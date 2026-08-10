@@ -300,6 +300,81 @@ Stünde der Refresh-Token im JSON, könnte JavaScript ihn lesen – und der ganz
 
 ---
 
+## `GET /auth/me`
+
+Liefert das Profil des angemeldeten Nutzers. **Geschützt.**
+
+```
+Authorization: Bearer <accessToken>
+```
+
+### Antwort · 200 OK
+
+```json
+{ "id": "b3f1c2d4-...", "email": "max@example.com" }
+```
+
+Die Angaben stammen aus dem Token, nicht aus der Datenbank – das spart eine Abfrage pro Aufruf. Der
+Preis: Eine Namensänderung wird erst nach dem nächsten Erneuern sichtbar. Bei 15 Minuten
+Token-Laufzeit vertretbar.
+
+### Antwort · 401 Unauthorized
+
+Bei fehlendem, ungültigem, abgelaufenem oder manipuliertem Token – und auch bei einem falschen
+Authentifizierungsschema (`Basic` statt `Bearer`).
+
+**Ein Refresh-Cookie ist kein Ersatz.** Damit lässt sich nur über `/auth/refresh` ein neuer
+Access-Token holen, sonst nichts.
+
+---
+
+## Authentifizierung – wie sie technisch greift
+
+### Bearer-Token im Header
+
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
+```
+
+„Bearer" heißt wörtlich *Inhaber*: Wer den Token vorlegt, gilt als berechtigt – es gibt keinen
+zusätzlichen Nachweis. Genau deshalb ist die kurze Lebensdauer so wichtig.
+
+**Warum der Header und nicht ein Cookie?** Ein Header wird **nicht** automatisch mitgeschickt; der
+Client muss ihn bewusst setzen. Damit ist CSRF für diese Endpoints strukturell ausgeschlossen.
+
+### Secure by Default
+
+Der Guard läuft **global** für jeden Endpoint. Einzelne Routen werden mit `@Oeffentlich()`
+ausdrücklich freigegeben – aktuell: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`,
+`POST /auth/logout` und `GET /health`.
+
+Warum herum und nicht andersherum: Vergisst man einen Guard an einer Route, wäre sie versehentlich
+öffentlich – und **niemand merkt es**, weil alles funktioniert. Vergisst man umgekehrt das
+`@Oeffentlich()`, antwortet der Endpoint mit 401 und der Fehler fällt sofort auf.
+
+Ein Versehen muss zur sicheren Seite hin ausschlagen. Vergessene Guards sind eine der häufigsten
+Ursachen echter Datenlecks.
+
+`/auth/refresh` und `/auth/logout` sind bewusst öffentlich, obwohl sie eine Sitzung voraussetzen:
+Ihr Nachweis ist das Refresh-Cookie. Wären sie geschützt, könnte man sie mit abgelaufenem
+Access-Token nicht aufrufen – also genau dann nicht, wenn man sie braucht.
+
+### 401 oder 403?
+
+| | Bedeutung | Hilft Anmelden? |
+|---|---|---|
+| **401 Unauthorized** | „Ich weiß nicht, wer du bist." Kein, abgelaufener oder gefälschter Token. | ja |
+| **403 Forbidden** | „Ich weiß, wer du bist – du darfst das nur nicht." Gültiger Token, fehlende Rolle oder fremde Organisation. | nein |
+
+Der Access-Token-Guard prüft nur die **Identität** (Authentifizierung) und wirft deshalb
+ausschließlich 401. Ein 403 kommt ab Sprint 2 aus der **Autorisierung** – Rollen und
+Mandantentrennung.
+
+Dass „Unauthorized" im HTTP-Standard für *Authentifizierung* steht, ist eine historische
+Fehlbenennung und sorgt bis heute für Verwechslungen.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |

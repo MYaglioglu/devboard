@@ -45,6 +45,22 @@ Wichtige Einordnung fürs Verständnis: CORS verhindert das **Auslesen** fremder
 Absenden der Anfrage. Gegen unerwünschte schreibende Aufrufe schützen `SameSite`-Cookies und
 CSRF-Maßnahmen – das wird in Sprint 1 mit der Authentifizierung relevant.
 
+### Authentifizierung (Sprint 1)
+
+- Passwörter mit **argon2id** gehasht, Salt und Parameter im Hash enthalten
+- **Access-Token** (JWT, HS256, 15 Minuten) – Verfahren serverseitig festgelegt, damit der
+  `alg: none`-Angriff ausgeschlossen ist
+- **Refresh-Token** (30 Tage) im `httpOnly`-Cookie mit `SameSite=Lax` und `Path=/auth`,
+  serverseitig als SHA-256-Hash gespeichert und damit widerrufbar
+- **Rotation mit Wiederverwendungs-Erkennung**: Ein erneut vorgelegter, verbrauchter Token führt
+  zum Widerruf der gesamten Token-Familie
+- **Generische Fehlermeldung beim Login** – und Schutz gegen Timing-Angriffe durch Prüfung gegen
+  einen Platzhalter-Hash, auch wenn der Nutzer nicht existiert
+- **Secure by Default**: Der Access-Token-Guard läuft global, einzelne Routen werden mit
+  `@Oeffentlich()` freigegeben. Ein vergessener Guard führt zu 401, nicht zu einem offenen Endpoint.
+- Zugangsnachweis über den `Authorization`-Header, nicht über ein Cookie – dadurch ist CSRF für
+  geschützte Endpoints strukturell ausgeschlossen
+
 ### Keine Geheimnisse im Frontend-Bundle
 
 Variablen mit `NEXT_PUBLIC_`-Präfix landen beim Build im Browser-Bundle und sind öffentlich lesbar.
