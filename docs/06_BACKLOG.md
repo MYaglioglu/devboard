@@ -56,3 +56,9 @@ Erweiterung nach dem Kern geprüft, falls Zeit bleibt.
 ## Während der Sprints aufgekommene Ideen
 
 _(hier eintragen, statt den laufenden Sprint aufzublähen)_
+
+### Sprechender `slug` für Organisationen *(Sprint 2, 11.08.2026)*
+`/orgs/acme/projects` statt `/organizations/<uuid>/projects`. Laut ADR-008 adressieren wir über
+UUIDs; ein Slug wäre ein zweiter Adressierungsweg auf dieselbe Ressource und brächte eigene Fragen
+mit (Eindeutigkeit, reservierte Wörter wie `new` oder `settings`, Umbenennen bei bestehenden Links).
+Kein Erkenntnisgewinn, der den Aufwand rechtfertigt – aber ein hübsches Detail, falls Zeit bleibt.

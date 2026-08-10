@@ -232,3 +232,47 @@ serverseitig widerrufbar.
 - Prisma 7 lädt `.env` **nicht** mehr automatisch. Geladen wird sie explizit in `prisma.config.ts` – dort zeigt sie auf die Wurzel-`.env`, damit Compose, ConfigModule und Prisma dieselbe Quelle nutzen.
 - Der Generator muss auf `moduleFormat = "cjs"` und `importFileExtension = ""` gestellt werden, weil NestJS nach CommonJS kompiliert. Sonst scheitern Jest und der Node-Start an ESM-Syntax.
 - Der Client lädt seinen Query-Compiler als WASM per dynamischem Import. In Jest braucht das `NODE_OPTIONS=--experimental-vm-modules`; im echten Node-Prozess ist es unproblematisch.
+
+---
+
+## ADR-008: Aktive Organisation als Pfad-Parameter
+
+**Status:** Angenommen (11.08.2026)
+
+### Kontext
+Ab Sprint 2 gehört jedes fachliche Datum zu genau einer Organisation. Das Backend muss bei jeder
+Anfrage wissen, **welcher Mandant** gemeint ist. Diese Entscheidung prägt jede URL bis Sprint 4 und
+lässt sich später nur mit Bruch in der öffentlichen Schnittstelle korrigieren – sie gehört deshalb
+vor die erste Zeile Sprint-2-Code.
+
+### Entscheidung
+Die Organisation steht als **Pfad-Parameter** in der URL:
+
+```
+GET /organizations/:orgId/members
+GET /organizations/:orgId/projects/:projectId
+```
+
+Ein `MitgliedschaftsGuard` liest `orgId` aus der Route, prüft die Mitgliedschaft und hängt sie an
+die Anfrage. Die Rolle wird dabei **aus der Datenbank** gelesen, nicht aus dem Token.
+
+### Alternativen
+| Option | Bewertung |
+|---|---|
+| **Header `X-Org-Id`** | Kürzere URLs, Umschalten ohne Navigation. Aber: Dieselbe URL liefert je nach Header andere Daten – schlecht cachebar, Links nicht teilbar, und im Zugriffslog steht nicht mehr, worauf zugegriffen wurde. Ein vergessener Header fällt zudem nicht auf, er liefert einfach die falsche Organisation. |
+| **Organisation im JWT** | Der Client kann sie nicht fälschen, keine Extra-Abfrage. Aber: Umschalten braucht einen neuen Token, also einen eigenen Endpoint. Und der Mandant erbt denselben Frische-Nachteil wie die Rolle – ein Entzug wirkt erst nach Ablauf des Tokens. |
+| **Pfad-Parameter** | Jede Ressource ist eindeutig adressierbar; ein Link an eine Kollegin funktioniert. REST-konform (Hierarchie in der URL). Im Log steht sofort, wer worauf zugegriffen hat. Preis: längere URLs, und der Guard muss den Parameter aus der Route lesen. |
+
+### Konsequenzen
+- **Positiv:** Der Mandant ist Teil der Ressourcen-**Identität**, nicht ein Zustand nebenbei. Ein
+  fehlender Mandanten-Filter fällt beim Lesen des Controllers auf, weil `:orgId` sichtbar in der
+  Signatur steht.
+- **Negativ:** Die URLs werden länger, und jede Route unterhalb einer Organisation muss den
+  Parameter mitführen. Ohne Guard wäre das eine Fehlerquelle – deshalb ist der Guard nicht
+  optional, sondern die Bedingung dafür, dass diese Entscheidung trägt.
+- **Ausdrücklich nicht getroffen:** Die Rollen wandern **nicht** ins JWT. Verlockend wären null
+  Datenbankabfragen; der Preis wäre, dass ein Rollenentzug bis zu 15 Minuten wirkungslos bleibt.
+  Bei einem ausgeschiedenen Mitarbeiter ist das nicht vertretbar. Wir tauschen Latenz gegen
+  Frische – abgesichert durch den Index auf `memberships`.
+- **Nicht dasselbe wie Authentifizierung:** Der `AccessTokenGuard` beantwortet weiterhin „wer bist
+  du?" (401). Der neue Guard beantwortet „darfst du hier hinein?" (403/404).
