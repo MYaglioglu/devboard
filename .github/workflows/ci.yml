@@ -117,5 +117,8 @@ jobs:
       - name: Lint
         run: npm run lint:ci
 
+      - name: Tests
+        run: npm test
+
       - name: Build
         run: npm run build
