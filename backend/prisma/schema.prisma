@@ -39,8 +39,106 @@ model User {
   updatedAt DateTime @updatedAt
 
   refreshTokens RefreshToken[]
+  memberships   Membership[]
 
   @@map("users")
+}
+
+/// Rolle eines Nutzers INNERHALB einer Organisation.
+///
+/// Warum ein Enum und nicht einfach ein Text-Feld? Die Datenbank erzwingt die
+/// gueltigen Werte selbst - ein Tippfehler wie "Admn" kommt gar nicht erst
+/// hinein, und Prisma erzeugt daraus einen TypeScript-Union-Typ. Bei Text
+/// haette man beides nicht und muesste sich auf Anwendungscode verlassen.
+///
+/// Der Preis: Ein neuer Wert braucht eine Migration, und Werte zu entfernen
+/// oder umzusortieren ist in PostgreSQL umstaendlich. Bei einer Rollenliste,
+/// die sich alle paar Jahre aendert, ist das der richtige Tausch. Bei etwas
+/// Volatilem (frei definierbare Task-Status) waere Text mit Referenztabelle
+/// die bessere Wahl.
+///
+/// Die Reihenfolge ist absteigend nach Rechten - so gelesen ist sie leichter
+/// zu merken. Verlassen darf sich der Code darauf NICHT: Ein Vergleich wie
+/// `rolle <= Role.ADMIN` waere ein Zahlenvergleich auf einem Enum und bricht,
+/// sobald jemand einen Wert dazwischen einfuegt.
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+
+  @@map("role")
+}
+
+/// Ein Mandant. Alles fachliche Datum ab Sprint 3 (Projekte, Tasks) haengt
+/// an genau einer Organisation - sie ist die Grenze, an der Sichtbarkeit endet.
+model Organization {
+  id   String @id @default(uuid()) @db.Uuid
+  name String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships Membership[]
+
+  @@map("organizations")
+}
+
+/// Die Zugehoerigkeit eines Nutzers zu einer Organisation - MIT seiner Rolle.
+///
+/// ============================================================================
+/// WARUM EIN EIGENES MODELL UND KEINE REINE N:M-BEZIEHUNG
+/// ============================================================================
+/// Prisma kann n:m implizit abbilden (`users User[]` auf beiden Seiten), dann
+/// erzeugt es im Hintergrund eine Verbindungstabelle mit genau zwei Spalten.
+/// Das reicht hier nicht: Die Rolle gehoert weder an den Nutzer noch an die
+/// Organisation.
+///
+/// Ein Nutzer ist OWNER in seiner eigenen Organisation und MEMBER in der eines
+/// Kunden - dieselbe Person, dieselbe Organisation, unterschiedliche Rolle.
+/// Die Rolle ist also eine Eigenschaft der BEZIEHUNG. Sobald eine Verbindung
+/// eigene Attribute traegt, wird sie zu einer eigenen Entitaet.
+model Membership {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @db.Uuid
+  /// Cascade: Wird eine Organisation geloescht, verschwinden ihre
+  /// Mitgliedschaften. Eine Mitgliedschaft ohne Organisation ergibt keinen Sinn.
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role Role @default(MEMBER)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// ==========================================================================
+  /// WARUM DIE EINDEUTIGKEIT IN DER DATENBANK STEHT
+  /// ==========================================================================
+  /// Ein Nutzer darf in derselben Organisation nur EINE Mitgliedschaft haben -
+  /// sonst waere seine Rolle nicht mehr eindeutig bestimmbar.
+  ///
+  /// Eine Pruefung im Code ("ist der schon Mitglied?") hat immer eine Luecke
+  /// zwischen Lesen und Schreiben. Zwei gleichzeitig angenommene Einladungen
+  /// koennten beide durchkommen. Ein UNIQUE-Constraint kann das nicht -
+  /// dasselbe Argument wie bei `users.email`.
+  @@unique([organizationId, userId])
+  /// ==========================================================================
+  /// WARUM userId TROTZDEM NOCH EINMAL EINZELN INDIZIERT IST
+  /// ==========================================================================
+  /// Der Unique-Index oben ist ein Baum, sortiert ERST nach organizationId,
+  /// DANN nach userId. Eine Abfrage nach organizationId allein kann ihn nutzen
+  /// (Praefix-Regel), eine Abfrage nach userId allein NICHT - diese Werte
+  /// liegen ueber den gesamten Index verstreut.
+  ///
+  /// `GET /organizations` ("meine Organisationen") fragt aber genau nach
+  /// userId. Ohne diesen zweiten Index muesste PostgreSQL bei jedem
+  /// Seitenaufruf die ganze Tabelle lesen.
+  ///
+  /// Merksatz: Ein zusammengesetzter Index hilft nur von LINKS gelesen.
+  @@index([userId])
+  @@map("memberships")
 }
 
 /// Ein ausgestellter Refresh-Token.
