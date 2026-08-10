@@ -790,3 +790,93 @@ Redis-Zugriff.
 **Das ist die eigentliche Antwort:** Es gibt keine kostenlose Lösung, nur eine Abwägung zwischen
 Zustandslosigkeit und sofortigem Widerruf – und man sollte sagen können, welche man warum gewählt
 hat.
+
+---
+
+## Härtung & Betrieb
+
+### 58. Wozu Rate Limiting, wenn argon2 doch schon bremst?
+
+Weil beide unterschiedliche Größen begrenzen: **argon2 begrenzt die Kosten pro Versuch**
+(~50–100 ms), **Rate Limiting die Anzahl der Versuche**.
+
+argon2 allein schützt gegen das Durchprobieren eines geklauten Hashes – dort rechnet der Angreifer
+auf eigener Hardware, und jeder Versuch kostet ihn. Es schützt aber nicht gegen jemanden, der
+einfach viele Anfragen an den Login schickt: Dann rechnet **unser** Server, und zehn Versuche pro
+Sekunde über Stunden reichen für eine Liste häufiger Passwörter.
+
+Umgekehrt gilt dasselbe: Rate Limiting allein ohne teures Hashing wäre wertlos, sobald die Datenbank
+einmal abfließt.
+
+Erst beides zusammen macht Brute Force unwirtschaftlich. Verwandte Maßnahmen: kontobezogene Sperren
+nach mehreren Fehlversuchen, CAPTCHA, und Abgleich gegen Listen bekannt gewordener Passwörter.
+
+### 59. Warum läuft der Throttler vor dem Authentifizierungs-Guard?
+
+Weil Guards in der Reihenfolge ihrer Registrierung laufen und die teure Arbeit möglichst spät kommen
+soll.
+
+Ein Angreifer, der den Server flutet, wird abgewiesen, **bevor** für jede seiner Anfragen eine
+JWT-Signatur geprüft wird. Andersherum wäre die Signaturprüfung selbst der Angriffspunkt: Der
+Server verbrennt Rechenzeit für Anfragen, die er ohnehin verwirft.
+
+Allgemeine Regel: **billig prüfen vor teuer prüfen** – erst Format, dann Rate, dann Kryptografie,
+dann Datenbank.
+
+### 60. Warum stehen die strengen Anmelde-Grenzen fest im Code statt in der Konfiguration?
+
+Zwei Gründe, ein technischer und ein inhaltlicher.
+
+**Technisch:** Decorator-Argumente werden beim *Import* der Datei ausgewertet – zu einem Zeitpunkt,
+an dem das ConfigModule die `.env` noch gar nicht gelesen hat. Ein Konfigurationswert wäre dort
+schlicht `undefined`.
+
+**Inhaltlich, und das ist der wichtigere Grund:** Das ist eine Sicherheitsentscheidung, keine
+Betriebseinstellung. Was pro Umgebung lockerbar ist, wird irgendwann versehentlich in Produktion
+gelockert – meist unter Zeitdruck, „nur mal kurz zum Testen".
+
+Das *globale* Limit bleibt konfigurierbar, weil es von der erwarteten Last abhängt.
+
+### 61. Wo liegt die Grenze eures Rate Limiters?
+
+Der Zähler liegt im **Arbeitsspeicher**. Bei einer Instanz genügt das. Laufen mehrere hinter einem
+Loadbalancer, hat jede ihren eigenen Zähler – bei fünf Instanzen wären aus „5 Versuche pro Minute"
+faktisch 25.
+
+Lösung wäre ein gemeinsamer Speicher, üblicherweise Redis. Das ist bewusst zurückgestellt und in
+`10_SECURITY.md` vermerkt, weil DevBoard vorerst auf einer Instanz läuft.
+
+Zweite Grenze: Gezählt wird pro IP-Adresse. Ein verteilter Angriff über viele Adressen umgeht das.
+Dagegen helfen kontobezogene Sperren und Reputationsdienste.
+
+### 62. Warum darf ein Stacktrace niemals nach außen?
+
+Weil er Dateipfade, Verzeichnisstruktur, Bibliotheksversionen und Teile des Quelltexts verrät –
+genau die Aufklärung, aus der ein Angreifer sein Bild vom System baut. Eine bekannte
+Bibliotheksversion mit bekannter Lücke ist eine Einladung.
+
+Die Regel lautet: **nach innen alles protokollieren, nach außen nur das Nötige.** Ein globaler
+Exception-Filter unterscheidet dafür zwei Fälle:
+
+- **`HttpException`** – eine absichtliche Aussage des Codes („E-Mail bereits vergeben"). Ihre
+  Meldung ist für Nutzer gedacht und wird unverändert durchgereicht, samt der feldbezogenen
+  Validierungsmeldungen.
+- **Alles andere** – ein unerwarteter Fehler. Vollständig ins Log, nach außen nur „Interner
+  Serverfehler".
+
+### 63. Welche Security-Header setzt ihr, und wogegen?
+
+Über Helmet, unter anderem:
+
+| Header | Wogegen |
+|---|---|
+| `X-Content-Type-Options: nosniff` | Browser errät den Inhaltstyp – eine als Text ausgelieferte Datei könnte als Skript laufen |
+| `X-Frame-Options` / `frame-ancestors` | Clickjacking durch Einbetten in eine fremde Seite |
+| `Strict-Transport-Security` | Herabstufung auf HTTP; erzwingt HTTPS für weitere Aufrufe |
+| `Content-Security-Policy` | XSS – bei einer reinen API von geringem Nutzen, schadet aber nicht |
+
+Ebenso wichtig ist, was **entfällt**: `X-Powered-By: Express`. Das ist eine kostenlose Auskunft an
+Angreifer darüber, wonach sie suchen sollen.
+
+Nicht mehr gesetzt wird `X-XSS-Protection` – der Header ist veraltet und war in manchen Browsern
+selbst eine Lücke.

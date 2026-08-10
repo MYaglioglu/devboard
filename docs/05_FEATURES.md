@@ -7,15 +7,19 @@ Ein Feature gilt erst als fertig, wenn **alle** Kriterien erfüllt sind, einschl
 
 ---
 
-## F1 – Authentifizierung & Rollen *(Sprint 1)*
+## F1 – Authentifizierung & Rollen *(Sprint 1 – abgeschlossen am 11.08.2026)*
 
-- [ ] Registrierung mit E-Mail und Passwort, Eingabevalidierung per Zod
-- [ ] Passwörter mit argon2 gehasht, niemals im Klartext gespeichert oder geloggt
-- [ ] Login gibt Access-Token (kurzlebig) und Refresh-Token (langlebig) zurück
-- [ ] Refresh-Token-Rotation mit Erkennung wiederverwendeter Token
-- [ ] Logout invalidiert den Refresh-Token serverseitig
-- [ ] Geschützte Endpoints per Guard, geschützte Seiten im Frontend
-- [ ] Unit-Tests für den Auth-Service, Integrationstests für die Endpoints
+- [x] Registrierung mit E-Mail und Passwort, Eingabevalidierung per Zod
+- [x] Passwörter mit argon2 gehasht, niemals im Klartext gespeichert oder geloggt
+- [x] Login gibt Access-Token (kurzlebig) und Refresh-Token (langlebig) zurück
+- [x] Refresh-Token-Rotation mit Erkennung wiederverwendeter Token
+- [x] Logout invalidiert den Refresh-Token serverseitig
+- [x] Geschützte Endpoints per Guard, geschützte Seiten im Frontend
+- [x] Unit-Tests für den Auth-Service, Integrationstests für die Endpoints
+- [x] Rate Limiting, Security-Header, einheitliche Fehlerantworten
+
+**Rollen** (`Owner`/`Admin`/`Member`) folgen in Sprint 2 zusammen mit den Organisationen – ohne
+Mandanten gäbe es noch nichts, worauf sich eine Rolle beziehen könnte.
 
 ## F2 – Organisationen, Mitgliedschaften & Multi-Tenancy *(Sprint 2)*
 
