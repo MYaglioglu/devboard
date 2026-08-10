@@ -1,5 +1,6 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
 
+import { Oeffentlich } from '../auth/decorators/public.decorator';
 import { HealthService } from './health.service';
 import type { HealthStatus } from './health.service';
 
@@ -11,6 +12,9 @@ import type { HealthStatus } from './health.service';
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 
+  // Muss ohne Anmeldung erreichbar sein: Loadbalancer und Docker fragen
+  // diesen Endpoint ab und haben keine Zugangsdaten.
+  @Oeffentlich()
   @Get()
   async check(): Promise<HealthStatus> {
     const result = await this.healthService.check();

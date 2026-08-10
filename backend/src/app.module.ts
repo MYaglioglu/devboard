@@ -1,8 +1,10 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import cookieParser from 'cookie-parser';
 
 import { AuthModule } from './auth/auth.module';
+import { AccessTokenGuard } from './auth/guards/access-token.guard';
 import { validateEnv } from './config/env.schema';
 import { HealthModule } from './health/health.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -23,6 +25,18 @@ import { PrismaModule } from './prisma/prisma.module';
     PrismaModule,
     HealthModule,
     AuthModule,
+  ],
+  providers: [
+    // Der Guard laeuft fuer JEDEN Endpoint der Anwendung. Einzelne Routen
+    // werden mit @Oeffentlich() ausdruecklich freigegeben.
+    //
+    // Warum global statt @UseGuards pro Route: Vergisst man den Guard an einer
+    // Route, waere sie versehentlich oeffentlich - und niemand merkt es, weil
+    // alles funktioniert. Vergisst man umgekehrt das @Oeffentlich(), antwortet
+    // der Endpoint mit 401 und der Fehler faellt sofort auf.
+    //
+    // SECURE BY DEFAULT: Ein Versehen muss zur sicheren Seite ausschlagen.
+    { provide: APP_GUARD, useClass: AccessTokenGuard },
   ],
 })
 export class AppModule implements NestModule {

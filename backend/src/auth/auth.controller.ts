@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Post,
@@ -13,12 +14,15 @@ import type { Request, Response } from 'express';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { AuthService } from './auth.service';
 import { REFRESH_COOKIE, refreshCookieOptions } from './cookie';
+import { AktuellerNutzer } from './decorators/current-user.decorator';
+import { Oeffentlich } from './decorators/public.decorator';
 import { loginSchema } from './dto/login.dto';
 import { registerSchema } from './dto/register.dto';
 import type { Env } from '../config/env.schema';
 import type { LoginErgebnis, OeffentlicherNutzer } from './auth.service';
 import type { LoginDto } from './dto/login.dto';
 import type { RegisterDto } from './dto/register.dto';
+import type { AngemeldeterNutzer } from './guards/access-token.guard';
 
 /** Was der Client zu sehen bekommt - OHNE den Refresh-Token. */
 interface AuthAntwort {
@@ -41,6 +45,7 @@ export class AuthController {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
+  @Oeffentlich()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   async register(
@@ -60,6 +65,7 @@ export class AuthController {
    * der Rueckgabewert der Methode wuerde ignoriert. Mit `passthrough` darf man
    * nur das Cookie setzen und den Rest weiterhin NestJS ueberlassen.
    */
+  @Oeffentlich()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(
@@ -77,6 +83,11 @@ export class AuthController {
    * es wird vom Browser automatisch mitgeschickt, der Client muss nichts tun
    * und kann den Wert auch gar nicht lesen (httpOnly).
    */
+  // Oeffentlich, obwohl er eine Sitzung voraussetzt: Der Nachweis ist hier das
+  // Refresh-Cookie, nicht der Access-Token. Waere die Route geschuetzt, koennte
+  // man sie mit abgelaufenem Access-Token nicht mehr aufrufen - also genau
+  // dann nicht, wenn man sie braucht.
+  @Oeffentlich()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   async refresh(
@@ -98,6 +109,9 @@ export class AuthController {
    * Fehlschlag beim Abmelden waere fuer Nutzer unverstaendlich und wuerde
    * ausserdem verraten, ob ein Token gueltig war.
    */
+  // Ebenfalls oeffentlich: Ein Abmelden muss auch mit abgelaufenem
+  // Access-Token funktionieren. Der Widerruf stuetzt sich auf das Cookie.
+  @Oeffentlich()
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(
@@ -115,6 +129,27 @@ export class AuthController {
       sameSite: 'lax',
       path: '/auth',
     });
+  }
+
+  /**
+   * GET /auth/me
+   *
+   * Der erste GESCHUETZTE Endpoint. Ohne gueltigen Access-Token im Header
+   * `Authorization: Bearer <token>` kommt er gar nicht erst zur Ausfuehrung -
+   * der globale Guard wirft vorher 401.
+   *
+   * Beachte, was hier NICHT steht: kein Token-Auslesen, kein Pruefen, kein
+   * Datenbankzugriff fuer die Identitaet. Der Guard hat das erledigt, der
+   * Decorator reicht das Ergebnis herein. Genau dafuer gibt es beide.
+   *
+   * Die Angaben stammen aus dem Token, nicht aus der Datenbank. Das ist
+   * bewusst: Es spart eine Abfrage pro Aufruf. Der Preis ist, dass eine
+   * Namensaenderung erst nach dem naechsten Erneuern sichtbar wird - bei 15
+   * Minuten Tokenlaufzeit vertretbar.
+   */
+  @Get('me')
+  profil(@AktuellerNutzer() nutzer: AngemeldeterNutzer): AngemeldeterNutzer {
+    return nutzer;
   }
 
   private setzeCookieUndAntworte(
