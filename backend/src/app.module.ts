@@ -10,6 +10,7 @@ import { AccessTokenGuard } from './auth/guards/access-token.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { validateEnv } from './config/env.schema';
 import { HealthModule } from './health/health.module';
+import { OrganizationsModule } from './organizations/organizations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import type { Env } from './config/env.schema';
 
@@ -75,6 +76,7 @@ import type { Env } from './config/env.schema';
     PrismaModule,
     HealthModule,
     AuthModule,
+    OrganizationsModule,
   ],
   providers: [
     // ========================================================================
