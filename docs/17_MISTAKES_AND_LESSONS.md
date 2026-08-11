@@ -321,3 +321,57 @@ Sorte Fehlersuche, die eine Stunde frisst.
 4. **In der CI konnte das nicht auffallen.** `src/generated/` ist gitignored, die Pipeline generiert
    den Client bei jedem Lauf neu. Der veraltete Stand existierte ausschließlich lokal – eine
    Fehlerklasse, die sich strukturell nur auf dem eigenen Rechner zeigt.
+
+---
+
+## 2026-08-11 – Ein Nebenläufigkeitstest, der nichts bewacht hat
+
+**Situation:** Scheibe 2.4 schützt die letzte `OWNER`-Mitgliedschaft. Das Muster ist *lesen,
+entscheiden, schreiben* – und damit angreifbar durch zwei gleichzeitige Anfragen:
+
+```
+A: zählt OWNER → 2 → "einer darf weg" → entfernt sich
+B: zählt OWNER → 2 → "einer darf weg" → entfernt sich
+```
+
+Beide in einer Transaktion, beide atomar, danach **null** Eigentümer. Gelöst mit
+`SELECT … FOR UPDATE` auf der Organisationszeile.
+
+Dazu ein E2E-Test: zwei `OWNER` verlassen gleichzeitig per `Promise.all`, danach muss genau einer
+übrig sein. Grün. Sah nach einem soliden Nachweis aus.
+
+**Der Fehler:** Die Gegenprobe. Sperre entfernt, Test dreimal gelaufen – **jedes Mal grün**.
+
+Der Test belegte gar nichts. Zwei Anfragen über HTTP verschränken sich nur selten so eng, dass
+beide ihre Zählung abschließen, bevor die andere schreibt. Jede Anfrage durchläuft Guard,
+Controller, mehrere Datenbankrunden; das Zeitfenster für die Kollision ist winzig. Die Race
+Condition ist **echt** – über diesen Weg nur nicht zuverlässig auslösbar.
+
+Hätte ich nicht gegengeprüft, stünde jetzt im Repository ein Test mit dem Namen
+„laesst bei zwei gleichzeitigen Austritten genau einen OWNER uebrig", der beim Entfernen des
+Schutzes weiter grün leuchtet. Das ist schlimmer als kein Test: Er hätte künftige Änderungen
+abgesegnet, die die Sperre entfernen.
+
+**Behebung:** Zweiter Test, der den Konflikt **erzwingt** statt auf Zufall zu hoffen. Eine eigene
+Transaktion nimmt die Sperre und hält sie 500 ms. Nimmt der Endpoint dieselbe Sperre, *muss* er
+warten – gemessen wird die Dauer seiner Antwort.
+
+Gegenprobe dazu: ohne `FOR UPDATE` antwortet er nach **60 ms** statt nach über 300 – der Test wird
+rot. Erst damit bewacht er etwas.
+
+Der ursprüngliche Test bleibt, aber mit ehrlichem Kommentar: Er sichert die **Invariante** („es
+bleibt ein `OWNER`"), er beweist nicht die Sperre.
+
+**Learnings:**
+
+1. **Ein Test, der mit und ohne den Schutz grün ist, bewacht ihn nicht.** Das lässt sich nicht
+   ansehen – man muss es ausprobieren. Eine Mutationsprobe kostet zwei Minuten.
+2. **Nebenläufigkeit lässt sich nicht durch „gleichzeitig aufrufen" testen.** `Promise.all` erzeugt
+   keine Verschränkung, es erzeugt nur die Möglichkeit einer. Wer einen Race verlässlich prüfen
+   will, muss ihn **erzwingen** – durch eine gehaltene Sperre, eine künstliche Pause an der
+   kritischen Stelle oder einen Test direkt auf der Datenbankebene.
+3. **Ein grüner Test kann gefährlicher sein als gar keiner.** Er erzeugt Vertrauen, das durch
+   nichts gedeckt ist, und segnet spätere Änderungen ab.
+4. **Zeitmessungen in Tests sind vertretbar, wenn die Größenordnungen weit auseinanderliegen.**
+   Hier: „sofort" (60 ms) gegen „hat eine halbe Sekunde gewartet". Brüchig wäre eine Messung, die
+   prüft, ob etwas *schnell genug* ist.

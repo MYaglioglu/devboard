@@ -62,3 +62,11 @@ _(hier eintragen, statt den laufenden Sprint aufzublähen)_
 UUIDs; ein Slug wäre ein zweiter Adressierungsweg auf dieselbe Ressource und brächte eigene Fragen
 mit (Eindeutigkeit, reservierte Wörter wie `new` oder `settings`, Umbenennen bei bestehenden Links).
 Kein Erkenntnisgewinn, der den Aufwand rechtfertigt – aber ein hübsches Detail, falls Zeit bleibt.
+
+### Datenbank-Trigger für „mindestens ein OWNER" *(Sprint 2, 11.08.2026)*
+Die Regel wird derzeit in der Anwendung durchgesetzt, abgesichert über eine Zeilensperre. Das
+Robusteste wäre ein Constraint in der Datenbank – dort kann ihn kein Codepfad umgehen, auch kein
+Migrationsskript und kein manueller Eingriff in `psql`. In PostgreSQL ist „mindestens eine Zeile
+mit `role = OWNER` je `organizationId`" aber nicht als `CHECK` ausdrückbar; es bräuchte einen
+`AFTER`-Trigger oder eine materialisierte Zählspalte. Beides ist Aufwand und eine Fehlerquelle für
+sich. Lohnt sich, sobald es mehr als einen Dienst gibt, der auf diese Tabellen schreibt.

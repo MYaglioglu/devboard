@@ -1201,3 +1201,118 @@ fällt beim ersten Aufruf auf und benennt die Ursache.
 
 Dass ein `500` nach außen nichts verrät, stellt der globale Exception-Filter sicher: Nach innen das
 vollständige Log, nach außen nur „Interner Serverfehler".
+
+### 79. Warum darf bei euch nur `OWNER` Rollen ändern, nicht auch `ADMIN`?
+
+Weil es sonst kein `ADMIN` mehr wäre. Dürfte er Rollen vergeben, könnte er sich selbst zum `OWNER`
+machen – und die Unterscheidung der beiden Rollen wäre wertlos. Jeder `ADMIN` wäre ein `OWNER`, der
+es nur noch nicht ausgesprochen hat.
+
+> **Merksatz:** Wer Rechte vergeben darf, hat sie.
+
+Die Befugnis, Rollen zu ändern, ist deshalb in jedem System die höchste Befugnis und gehört an die
+höchste Rolle. Dieselbe Überlegung greift an einer zweiten Stelle: Ein `ADMIN` darf keinen `OWNER`
+**entfernen**. Sonst könnte er alle `OWNER` löschen und die Organisation übernehmen – wer den
+Höherstehenden entfernen kann, steht höher.
+
+Das ist die Klasse von Lücke, die man **Privilege Escalation** nennt, und sie entsteht fast nie
+durch eine fehlende Prüfung. Sie entsteht durch eine Prüfung, die den *falschen* Umfang hat.
+
+### 80. Wann gehört Autorisierung in einen Guard und wann in den Service?
+
+Das Unterscheidungsmerkmal ist, ob die **Zielressource** eine Rolle spielt.
+
+Ein Guard läuft, bevor der Controller existiert. Er kennt den Anfragenden und die Route – aber
+nicht, welche Ressource betroffen ist und in welchem Zustand sie sich befindet.
+
+| Regel | Wo | Warum |
+|---|---|---|
+| „nur `OWNER` darf Rollen ändern" | Guard (`@Rollen`) | hängt nur am Anfragenden |
+| „sich selbst entfernen darf jeder" | Service | hängt daran, **wen** es trifft |
+| „`ADMIN` darf keinen `OWNER` entfernen" | Service | hängt an der Rolle des **Ziels** |
+| „der letzte `OWNER` darf nicht gehen" | Service | hängt am **Zustand** der Organisation |
+
+Konkret bei `DELETE /members/:userId`: Ein `@Rollen(OWNER, ADMIN)` würde einen `MEMBER` abweisen,
+bevor überhaupt klar ist, dass er nur sich selbst meint – „Organisation verlassen" wäre unmöglich.
+
+> **Faustregel:** Ein Guard entscheidet über den **Zugang**, nicht über den **Einzelfall**.
+
+### 81. Ihr habt eine Regel, die von vier Stellen aus verletzt werden kann. Wie geht ihr damit um?
+
+Die Regel lautet: Die letzte `OWNER`-Mitgliedschaft darf nicht verschwinden. Verletzen kann man sie
+durch Entfernen, Selbst-Verlassen, Herabstufen und Kontolöschung.
+
+Die Antwort ist: **einmal implementieren, an der Stelle, durch die alle vier Wege führen.** Das ist
+der Service. Am Endpoint müsste sie viermal stehen, und beim fünften Weg – der irgendwann dazukommt
+– würde sie fehlen.
+
+Das ist die praktische Bedeutung von „Geschäftslogik gehört in den Service, nicht in den
+Controller". Nicht als Stilregel, sondern weil ein Controller pro Zugangsweg existiert und eine
+fachliche Regel unabhängig vom Zugangsweg gilt.
+
+**Statuscode `409 Conflict`**, nicht `403`: Der Anfragende *ist* berechtigt, die Anfrage ist formal
+in Ordnung. Sie widerspricht nur dem aktuellen **Zustand** – mit einem zweiten `OWNER` wäre dieselbe
+Anfrage erfolgreich. Genau dafür gibt es `409`.
+
+### 82. Ihr habt eine Transaktion. Reicht die nicht gegen gleichzeitige Zugriffe?
+
+Nein, und das ist der am häufigsten missverstandene Punkt bei Transaktionen.
+
+Das Muster hier ist *lesen, entscheiden, schreiben*:
+
+```
+A: zählt OWNER → 2 → "einer darf weg" → entfernt sich
+B: zählt OWNER → 2 → "einer darf weg" → entfernt sich
+```
+
+Beide laufen in einer Transaktion. Beide sind atomar. Danach hat die Organisation **null**
+Eigentümer.
+
+Der Grund ist die **Isolationsstufe**. PostgreSQL fährt standardmäßig `READ COMMITTED`: Jede
+Transaktion sieht den Stand, der bei ihrem Beginn festgeschrieben war. Atomarität schützt gegen
+**halbe** Schreibvorgänge, nicht gegen eine veraltete Entscheidungsgrundlage.
+
+> **Merksatz:** Eine Transaktion macht Schreibvorgänge unteilbar. Sie macht Lesen und Schreiben
+> nicht automatisch zu einer Einheit.
+
+**Unsere Lösung:** eine pessimistische Sperre auf der Organisationszeile, `SELECT … FOR UPDATE`. Die
+zweite Anfrage wartet und liest danach den aktualisierten Stand.
+
+Gesperrt wird die **Organisation**, nicht die einzelne Mitgliedschaft – die Regel betrifft die
+Organisation als Ganzes, also braucht es einen gemeinsamen Punkt, an dem sich konkurrierende
+Änderungen begegnen. Zwei Sperren auf zwei verschiedenen Mitgliedschaften kämen sich nie in die
+Quere.
+
+**Alternativen:** `SERIALIZABLE` (PostgreSQL erkennt den Konflikt selbst, braucht aber
+Wiederholungslogik) und optimistisches Sperren über eine Versionsspalte (richtig, wenn Konflikte
+selten sind und eine Fehlermeldung genügt – beim Kanban-Board in Sprint 3 die passende Wahl; hier
+nicht, weil ein verlorener Eigentümer sich nicht durch Neuladen beheben lässt).
+
+### 83. Wie testet man eine Race Condition?
+
+Nicht mit `Promise.all`. Das ist die Antwort, die ich in diesem Sprint auf die harte Tour gelernt
+habe.
+
+Der erste Versuch war ein E2E-Test: zwei `OWNER` verlassen gleichzeitig, danach muss einer übrig
+sein. Grün. Sah nach einem Nachweis aus.
+
+Dann die Gegenprobe: **Sperre entfernt, Test dreimal gelaufen – jedes Mal grün.** Der Test belegte
+gar nichts. Zwei Anfragen über HTTP verschränken sich nur selten so eng, dass beide ihre Zählung
+abschließen, bevor die andere schreibt. Jede durchläuft Guard, Controller und mehrere
+Datenbankrunden; das Fenster für die Kollision ist winzig. Die Race Condition ist echt – über
+diesen Weg nur nicht zuverlässig auslösbar.
+
+`Promise.all` erzeugt keine Verschränkung, es erzeugt nur die **Möglichkeit** einer.
+
+**Was tatsächlich funktioniert: den Konflikt erzwingen.** Eine eigene Transaktion nimmt die Sperre
+auf der Organisationszeile und hält sie 500 ms. Nimmt der Endpoint dieselbe Sperre, *muss* er
+warten – gemessen wird die Dauer seiner Antwort. Ohne `FOR UPDATE` antwortet er nach 60 ms, und der
+Test wird rot.
+
+Andere Wege, denselben Effekt zu erreichen: eine künstliche Pause an der kritischen Stelle im Code
+(nur unter Testflagge), oder der Test direkt auf Datenbankebene mit zwei Verbindungen.
+
+**Das eigentliche Learning ist allgemeiner:** Ein grüner Test kann gefährlicher sein als gar keiner.
+Er erzeugt Vertrauen, das durch nichts gedeckt ist, und segnet spätere Änderungen ab, die den Schutz
+entfernen. Ob ein Test etwas bewacht, sieht man ihm nicht an – man muss den Code kaputt machen und
+nachschauen.
