@@ -84,3 +84,14 @@ benutzbar ist. Korrekt wäre: Token ausschließlich per E-Mail, der Einladende s
 kann die Einladung nicht selbst einlösen. Braucht einen Mailversanddienst und eine Vorlage –
 Infrastruktur, die für den Erkenntnisgewinn dieses Projekts wenig beiträgt. Vermerkt in
 `10_SECURITY.md` als bewusste Abweichung.
+
+### Umlaute in nutzersichtbaren Fehlermeldungen *(Sprint 2, 11.08.2026 – für 2.9 vorgemerkt)*
+Der Backend-Quelltext verzichtet durchgängig auf Umlaute. Für Kommentare ist das unproblematisch,
+aber dieselben Zeichenketten landen als Fehlermeldung beim Nutzer: „Ernennen Sie zuerst einen
+anderen Eigentuemer", „Sitzung ungueltig", „Einladung ungueltig", „Ungueltige Nutzer-ID". In der
+Oberfläche sichtbar geworden, als die Detailseite eine 409-Antwort angezeigt hat.
+
+Zu trennen sind zwei Dinge: **Quelltext** (Kommentare, Bezeichner) darf ASCII bleiben,
+**nutzersichtbare Texte** brauchen korrekte Umlaute. Betrifft `auth.service.ts`,
+`membership.guard.ts`, `invitations.service.ts`, `organizations.service.ts` und die Zod-Meldungen.
+Wird beim Sprint-2-Abschluss gezogen – für ein Portfolio-Projekt ist das kein Detail.
