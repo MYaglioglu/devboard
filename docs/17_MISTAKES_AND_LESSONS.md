@@ -375,3 +375,68 @@ bleibt ein `OWNER`"), er beweist nicht die Sperre.
 4. **Zeitmessungen in Tests sind vertretbar, wenn die Größenordnungen weit auseinanderliegen.**
    Hier: „sofort" (60 ms) gegen „hat eine halbe Sekunde gewartet". Brüchig wäre eine Messung, die
    prüft, ob etwas *schnell genug* ist.
+
+---
+
+## 2026-08-11 – `setState` im Effekt, vom React-Compiler abgefangen
+
+**Situation:** Die zuletzt gewählte Organisation soll in `localStorage` überleben. Erste Fassung –
+der Reflex aus React 18:
+
+```ts
+const [gemerkteId, setGemerkteId] = useState<string | null>(null);
+
+useEffect(() => {
+  setGemerkteId(window.localStorage.getItem(SCHLUESSEL));
+}, []);
+```
+
+Tests grün, Build grün. `npm run lint:ci` nicht:
+
+```
+Avoid calling setState() directly within an effect   react-hooks/set-state-in-effect
+```
+
+**Warum die Regel recht hat:** Die Komponente rendert **zweimal** – einmal mit `null`, dann mit dem
+echten Wert. Sichtbar wird das als kurzes Flackern: Erst ist keine Organisation aktiv, einen
+Frame später die richtige. Bei einem Wert, der die Anzeige steuert, ist das ein echter Fehler und
+keine Stilfrage.
+
+**Die eigentliche Erkenntnis:** `localStorage` ist ein **externer Speicher**. Er liegt außerhalb von
+React, ändert sich ohne dessen Zutun – auch aus einem *anderen Browser-Tab* – und existiert beim
+serverseitigen Rendern überhaupt nicht. Für genau diesen Fall gibt es `useSyncExternalStore`:
+
+```ts
+const gemerkteId = useSyncExternalStore(abonniere, leseImBrowser, leseAufServer);
+```
+
+Drei Argumente, und jedes beantwortet eine Frage, die die `useEffect`-Variante offengelassen hatte:
+
+| Argument | Frage |
+|---|---|
+| `abonniere` | Woher erfahre ich von Änderungen? (auch aus anderen Tabs) |
+| `leseImBrowser` | Was ist der aktuelle Wert? |
+| `leseAufServer` | Was gilt, wenn es kein `window` gibt? |
+
+Das dritte ist der Grund, warum es den Haken gibt: Es *zwingt* dazu, den Serverfall zu beantworten,
+statt dort abzustürzen oder unterschiedliches Markup zu erzeugen.
+
+**Nebenbei gefunden:** `localStorage.setItem` löst im **eigenen** Tab kein `storage`-Ereignis aus,
+nur in den anderen. Ohne eigene Benachrichtigung hätte sich der Speicher geändert und die Oberfläche
+wäre stehen geblieben – ein Fehler, den die `useEffect`-Variante gar nicht erst sichtbar gemacht
+hätte, weil sie ohnehin nur einmal beim Aufbau liest.
+
+**Learnings:**
+
+1. **Eine Lint-Regel, die man nicht versteht, ist ein Hinweis – keine Schikane.** Der schnelle
+   Ausweg wäre `// eslint-disable-next-line` gewesen. Die Regel hat auf ein doppeltes Rendern und
+   auf den falschen Haken gezeigt.
+2. **Nicht jeder Zustand gehört in `useState`.** Wer Daten aus einer Quelle liest, die React nicht
+   gehört – `localStorage`, `matchMedia`, ein WebSocket, `navigator.onLine` –, braucht
+   `useSyncExternalStore`.
+3. **Der React-Compiler in Next 16 prüft schärfer als React 18.** Muster, die jahrelang üblich
+   waren, sind jetzt Fehler. Das ist der Grund, warum in `frontend/AGENTS.md` steht, vor dem
+   Schreiben die mitgelieferte Doku zu lesen statt aus dem Gedächtnis zu arbeiten.
+4. **Lint lief nach den Tests.** Grüne Tests und ein grüner Build haben den Fehler nicht bemerkt –
+   er war kein Fehlverhalten, sondern ein Muster mit absehbaren Folgen. Genau dafür gibt es
+   statische Analyse neben Tests.
