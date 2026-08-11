@@ -13,6 +13,14 @@ interface OrganisationAntwort {
   createdAt: string;
 }
 
+interface MitgliedAntwort {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: 'OWNER' | 'ADMIN' | 'MEMBER';
+  mitgliedSeit: string;
+}
+
 interface LoginAntwort {
   accessToken: string;
 }
@@ -47,6 +55,17 @@ describe('Organizations (e2e)', () => {
       .expect(200);
 
     return (antwort.body as LoginAntwort).accessToken;
+  };
+
+  /** Legt eine Organisation an und liefert ihre ID. */
+  const legeAn = async (token: string, name: string): Promise<string> => {
+    const antwort = await request(app.getHttpServer())
+      .post('/organizations')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name })
+      .expect(201);
+
+    return (antwort.body as OrganisationAntwort).id;
   };
 
   beforeAll(async () => {
@@ -228,6 +247,221 @@ describe('Organizations (e2e)', () => {
 
     it('antwortet ohne Access-Token mit 401', async () => {
       await request(app.getHttpServer()).get('/organizations').expect(401);
+    });
+  });
+
+  describe('GET /organizations/:orgId', () => {
+    it('liefert die Organisation samt eigener Rolle', async () => {
+      const token = await meldeAn('detail');
+      const id = await legeAn(token, orgName('Detail'));
+
+      const antwort = await request(app.getHttpServer())
+        .get(`/organizations/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const koerper = antwort.body as OrganisationAntwort;
+      expect(koerper.id).toBe(id);
+      expect(koerper.role).toBe('OWNER');
+    });
+
+    /**
+     * ========================================================================
+     * DER TEST, DER DIE 404-ENTSCHEIDUNG FESTSCHREIBT
+     * ========================================================================
+     * Nutzer B ist angemeldet und kennt die ID - er ist nur kein Mitglied.
+     * Die Antwort ist 404, NICHT 403.
+     *
+     * Ein 403 wuerde bestaetigen, dass es diese Organisation gibt. Damit
+     * liessen sich IDs durchprobieren und existierende Mandanten kartieren.
+     * Fuer Nutzer B existiert sie schlicht nicht.
+     */
+    it('antwortet bei fremder Organisation mit 404, nicht mit 403', async () => {
+      const tokenA = await meldeAn('eigner-detail');
+      const tokenB = await meldeAn('fremder-detail');
+      const id = await legeAn(tokenA, orgName('Fremd'));
+
+      const antwort = await request(app.getHttpServer())
+        .get(`/organizations/${id}`)
+        .set('Authorization', `Bearer ${tokenB}`)
+        .expect(404);
+
+      // Die Meldung darf keinen Hinweis darauf geben, dass es die
+      // Organisation gibt - sonst waere der Statuscode umsonst vorsichtig.
+      const koerper = antwort.body as FehlerAntwort;
+      expect(koerper.message).toBe('Organisation nicht gefunden');
+    });
+
+    it('antwortet bei nicht existierender Organisation mit derselben 404', async () => {
+      const token = await meldeAn('gibt-es-nicht');
+
+      const antwort = await request(app.getHttpServer())
+        .get('/organizations/00000000-0000-4000-8000-000000000000')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+
+      // Wortgleich mit dem Test darueber. Genau darum geht es: Die beiden
+      // Faelle duerfen von aussen nicht zu unterscheiden sein.
+      expect((antwort.body as FehlerAntwort).message).toBe(
+        'Organisation nicht gefunden',
+      );
+    });
+
+    it('antwortet ohne Access-Token mit 401, nicht mit 404', async () => {
+      const token = await meldeAn('reihenfolge');
+      const id = await legeAn(token, orgName('Reihenfolge'));
+
+      // Beweist die Guard-Reihenfolge: Erst Authentifizierung (401), dann
+      // Autorisierung (404/403). Andersherum wuerde die Antwort verraten,
+      // ob eine ID existiert, noch bevor jemand angemeldet ist.
+      await request(app.getHttpServer())
+        .get(`/organizations/${id}`)
+        .expect(401);
+    });
+  });
+
+  describe('GET /organizations/:orgId/members', () => {
+    it('listet die Mitglieder mit Rolle und Beitrittsdatum', async () => {
+      const token = await meldeAn('mitglieder');
+      const id = await legeAn(token, orgName('Mitglieder'));
+
+      const antwort = await request(app.getHttpServer())
+        .get(`/organizations/${id}/members`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      const koerper = antwort.body as MitgliedAntwort[];
+
+      expect(koerper).toHaveLength(1);
+      expect(koerper[0].email).toBe(email('mitglieder'));
+      expect(koerper[0].role).toBe('OWNER');
+      expect(koerper[0].mitgliedSeit).toBeDefined();
+    });
+
+    it('gibt niemals einen Passwort-Hash heraus', async () => {
+      const token = await meldeAn('kein-hash-hier');
+      const id = await legeAn(token, orgName('Kein Hash'));
+
+      const antwort = await request(app.getHttpServer())
+        .get(`/organizations/${id}/members`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(JSON.stringify(antwort.body)).not.toContain('argon2');
+      expect(JSON.stringify(antwort.body)).not.toContain('passwordHash');
+    });
+
+    it('antwortet fuer einen fremden Nutzer mit 404', async () => {
+      const tokenA = await meldeAn('eigner-mitglieder');
+      const tokenB = await meldeAn('fremder-mitglieder');
+      const id = await legeAn(tokenA, orgName('Fremde Mitglieder'));
+
+      await request(app.getHttpServer())
+        .get(`/organizations/${id}/members`)
+        .set('Authorization', `Bearer ${tokenB}`)
+        .expect(404);
+    });
+  });
+
+  describe('PATCH /organizations/:orgId', () => {
+    it('erlaubt dem OWNER das Umbenennen', async () => {
+      const token = await meldeAn('umbenennen');
+      const id = await legeAn(token, orgName('Alt'));
+
+      const antwort = await request(app.getHttpServer())
+        .patch(`/organizations/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: orgName('Neu') })
+        .expect(200);
+
+      expect((antwort.body as OrganisationAntwort).name).toBe(orgName('Neu'));
+    });
+
+    /**
+     * ========================================================================
+     * DER ERSTE 403 IM PROJEKT
+     * ========================================================================
+     * Bis hierher gab es ausschliesslich 401 ("wer bist du?") und 404 ("fuer
+     * dich existiert das nicht"). Dieser Fall ist ein dritter: Der Nutzer IST
+     * Mitglied - er darf nur nicht.
+     *
+     * Anmelden hilft hier nicht. Genau das unterscheidet 403 von 401.
+     *
+     * Die Mitgliedschaft wird direkt in der Datenbank angelegt, weil der
+     * Einladungs-Flow erst in einer spaeteren Scheibe kommt. Sobald es ihn
+     * gibt, laeuft dieser Aufbau ueber die HTTP-Schnittstelle.
+     */
+    it('verbietet einem MEMBER das Umbenennen mit 403', async () => {
+      const tokenOwner = await meldeAn('owner-patch');
+      const tokenMember = await meldeAn('member-patch');
+      const id = await legeAn(tokenOwner, orgName('Rollen'));
+
+      const member = await prisma.user.findUniqueOrThrow({
+        where: { email: email('member-patch') },
+        select: { id: true },
+      });
+      await prisma.membership.create({
+        data: { organizationId: id, userId: member.id, role: 'MEMBER' },
+      });
+
+      const antwort = await request(app.getHttpServer())
+        .patch(`/organizations/${id}`)
+        .set('Authorization', `Bearer ${tokenMember}`)
+        .send({ name: orgName('Verboten') })
+        .expect(403);
+
+      // 403 und nicht 404: Die Mitgliedschaft steht, es gibt nichts zu
+      // verbergen. Die Meldung darf deshalb konkret sein.
+      expect((antwort.body as FehlerAntwort).message).toContain('OWNER');
+    });
+
+    it('laesst einen MEMBER die Organisation weiterhin LESEN', async () => {
+      const tokenOwner = await meldeAn('owner-lesen');
+      const tokenMember = await meldeAn('member-lesen');
+      const id = await legeAn(tokenOwner, orgName('Lesen'));
+
+      const member = await prisma.user.findUniqueOrThrow({
+        where: { email: email('member-lesen') },
+        select: { id: true },
+      });
+      await prisma.membership.create({
+        data: { organizationId: id, userId: member.id, role: 'MEMBER' },
+      });
+
+      // Die Rollenpruefung haengt am einzelnen Endpoint, nicht an der
+      // Organisation. Ein MEMBER darf lesen und nur nicht schreiben - waere
+      // das nicht so, waere die Rolle wertlos.
+      const antwort = await request(app.getHttpServer())
+        .get(`/organizations/${id}`)
+        .set('Authorization', `Bearer ${tokenMember}`)
+        .expect(200);
+
+      expect((antwort.body as OrganisationAntwort).role).toBe('MEMBER');
+    });
+
+    it('antwortet fuer einen Nichtmitglied mit 404 statt 403', async () => {
+      const tokenA = await meldeAn('eigner-patch');
+      const tokenB = await meldeAn('fremder-patch');
+      const id = await legeAn(tokenA, orgName('Fremd Patch'));
+
+      // Kein Mitglied: Die Organisation existiert fuer B nicht - er erfaehrt
+      // nicht einmal, dass ihm die Rolle fehlen wuerde.
+      await request(app.getHttpServer())
+        .patch(`/organizations/${id}`)
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ name: orgName('Fremd Neu') })
+        .expect(404);
+    });
+
+    it('weist einen ungueltigen Namen mit 400 ab', async () => {
+      const token = await meldeAn('patch-validierung');
+      const id = await legeAn(token, orgName('Validierung'));
+
+      await request(app.getHttpServer())
+        .patch(`/organizations/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: '   ' })
+        .expect(400);
     });
   });
 });
