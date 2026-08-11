@@ -1080,3 +1080,124 @@ einen ordentlichen Leerzustand.
 Nebenbei ist es die Entscheidung, die sich leichter zurücknehmen lässt: Automatisches Anlegen
 später einzubauen ist eine Zeile. Es wieder herauszunehmen, wenn schon Tausende leerer
 Organisationen existieren, ist eine Datenmigration.
+
+### 74. Wann antwortet ihr mit 403 und wann mit 404? Beides heißt doch „du darfst nicht".
+
+Nein – und der Unterschied ist eine Sicherheitsentscheidung, keine Geschmacksfrage.
+
+| Fall | Antwort |
+|---|---|
+| kein Token, abgelaufen, gefälscht | `401` |
+| gültiger Token, **kein Mitglied** der Organisation | `404` |
+| Organisation existiert gar nicht | `404` – **wortgleich** |
+| Mitglied, aber Rolle reicht nicht | `403` |
+
+**Warum `404` und nicht `403` bei einer fremden Organisation:** Ein `403` würde bestätigen, dass es
+eine Organisation mit dieser ID *gibt*. Damit ließen sich IDs durchprobieren und existierende
+Mandanten kartieren. Für einen Außenstehenden existiert sie schlicht nicht – und genau das sagt
+`404`.
+
+**Der Teil, den die meisten vergessen:** Der Statuscode allein reicht nicht. Wenn die eine Antwort
+„Organisation nicht gefunden" sagt und die andere „Sie sind kein Mitglied dieser Organisation", ist
+der vorsichtige Statuscode wieder aufgehoben. Beide Fälle liefern bei uns **denselben Text**, und
+ein E2E-Test schreibt das fest.
+
+**Warum `403` trotzdem existiert:** Sobald die Mitgliedschaft steht, weiß der Anfragende ohnehin,
+dass es die Organisation gibt – es ist nichts mehr zu verbergen. Dann ist eine konkrete Meldung
+sogar hilfreich: „erfordert eine der Rollen: OWNER, ADMIN".
+
+> **Faustregel:** Verrate mit dem Statuscode nichts, was der Anfragende nicht schon weiß.
+
+### 75. Euer Guard läuft global. Wie stellt ihr sicher, dass er auch wirklich greift?
+
+Zuerst der Grund für „global": Bei `@UseGuards` pro Route ist ein vergessener Guard ein **offener
+Endpoint** – und niemand merkt es, weil alles funktioniert. Secure by default heißt, dass ein
+Versehen zur sicheren Seite ausschlägt.
+
+Möglich wird das durch ADR-008: Der Mandant steht **immer** als `:orgId` im Pfad. Damit gilt
+
+```
+Route hat :orgId  ⟺  Route betrifft einen Mandanten
+```
+
+Der Guard braucht also gar keine Markierung, an die man sich erinnern müsste – er prüft einfach, ob
+dieser Parameter existiert. Vergessen kann man ihn nicht, denn ohne den Parameter funktioniert die
+Route überhaupt nicht.
+
+**Die Kehrseite, und das ist der eigentliche Inhalt der Frage:** Der Guard kann nicht vergessen
+werden, aber er kann **ins Leere greifen**. Schriebe ein Controller `:organizationId` statt
+`:orgId`, fände der Guard nichts, gäbe `true` zurück – und die Route wäre ungeschützt. Kein Fehler,
+keine Warnung, nur ein offener Endpoint.
+
+Geschlossen über eine geteilte Konstante:
+
+```ts
+export const ORG_PARAM = 'orgId';            // im Guard definiert
+@Controller(`organizations/:${ORG_PARAM}`)   // im Controller benutzt
+```
+
+Beide lesen denselben Wert. Ein Tippfehler ist damit ein Compilerfehler statt eines stillen Lochs.
+
+**Und nachgewiesen:** Die Prüfung wurde versuchsweise auf `return true` gesetzt – ein Unit-Test und
+vier E2E-Tests schlagen fehl.
+
+### 76. Warum lädt der Controller die Mitgliedschaft nicht selbst, wenn der Guard sie schon geprüft hat?
+
+Der offensichtliche Grund ist die gesparte Datenbankabfrage. Der wichtigere ist ein anderer.
+
+Lädt der Controller die Mitgliedschaft erneut, könnte er eine **andere** laden als die geprüfte –
+ein anderer Parameter, eine andere Nutzer-ID, ein Tippfehler. Dann prüft der Guard das eine und der
+Controller arbeitet mit dem anderen. Solche Fehler sind nicht theoretisch; sie entstehen, sobald
+jemand später eine Route umbaut.
+
+Der Guard hängt sein Ergebnis deshalb an die Anfrage, ein Parameter-Decorator reicht es herein:
+
+```ts
+@Get()
+zeige(@AktuelleMitgliedschaft() m: AktiveMitgliedschaft) {
+  return this.organizations.findeEine(m.organizationId, m.role);
+}
+```
+
+**Die Konsequenz, die man aussprechen muss:** In diesen Controllern steht **nie** `@Param('orgId')`.
+Beide tragen denselben Wert – aber nur der eine ist durch die Prüfung gegangen. Wer den
+Route-Parameter nimmt, umgeht den Guard an der Stelle, an der es am wenigsten auffällt.
+
+Merksatz: **Geprüft und benutzt muss dasselbe Objekt sein.**
+
+### 77. Warum listet ihr erlaubte Rollen auf, statt eine Rangordnung zu prüfen?
+
+`@Rollen(Role.OWNER, Role.ADMIN)` statt „mindestens ADMIN". Zwei Gründe.
+
+**Technisch:** Ein Enum ist keine Zahl. `Role.OWNER <= Role.ADMIN` wäre ein Vergleich zweier
+Zeichenketten, und alphabetisch ist `"OWNER" <= "ADMIN"` schlicht falsch – der Code wäre still
+kaputt. Mit numerischen Werten ließe es sich erzwingen, aber dann bricht die Ordnung, sobald jemand
+einen Wert dazwischenschiebt. Genau davor warnt schon der Kommentar am Enum im Schema.
+
+**Fachlich, und das ist das stärkere Argument:** Rechte sind selten eine saubere Kette.
+
+- Organisation löschen? Nur `OWNER` – obwohl `ADMIN` sonst mehr darf als `MEMBER`.
+- Sich selbst aus der Organisation entfernen? Jeder, auch `MEMBER`.
+- Den letzten `OWNER` herabstufen? Niemand, auch kein `OWNER`.
+
+Eine Rangordnung suggeriert eine Ordnung, die es gar nicht gibt. Eine ausdrückliche Liste zwingt
+dazu, bei jedem Endpoint zu **entscheiden**, statt eine Grenze zu verschieben – und ist im Review
+leichter zu prüfen.
+
+### 78. In eurem Guard steht ein `throw new Error(...)`, das einen 500er auslöst. Ist das nicht ein Fehler?
+
+Nein, es ist Absicht. Der Fall tritt ein, wenn der Guard läuft, ohne dass ein angemeldeter Nutzer an
+der Anfrage hängt – was nur passieren kann, wenn er im `AppModule` **vor** dem `AccessTokenGuard`
+registriert wurde.
+
+Das ist kein Nutzerfehler, sondern ein Programmierfehler. Und für die gilt eine andere Regel:
+
+> **Nutzerfehler leise, Programmierfehler laut.**
+
+Ein `return true` an dieser Stelle wäre ein offener Endpoint. Ein `throw new NotFoundException()`
+wäre fast genauso schlimm – es sähe wie eine normale Ablehnung aus und würde den Konfigurationsfehler
+verstecken, vermutlich für Monate. Ein `500` mit der Meldung „steht er vor dem AccessTokenGuard?"
+fällt beim ersten Aufruf auf und benennt die Ursache.
+
+Dass ein `500` nach außen nichts verrät, stellt der globale Exception-Filter sicher: Nach innen das
+vollständige Log, nach außen nur „Interner Serverfehler".
