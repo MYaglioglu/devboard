@@ -1316,3 +1316,97 @@ Andere Wege, denselben Effekt zu erreichen: eine künstliche Pause an der kritis
 Er erzeugt Vertrauen, das durch nichts gedeckt ist, und segnet spätere Änderungen ab, die den Schutz
 entfernen. Ob ein Test etwas bewacht, sieht man ihm nicht an – man muss den Code kaputt machen und
 nachschauen.
+
+### 84. Wie speichert man einen Einladungs-Token?
+
+Genau wie einen Refresh-Token: **nur als SHA-256-Hash**, nie im Klartext. Bei einem Datenbankleck
+wären gespeicherte Rohwerte sofort verwendbare Zugänge zu fremden Organisationen.
+
+Warum SHA-256 und nicht argon2: Der Token besteht aus 256 Bit Zufall (`randomBytes(32)`) und ist
+kein erratbares Passwort. Gegen Durchprobieren muss nichts gebremst werden – ein Angreifer müsste
+den Zufall raten, nicht ein schwaches Geheimnis. Bei Passwörtern ist es genau umgekehrt: Dort ist
+Langsamkeit der ganze Zweck.
+
+Zwei Punkte, die die Antwort abrunden:
+
+- **Der Rohwert existiert genau einmal** – in der Antwort auf das Anlegen. Die Liste der offenen
+  Einladungen enthält ihn nicht, und zwar erzwungen über zwei getrennte Rückgabetypen, nicht über
+  Disziplin. Wer ihn nachträglich herausgeben wollte, müsste einen Typ ändern und fiele im Review
+  auf.
+- **Eingelöste Einladungen werden nicht gelöscht**, sondern mit `acceptedAt` markiert. Nur eine
+  aufbewahrte, entwertete Zeile lässt sich von einer nie existierenden unterscheiden – dasselbe
+  Argument wie bei der Wiederverwendungs-Erkennung der Refresh-Token.
+
+### 85. Beim Einladen: Was, wenn unter der Adresse schon ein Konto existiert?
+
+Die naheliegende Lösung wäre, das nachzuschlagen und den Nutzer direkt als Mitglied einzutragen –
+bequemer, ein Klick weniger.
+
+**Genau das darf man nicht tun.** Die beiden Wege hätten unterscheidbare Antworten („hinzugefügt"
+vs. „eingeladen"), und damit hätte jeder `ADMIN` einen Dienst, mit dem er beliebige Adressen darauf
+prüfen kann, ob sie bei DevBoard registriert sind. Das ist **User Enumeration**, dieselbe Klasse wie
+unterschiedliche Login-Fehlermeldungen – nur an einer Stelle, an der kaum jemand danach sucht.
+
+Bei uns entsteht deshalb **immer** eine Einladung, mit identischer Antwortform. Ein Test vergleicht
+die Feldmengen beider Fälle; unterschiedliche Felder wären genauso verräterisch wie ein
+unterschiedlicher Statuscode.
+
+Der Preis ist ein zusätzlicher Klick für bestehende Nutzer. Das ist der Tausch, den man benennen
+können muss: **Bequemlichkeit gegen Vertraulichkeit.**
+
+### 86. Reicht der Token zum Annehmen einer Einladung, oder prüft ihr mehr?
+
+Wir prüfen zusätzlich, dass die **E-Mail-Adresse des angemeldeten Kontos** mit der Adresse
+übereinstimmt, an die eingeladen wurde. Sonst `403`.
+
+Die Alternative kennt man von vielen Produkten: „Wer den Link hat, ist drin." Bequemer – aber dann
+ist ein **weitergeleiteter Link ein Zugang**. Eine Einladung, die versehentlich in einem geteilten
+Postfach, einem Ticket oder einem Chat landet, öffnet die Organisation für jeden, der mitliest.
+
+Mit der Bindung an die Adresse braucht ein Angreifer **beides**: den Token *und* Zugriff auf das
+Konto mit dieser Adresse. Der Preis: Wer sich unter einer anderen Adresse registriert hat als der,
+an die eingeladen wurde, kommt nicht hinein und muss neu eingeladen werden.
+
+Das ist eine Produktentscheidung, keine rein technische – und beide Varianten sind vertretbar.
+Wichtig ist, sie **bewusst** zu treffen und den Unterschied benennen zu können.
+
+### 87. Warum ist das Einlösen ein `POST` und kein `GET`, obwohl der Nutzer auf einen Link klickt?
+
+Weil das Einlösen **etwas verändert** – es entsteht eine Mitgliedschaft – und `GET` laut Standard
+nebenwirkungsfrei sein muss.
+
+Das ist nicht bloß Formalismus. Ein `GET`-Endpoint, der eine Einladung einlöst, wird von Dingen
+ausgelöst, die niemand als Nutzeraktion gemeint hat: Link-Vorschaudienste in Chat-Programmen,
+Virenscanner, die Links im Postfach vorsorglich öffnen, der Prefetch des Browsers. Die Einladung
+wäre eingelöst, bevor der Empfänger die Mail gelesen hat – und ein zweiter Klick liefe ins Leere.
+
+Der Link in der E-Mail zeigt deshalb auf eine **Seite im Frontend**. Die liest den Token aus der URL
+und ruft den `POST`-Endpoint auf, wenn der Nutzer bestätigt.
+
+Zweiter Punkt: Der Token steht im **Anfragekörper**, nicht im Pfad. Ein Pfad landet in Server-Logs,
+im Browserverlauf und im `Referer`-Header der nächsten Anfrage. Für ein Geheimnis alles falsche
+Orte – derselbe Grund, aus dem Passwörter nicht in die URL gehören.
+
+### 88. Der Guard hat die Organisation geprüft. Reicht das für `DELETE /organizations/:orgId/invitations/:id`?
+
+Nein, und das ist der vergessene Mandantenfilter in seiner typischsten Form.
+
+Der Guard prüft, dass der Anfragende in der Organisation aus dem **Pfad** berechtigt ist. Er prüft
+**nicht**, dass die Einladungs-ID zu dieser Organisation gehört. Ein `OWNER` seiner eigenen
+Organisation kommt durch – und könnte mit einer fremden Einladungs-ID deren Einladung zurückziehen.
+
+```ts
+// FALSCH
+prisma.invitation.update({ where: { id: einladungId } })
+
+// RICHTIG
+prisma.invitation.updateMany({ where: { id: einladungId, organizationId } })
+```
+
+> **Merksatz:** Die ID im Pfad gehört nicht automatisch zu der Organisation im Pfad.
+
+Das ist der Grund, warum ein Guard allein nie ausreicht. Er beantwortet „darfst du in diese
+Organisation hinein?" – nicht „gehört *diese Ressource* dorthin?". Die zweite Frage beantwortet nur
+die `WHERE`-Bedingung.
+
+Nachgewiesen: Filter entfernt, der zugehörige E2E-Test schlägt fehl.

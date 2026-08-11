@@ -720,6 +720,130 @@ Sperren auf zwei verschiedenen Mitgliedschaften kämen sich nie in die Quere.
 
 ---
 
+## Einladungen
+
+### `POST /organizations/:orgId/invitations` · `OWNER`, `ADMIN`
+
+```json
+{ "email": "neue.kollegin@example.com", "role": "MEMBER" }
+```
+
+Antwort `201`:
+
+```json
+{
+  "id": "7c2a…",
+  "email": "neue.kollegin@example.com",
+  "role": "MEMBER",
+  "expiresAt": "2026-08-18T11:00:00.000Z",
+  "createdAt": "2026-08-11T11:00:00.000Z",
+  "token": "9Xk2…"
+}
+```
+
+**`token` erscheint genau hier und nirgends sonst.** Die Liste der offenen Einladungen enthält ihn
+nicht – erzwungen über zwei getrennte Rückgabetypen, nicht über Disziplin.
+
+> **Abweichung von der Produktionsrealität:** In einer Anwendung mit E-Mail-Versand würde der Token
+> *nur* verschickt und nie in der HTTP-Antwort stehen – der Einladende bekäme ihn nie zu sehen und
+> könnte die Einladung nicht selbst einlösen. Solange DevBoard keine E-Mails versendet, wäre die
+> Einladung sonst unbenutzbar. Vermerkt in `10_SECURITY.md`, damit es nicht als Versehen durchgeht.
+
+**Keine User Enumeration.** Naheliegend wäre: Konto vorhanden? Dann direkt als Mitglied eintragen,
+sonst einladen. Die zwei Wege hätten unterscheidbare Antworten – und damit hätte jeder `ADMIN` einen
+Dienst, mit dem er beliebige Adressen darauf prüfen kann, ob sie bei DevBoard registriert sind.
+Deshalb: **immer** eine Einladung, immer dieselbe Antwortform. Ein Test vergleicht die Feldmengen
+beider Fälle.
+
+**`OWNER` ist nicht einladbar** (`400`). Die Rolle entsteht ausschließlich durch Ernennen eines
+bestehenden Mitglieds. Über die Einladung wäre es ein zweiter Weg, der in der Mitgliederliste nie
+sichtbar würde.
+
+**Ein `ADMIN` darf nur `MEMBER` einladen** (`403` sonst). Dieselbe Regel wie in 2.4 in anderer
+Verkleidung: *Wer Rechte vergeben darf, hat sie* – und eine Einladung **ist** eine Rechtevergabe.
+Die Prüfung liegt im Service, nicht im Decorator: Sie hängt an der Zielrolle im Anfragekörper, und
+die kennt ein Guard nicht.
+
+**Erneutes Einladen entwertet die vorherige Einladung** an dieselbe Adresse, statt mit `409` zu
+scheitern. „Die erste ist im Spam gelandet" ist eine normale Handlung. Beides – Entwerten und
+Anlegen – läuft in einer Transaktion; sonst gäbe es einen Moment ohne oder mit zwei gültigen Token.
+
+### `GET /organizations/:orgId/invitations` · `OWNER`, `ADMIN`
+
+Die offenen Einladungen – weder eingelöst noch zurückgezogen noch abgelaufen. **Ohne Token.**
+
+Nicht für `MEMBER` (`403`): Wer dazugehört, darf jedes Mitglied sehen; wer noch eingeladen ist, ist
+Verwaltungsinformation – und es sind E-Mail-Adressen von Menschen außerhalb des Teams.
+
+### `DELETE /organizations/:orgId/invitations/:invitationId` · `OWNER`, `ADMIN`
+
+`204`. Die Einladung wird nicht gelöscht, sondern über `revokedAt` entwertet – dieselbe Überlegung
+wie bei den Refresh-Token.
+
+**Der vergessene Mandantenfilter in seiner typischsten Form:** Ein `OWNER` ist in *seiner*
+Organisation berechtigt und kommt durch den Guard. Die Einladungs-ID im Pfad kann trotzdem zu einer
+**fremden** Organisation gehören. Ein `update({ where: { id } })` würde sie zurückziehen.
+
+```ts
+// FALSCH – der Guard hat die Organisation im Pfad geprüft, nicht diese Ressource
+prisma.invitation.update({ where: { id: einladungId } })
+
+// RICHTIG – beide Bedingungen
+prisma.invitation.updateMany({ where: { id: einladungId, organizationId } })
+```
+
+> **Merksatz:** Die ID im Pfad gehört nicht automatisch zu der Organisation im Pfad.
+
+Ein E2E-Test deckt genau das ab; die Gegenprobe (Filter entfernt) lässt ihn fehlschlagen.
+
+### `POST /invitations/accept`
+
+```json
+{ "token": "9Xk2…" }
+```
+
+Antwort `200`: `{ "organizationId": "…", "role": "MEMBER" }`
+
+**Warum diese Route nicht unter `/organizations/:orgId` liegt:** Der Anfragende ist noch kein
+Mitglied – der `MitgliedschaftsGuard` würde ihn mit `404` abweisen. Die Route wäre nur für die
+erreichbar, die sie nicht brauchen. Welche Organisation gemeint ist, ergibt sich ohnehin aus dem
+Token; der Eingeladene muss die ID nicht kennen.
+
+**Warum `POST` und nicht `GET`:** Das Einlösen verändert etwas. Ein `GET` muss laut Standard
+nebenwirkungsfrei sein – sonst genügt ein Link-Vorschaudienst oder ein Virenscanner im Postfach, der
+Links vorsorglich öffnet, um die Einladung ungefragt einzulösen. Der Link in der E-Mail zeigt auf
+eine **Seite** im Frontend, die den Token ausliest und diesen Endpoint aufruft.
+
+**Warum der Token im Körper steht und nicht im Pfad:** Ein Pfad landet in Server-Logs, im
+Browserverlauf und im `Referer` der nächsten Anfrage. Für ein Geheimnis alles falsche Orte.
+
+**Warum die Adresse übereinstimmen muss** (`403` sonst): Der Token allein reicht nicht – der
+Anmeldende muss dieselbe Adresse haben, an die eingeladen wurde. Die Alternative („wer den Link hat,
+ist drin") ist bequemer und deutlich schwächer: Ein weitergeleiteter Link, versehentlich in einem
+geteilten Postfach oder einem Chat gelandet, wäre ein Zugang. Preis: Wer sich unter einer anderen
+Adresse registriert hat, muss neu eingeladen werden.
+
+| Status | Wann |
+|---|---|
+| `400` | abgelaufen – **eigene** Meldung, siehe unten |
+| `401` | nicht angemeldet (ein Konto ist Voraussetzung) |
+| `403` | Einladung ist an eine andere Adresse gerichtet |
+| `404` | unbekannt, bereits eingelöst oder zurückgezogen – **wortgleiche** Meldung |
+| `409` | bereits Mitglied |
+
+**Warum drei Fälle dieselbe `404`-Meldung teilen:** Ein Angreifer, der Token durchprobiert, soll
+nicht erfahren, ob er nur *zu spät* war – das wäre die Auskunft, dass dieser Token einmal echt war.
+
+**Warum der Ablauf trotzdem eine eigene Meldung bekommt:** Wer eine echte, abgelaufene Einladung in
+der Hand hält, kennt sie ohnehin. Ihm ist mit „ungültig" nicht geholfen – er soll um eine neue
+bitten. Verraten wird dabei nichts, was er nicht schon weiß.
+
+**Warum `409` bei bestehender Mitgliedschaft und kein stilles Überschreiben:** Sonst könnte ein
+`ADMIN` den `OWNER` als `MEMBER` einladen und ihn beim Annehmen herabstufen. Die bestehende Rolle
+bleibt unangetastet.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |

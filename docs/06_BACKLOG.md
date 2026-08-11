@@ -70,3 +70,17 @@ Migrationsskript und kein manueller Eingriff in `psql`. In PostgreSQL ist „min
 mit `role = OWNER` je `organizationId`" aber nicht als `CHECK` ausdrückbar; es bräuchte einen
 `AFTER`-Trigger oder eine materialisierte Zählspalte. Beides ist Aufwand und eine Fehlerquelle für
 sich. Lohnt sich, sobald es mehr als einen Dienst gibt, der auf diese Tabellen schreibt.
+
+### Partieller Unique-Index für offene Einladungen *(Sprint 2, 11.08.2026)*
+Sauber wäre `UNIQUE (organizationId, email) WHERE acceptedAt IS NULL AND revokedAt IS NULL` –
+„höchstens eine offene Einladung je Adresse", von der Datenbank erzwungen. Prisma kann partielle
+Indizes nicht deklarieren; von Hand in die Migration geschrieben meldet `migrate dev` bei jedem
+Lauf Drift. Ein voller Unique-Index wäre falsch, weil er eine zweite Einladung nach Ablauf der
+ersten verhindern würde. Die Regel liegt deshalb im Service, abgesichert durch eine Transaktion.
+
+### E-Mail-Versand für Einladungen *(Sprint 2, 11.08.2026)*
+Derzeit gibt die API den Einladungs-Token in der Antwort zurück, damit der Flow ohne Mailversand
+benutzbar ist. Korrekt wäre: Token ausschließlich per E-Mail, der Einladende sieht ihn nie und
+kann die Einladung nicht selbst einlösen. Braucht einen Mailversanddienst und eine Vorlage –
+Infrastruktur, die für den Erkenntnisgewinn dieses Projekts wenig beiträgt. Vermerkt in
+`10_SECURITY.md` als bewusste Abweichung.
