@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { Geschuetzt } from '@/components/geschuetzt';
@@ -53,13 +54,22 @@ function Inhalt() {
             Angemeldet als {nutzer?.email}
           </p>
         </div>
-        <button
-          onClick={() => void jetztAbmelden()}
-          className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm
-            transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
-        >
-          Abmelden
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/organizations"
+            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm
+              transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+          >
+            Organisationen
+          </Link>
+          <button
+            onClick={() => void jetztAbmelden()}
+            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm
+              transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+          >
+            Abmelden
+          </button>
+        </div>
       </header>
 
       <section className="rounded-xl border border-zinc-200 p-6 dark:border-zinc-800">
