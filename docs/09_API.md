@@ -610,6 +610,116 @@ Umbenennen ist Verwaltung und umkehrbar. Dem `OWNER` bleiben die Aktionen vorbeh
 
 ---
 
+## `PATCH /organizations/:orgId/members/:userId`
+
+Ändert die Rolle eines Mitglieds. **Erfordert `OWNER`.**
+
+### Anfrage
+
+```json
+{ "role": "ADMIN" }
+```
+
+### Warum nicht auch `ADMIN` – der wichtigste Rollenschnitt im Projekt
+
+Dürfte ein `ADMIN` Rollen vergeben, könnte er sich selbst zum `OWNER` machen. Damit wäre die
+Unterscheidung der beiden Rollen wertlos: Jeder `ADMIN` wäre ein `OWNER`, der es nur noch nicht
+ausgesprochen hat.
+
+> **Merksatz:** Wer Rechte vergeben darf, hat sie. Die Befugnis, Rollen zu ändern, ist immer die
+> höchste Befugnis im System – und gehört an die höchste Rolle.
+
+### Fehler
+
+| Status | Wann |
+|---|---|
+| `400` | unbekannte Rolle, oder `:userId` ist keine UUID |
+| `403` | Mitglied, aber nicht `OWNER` |
+| `404` | kein Mitglied der Organisation – **oder** das Ziel-Mitglied existiert nicht |
+| `409` | der letzte `OWNER` soll herabgestuft werden |
+
+**Zu `400` bei ungültiger UUID:** Ohne Validierung am Rand ginge `abc` bis zur Datenbank durch, und
+Prisma antwortete mit einem Fehler über UUID-Syntax – also `500` für eine schlicht falsche Eingabe.
+
+---
+
+## `DELETE /organizations/:orgId/members/:userId`
+
+Entfernt ein Mitglied. Mit der **eigenen** ID aufgerufen bedeutet das „Organisation verlassen" –
+derselbe Endpoint, kein eigener.
+
+Antwort: `204 No Content`.
+
+### Warum hier kein `@Rollen()` steht
+
+Die Regel hängt davon ab, **wen** es trifft:
+
+| Anfragender | Ziel | erlaubt |
+|---|---|---|
+| beliebig | er selbst | ja |
+| `MEMBER` | jemand anderes | nein (`403`) |
+| `ADMIN` | `MEMBER` oder `ADMIN` | ja |
+| `ADMIN` | `OWNER` | nein (`403`) |
+| `OWNER` | jeder | ja |
+
+Ein Guard kann das nicht entscheiden. Er weiß, **wer** anfragt, aber nicht, **wen** es trifft – die
+Zielressource kennt er nicht. Ein `@Rollen(OWNER, ADMIN)` würde einen `MEMBER` abweisen, bevor
+überhaupt klar ist, dass er nur sich selbst meint.
+
+> **Faustregel:** Ein Guard entscheidet über den **Zugang**, nicht über den **Einzelfall**. Sobald
+> die Antwort davon abhängt, welche Ressource betroffen ist, gehört sie in den Service.
+
+**Warum `ADMIN` keinen `OWNER` entfernen darf:** Sonst könnte er alle `OWNER` entfernen und die
+Organisation übernehmen. Wer den Höherstehenden entfernen kann, steht höher – die Rangfolge wäre
+wirkungslos.
+
+### Die Regel vom letzten Eigentümer
+
+Der letzte `OWNER` darf nicht verschwinden, sonst bleibt die Organisation unverwaltbar zurück.
+**Vier Wege** führen zu dieser Verletzung: entfernt werden, selbst gehen, herabgestuft werden,
+Konto löschen. Deshalb liegt die Prüfung im **Service** und nicht am Endpoint – am Endpoint müsste
+man sie viermal schreiben und würde einen davon vergessen.
+
+Statuscode `409 Conflict`, nicht `403`: Die Anfrage ist formal in Ordnung und der Anfragende ist
+berechtigt. Sie widerspricht nur dem **aktuellen Zustand** – mit einem zweiten `OWNER` wäre dieselbe
+Anfrage erfolgreich.
+
+### Warum eine Transaktion hier nicht reicht
+
+Das Muster ist *lesen, entscheiden, schreiben*. Zwei gleichzeitige Anfragen:
+
+```
+A: zählt OWNER → 2 → "einer darf weg" → entfernt sich
+B: zählt OWNER → 2 → "einer darf weg" → entfernt sich
+```
+
+Beide atomar. Danach **null** Eigentümer. PostgreSQL fährt standardmäßig *Read Committed*: Jede
+Transaktion sieht den Stand von vor der anderen.
+
+> **Merksatz:** Eine Transaktion macht Schreibvorgänge unteilbar. Sie macht **Lesen und Schreiben**
+> nicht automatisch zu einer Einheit.
+
+Gelöst mit einer pessimistischen Sperre auf der **Organisationszeile**:
+
+```sql
+SELECT id FROM organizations WHERE id = $1 FOR UPDATE
+```
+
+Die zweite Anfrage wartet dort und liest danach den aktualisierten Stand. Gesperrt wird die
+Organisation, nicht die einzelne Mitgliedschaft: Die Regel betrifft die Organisation als Ganzes,
+also braucht es einen gemeinsamen Punkt, an dem sich konkurrierende Änderungen begegnen. Zwei
+Sperren auf zwei verschiedenen Mitgliedschaften kämen sich nie in die Quere.
+
+**Alternativen, und warum nicht:**
+
+| Ansatz | Bewertung |
+|---|---|
+| Isolationsstufe `SERIALIZABLE` | PostgreSQL erkennt den Konflikt selbst. Sauberer, verlangt aber eine Wiederholungslogik für `P2034` – mehr bewegliche Teile für denselben Effekt. |
+| Optimistisches Sperren (Versionsspalte) | Richtig, wenn Konflikte selten sind und eine Fehlermeldung genügt („wurde inzwischen geändert"). Beim Kanban-Board in Sprint 3 die passende Wahl. Hier nicht: Ein verlorener Eigentümer lässt sich nicht durch Neuladen beheben. |
+| Datenbank-Constraint | Das Robusteste, in PostgreSQL aber nicht direkt ausdrückbar – „mindestens eine Zeile mit `role = OWNER` je `organizationId`" braucht einen Trigger. Geparkt in `06_BACKLOG.md`. |
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |
