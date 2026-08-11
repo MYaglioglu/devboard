@@ -158,6 +158,90 @@ describe('AuthProvider', () => {
       expect(aufrufAuf('/auth/refresh')).toHaveLength(1);
     });
 
+    /**
+     * ========================================================================
+     * SINGLE FLIGHT - DER TEST ZU EINEM ECHTEN FEHLER
+     * ========================================================================
+     * Zwei gleichzeitige Aufrufe laufen beide in ein 401. Ohne Zusammenfassung
+     * schickt jeder seine eigene Erneuerung - und weil Refresh-Token ROTIERT
+     * werden, ist das kein Schoenheitsfehler:
+     *
+     *   PARALLEL: Beide bekommen einen neuen Token. Das Cookie haelt nur
+     *             einen - der andere bleibt 30 Tage gueltig, ohne Besitzer.
+     *   VERSETZT: Der zweite legt den bereits entwerteten Token vor. Die
+     *             Wiederverwendungs-Erkennung widerruft die GANZE Familie,
+     *             und der Nutzer fliegt aus der Sitzung.
+     *
+     * Gefunden wurde das nicht von einem Test, sondern beim Blick in die
+     * Netzwerkansicht der laufenden Anwendung. Siehe
+     * 17_MISTAKES_AND_LESSONS.md.
+     */
+    it('fasst gleichzeitige Erneuerungen zu einer einzigen zusammen', async () => {
+      fetchMock.mockResolvedValue(antwort(200, sitzung));
+      const { result } = await rendern();
+
+      // Zaehlt die Versuche je Pfad. `mockImplementation` statt einer Kette
+      // aus `mockResolvedValueOnce`, weil bei echter Nebenlaeufigkeit nicht
+      // feststeht, welcher der beiden Aufrufe zuerst ankommt.
+      const versuche = new Map<string, number>();
+
+      fetchMock.mockReset();
+      fetchMock.mockImplementation((url) => {
+        const pfad = String(url);
+
+        if (pfad.endsWith('/auth/refresh')) {
+          return Promise.resolve(
+            antwort(200, { ...sitzung, accessToken: 'access-token-2' }),
+          );
+        }
+
+        // Jeder Datenaufruf scheitert beim ERSTEN Versuch mit 401 und gelingt
+        // beim zweiten - also nach der Erneuerung.
+        const nummer = (versuche.get(pfad) ?? 0) + 1;
+        versuche.set(pfad, nummer);
+
+        return Promise.resolve(
+          nummer === 1
+            ? antwort(401, { message: 'abgelaufen' })
+            : antwort(200, { pfad }),
+        );
+      });
+
+      await act(async () => {
+        await Promise.all([
+          result.current.authFetch('/organizations'),
+          result.current.authFetch('/auth/me'),
+        ]);
+      });
+
+      // Der Kern: EINE Erneuerung fuer beide Aufrufe, nicht zwei.
+      expect(aufrufAuf('/auth/refresh')).toHaveLength(1);
+    });
+
+    it('startet nach einer abgeschlossenen Erneuerung wieder eine neue', async () => {
+      fetchMock.mockResolvedValue(antwort(200, sitzung));
+      const { result } = await rendern();
+
+      fetchMock.mockReset();
+      fetchMock
+        .mockResolvedValueOnce(antwort(401, { message: 'abgelaufen' }))
+        .mockResolvedValueOnce(antwort(200, sitzung))
+        .mockResolvedValueOnce(antwort(200, { id: 'a' }))
+        .mockResolvedValueOnce(antwort(401, { message: 'abgelaufen' }))
+        .mockResolvedValueOnce(antwort(200, sitzung))
+        .mockResolvedValueOnce(antwort(200, { id: 'b' }));
+
+      await act(async () => {
+        await result.current.authFetch('/auth/me');
+        await result.current.authFetch('/auth/me');
+      });
+
+      // Die Gegenprobe zur Zusammenfassung: Wuerde das laufende Promise nach
+      // Abschluss nicht zurueckgesetzt, bliebe es fuer immer stehen - und eine
+      // spaetere, echte Erneuerung faende nie statt.
+      expect(aufrufAuf('/auth/refresh')).toHaveLength(2);
+    });
+
     it('meldet ab, wenn die Erneuerung scheitert', async () => {
       fetchMock.mockResolvedValue(antwort(200, sitzung));
       const { result } = await rendern();
