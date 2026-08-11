@@ -493,6 +493,123 @@ der getestet und gepflegt werden muss.
 
 ---
 
+## Mandantengebundene Endpoints – das gemeinsame Verhalten
+
+Alles unterhalb von `/organizations/:orgId` durchläuft den `MitgliedschaftsGuard`. Er antwortet,
+bevor der Controller überhaupt läuft:
+
+| Situation | Status | Warum |
+|---|---|---|
+| kein Access-Token | `401` | Authentifizierung läuft **vor** Autorisierung |
+| gültiger Token, **kein Mitglied** | `404` | „Für dich existiert diese Organisation nicht" |
+| Organisation existiert nicht | `404` | wortgleiche Meldung – ununterscheidbar vom Fall darüber |
+| Mitglied, **Rolle reicht nicht** | `403` | „Ich weiß, wer du bist – du darfst nur nicht" |
+
+### Warum `404` und nicht `403` bei fremder Organisation
+
+Ein `403` würde bestätigen, dass es eine Organisation mit dieser ID **gibt**. Damit ließen sich IDs
+durchprobieren und existierende Mandanten kartieren – bei UUIDs mühsam, aber es ist eine Auskunft,
+die niemand bekommen muss. Dieselbe Überlegung wie bei der einheitlichen Login-Fehlermeldung.
+
+Die beiden Fälle „gibt es nicht" und „du bist nicht dabei" liefern deshalb **dieselbe Meldung**,
+wortgleich. Ein unterschiedlicher Text würde den vorsichtigen Statuscode wieder aufheben. Ein
+E2E-Test schreibt das fest.
+
+`403` ist erst richtig, wenn die Mitgliedschaft steht: Dann weiß der Anfragende ohnehin, dass es die
+Organisation gibt, und die Meldung darf konkret sein („erfordert eine der Rollen: OWNER, ADMIN").
+
+> **Faustregel:** Verrate mit dem Statuscode nichts, was der Anfragende nicht schon weiß.
+
+---
+
+## `GET /organizations/:orgId`
+
+Eine einzelne Organisation, mit der eigenen Rolle.
+
+### Antwort · 200 OK
+
+```json
+{
+  "id": "9f1c…",
+  "name": "Acme GmbH",
+  "role": "MEMBER",
+  "createdAt": "2026-08-11T10:00:00.000Z"
+}
+```
+
+Für **jedes** Mitglied lesbar, auch für `MEMBER`.
+
+---
+
+## `GET /organizations/:orgId/members`
+
+Die Mitglieder der Organisation. Ebenfalls für jedes Mitglied lesbar – wer in einem Team arbeitet,
+darf wissen, wer sonst dazugehört. Verwalten darf er deshalb nichts.
+
+### Antwort · 200 OK
+
+```json
+[
+  {
+    "userId": "a1b2…",
+    "email": "max@example.com",
+    "name": "Max",
+    "role": "OWNER",
+    "mitgliedSeit": "2026-08-11T10:00:00.000Z"
+  }
+]
+```
+
+### Was bewusst *nicht* darin steht
+
+`passwordHash` versteht sich. Aber auch das `createdAt` des **Kontos** fehlt: Wann sich jemand bei
+DevBoard registriert hat, geht seine Kollegen nichts an. Ausgegeben wird `mitgliedSeit` – das Datum
+der **Mitgliedschaft**, also seit wann er in *dieser* Organisation ist. Das ist die Angabe, die hier
+fachlich gemeint ist.
+
+Der Schlüssel heißt `userId`, nicht `id`: Die Mitgliedschaft hat eine eigene ID, und die beiden zu
+verwechseln wäre teuer. Mit der `userId` adressiert der Client das Mitglied beim Entfernen.
+
+Umgesetzt mit `select`, nicht `include`. `include` holt den ganzen Nutzer samt Hash und überlässt es
+dem Code, hinterher aufzuräumen – wer Felder nachträglich entfernt, vergisst irgendwann eines.
+
+---
+
+## `PATCH /organizations/:orgId`
+
+Benennt die Organisation um. **Erfordert `OWNER` oder `ADMIN`.**
+
+### Anfrage
+
+```json
+{ "name": "Acme AG" }
+```
+
+### Warum `PATCH` und nicht `PUT`
+
+`PUT` ersetzt die Ressource **vollständig** – was im Körper fehlt, gilt als gelöscht. Wer nur den
+Namen ändern will, müsste alle übrigen Felder mitschicken, und wer eines vergisst, löscht es.
+`PATCH` ändert nur, was dasteht.
+
+Das Schema ist per `pick` vom Anlege-Schema **abgeleitet**, nicht kopiert. Kopierte Validierung
+läuft auseinander, und dann akzeptiert das Ändern etwas, das das Anlegen ablehnt.
+
+### Warum `ADMIN` und nicht nur `OWNER`
+
+Umbenennen ist Verwaltung und umkehrbar. Dem `OWNER` bleiben die Aktionen vorbehalten, die sich
+**nicht** rückgängig machen lassen: Organisation löschen, letzten Eigentümer wechseln.
+
+### Fehler
+
+| Status | Wann |
+|---|---|
+| `400` | Name ungültig |
+| `401` | kein Access-Token |
+| `403` | Mitglied, aber `MEMBER` |
+| `404` | kein Mitglied, oder Organisation existiert nicht |
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |

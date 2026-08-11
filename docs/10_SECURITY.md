@@ -136,6 +136,55 @@ Ursachen echter Sicherheitsvorfälle.
 - Der häufigste kritische Fehler in B2B-SaaS ist ein vergessener Mandantenfilter in genau einer
   Abfrage. Deshalb gehört der Filter an eine zentrale Stelle, nicht in jede Methode einzeln.
 
+### Autorisierung (Sprint 2, Scheibe 3) – umgesetzt
+
+**Der `MitgliedschaftsGuard` läuft global.** Nicht per `@UseGuards` an der Route – dieselbe
+Begründung wie beim `AccessTokenGuard`: Ein vergessener Guard ist ein offener Endpoint, und *niemand
+merkt es*, weil alles funktioniert.
+
+Möglich wird das durch ADR-008: Der Mandant steht immer als `:orgId` im Pfad, also gilt
+*„Route hat `:orgId`" ⟺ „Route betrifft einen Mandanten"*. Es gibt keine Markierung, an die man sich
+erinnern müsste.
+
+**Die Kehrseite, ehrlich benannt:** Der Guard kann nicht vergessen werden, aber er kann *ins Leere
+greifen*. Schriebe ein Controller `:organizationId` statt `:orgId`, fände der Guard nichts, gäbe
+`true` zurück – und die Route wäre ungeschützt. Kein Fehler, keine Warnung.
+
+Geschlossen über eine geteilte Konstante:
+
+```ts
+export const ORG_PARAM = 'orgId';                      // im Guard definiert
+@Controller(`organizations/:${ORG_PARAM}`)             // im Controller benutzt
+```
+
+Damit lesen beide denselben Wert; ein Tippfehler wäre ein Compilerfehler.
+
+**404 statt 403 bei fremder Organisation.** Der Guard unterscheidet absichtlich nicht zwischen
+„existiert nicht" und „du bist kein Mitglied" – beides ist derselbe Zustand: *für dich existiert sie
+nicht*. Ein `403` bestätigte die Existenz und ließe fremde Mandanten kartieren. Beide Fälle liefern
+dieselbe Meldung, wortgleich; ein E2E-Test schreibt das fest.
+
+`403` bleibt dem Fall vorbehalten, in dem die Mitgliedschaft steht und nur die Rolle nicht reicht.
+Dann weiß der Anfragende ohnehin, dass es die Organisation gibt.
+
+**Ein fehlender Nutzer im Guard wirft laut.** Stünde der Guard im `AppModule` vor dem
+`AccessTokenGuard`, gäbe es keinen angemeldeten Nutzer. Er wirft dann einen echten Fehler (`500`)
+statt stillschweigend `true` zurückzugeben. *Nutzerfehler leise, Programmierfehler laut* – ein
+stiller `return true` wäre hier ein offener Endpoint.
+
+**Die geprüfte Mitgliedschaft wird weitergereicht**, statt sie im Controller erneut zu laden. Nicht
+wegen der gesparten Abfrage: Ein zweites Laden könnte eine *andere* Mitgliedschaft treffen als die
+geprüfte. Geprüft und benutzt muss dasselbe Objekt sein. Konsequenz im Controller – niemals
+`@Param('orgId')`, immer `mitgliedschaft.organizationId`.
+
+**Keine Rangordnung auf dem Rollen-Enum.** `@Rollen(Role.OWNER, Role.ADMIN)` listet auf, statt
+`rolle >= ADMIN` zu vergleichen. Ein Rangvergleich bricht still, sobald jemand einen Wert
+dazwischenschiebt – und Rechte sind ohnehin keine saubere Kette („wer darf sich selbst entfernen?"
+– jeder, auch `MEMBER`).
+
+**Nachgewiesen statt behauptet:** Die Prüfung wurde versuchsweise auf `return true` gesetzt. Ein
+Unit-Test und vier E2E-Tests schlagen fehl. Ein grüner Test beweist nur, dass er läuft.
+
 ### Sprint 5 – Webhooks
 - HMAC-Signaturprüfung eingehender GitHub-Events, ungültige Signaturen werden abgewiesen
 - Idempotenz gegen mehrfach zugestellte Events
