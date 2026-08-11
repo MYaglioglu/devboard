@@ -32,7 +32,7 @@ import type {
   OffeneEinladung,
 } from './invitations.service';
 
-const einladungIdSchema = z.uuid('Ungueltige Einladungs-ID');
+const einladungIdSchema = z.uuid('Ungültige Einladungs-ID');
 
 /**
  * Einladungen INNERHALB einer Organisation.

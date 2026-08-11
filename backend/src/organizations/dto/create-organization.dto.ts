@@ -35,7 +35,7 @@ export const createOrganizationSchema = z.object({
     .string()
     .trim()
     .min(2, 'Der Name muss mindestens 2 Zeichen lang sein')
-    .max(100, 'Der Name darf hoechstens 100 Zeichen lang sein'),
+    .max(100, 'Der Name darf höchstens 100 Zeichen lang sein'),
 });
 
 /**

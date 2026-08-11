@@ -478,7 +478,7 @@ describe('Invitations (e2e)', () => {
         .expect(404);
 
       expect((antwort.body as FehlerAntwort).message).toBe(
-        'Einladung ungueltig',
+        'Einladung ungültig',
       );
     });
 
@@ -493,7 +493,7 @@ describe('Invitations (e2e)', () => {
 
       // Wortgleich mit dem Test darueber - genau darum geht es.
       expect((antwort.body as FehlerAntwort).message).toBe(
-        'Einladung ungueltig',
+        'Einladung ungültig',
       );
     });
 

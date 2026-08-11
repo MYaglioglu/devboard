@@ -97,7 +97,7 @@ export class AccessTokenGuard implements CanActivate {
     } catch {
       // Bewusst dieselbe Meldung fuer abgelaufen, gefaelscht und Unsinn.
       // Ein Angreifer soll nicht erfahren, WORAN es lag.
-      throw new UnauthorizedException('Access-Token ungueltig oder abgelaufen');
+      throw new UnauthorizedException('Access-Token ungültig oder abgelaufen');
     }
 
     // Ab hier steht der Nutzer jedem Controller zur Verfuegung - ohne dass

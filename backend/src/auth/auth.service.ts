@@ -227,7 +227,7 @@ export class AuthService {
    */
   async erneuere(rohToken: string | undefined): Promise<LoginErgebnis> {
     if (!rohToken) {
-      throw new UnauthorizedException('Sitzung ungueltig');
+      throw new UnauthorizedException('Sitzung ungültig');
     }
 
     const rotiert = await this.refreshTokens.rotiere(rohToken);
@@ -241,7 +241,7 @@ export class AuthService {
       // Konto wurde zwischenzeitlich geloescht. Kann durch `onDelete: Cascade`
       // eigentlich nicht auftreten - aber ein Fehler hier waere ein 500er,
       // und der verriete mehr als noetig.
-      throw new UnauthorizedException('Sitzung ungueltig');
+      throw new UnauthorizedException('Sitzung ungültig');
     }
 
     const accessToken = await this.tokens.erstelleAccessToken(

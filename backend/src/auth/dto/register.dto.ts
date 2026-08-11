@@ -35,13 +35,13 @@ export const registerSchema = z.object({
     // Kleinschreibung unterscheidet. Der UNIQUE-Index in der Datenbank
     // vergleicht zeichengenau und wuerde beide durchlassen.
     .toLowerCase()
-    .pipe(z.email('Bitte eine gueltige E-Mail-Adresse angeben'))
+    .pipe(z.email('Bitte eine gültige E-Mail-Adresse angeben'))
     .pipe(z.string().max(255, 'E-Mail-Adresse ist zu lang')),
 
   password: z
     .string()
     .min(10, 'Das Passwort muss mindestens 10 Zeichen lang sein')
-    .max(128, 'Das Passwort darf hoechstens 128 Zeichen lang sein'),
+    .max(128, 'Das Passwort darf höchstens 128 Zeichen lang sein'),
 
   name: z.string().trim().min(1).max(100).optional(),
 });

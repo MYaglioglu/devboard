@@ -87,7 +87,7 @@ export class InvitationsService {
     // ankommen, hat der @Rollen()-Decorator sichergestellt; diese Feinheit
     // haengt an der ZIELROLLE und gehoert deshalb in den Service.
     if (einladenderRolle === Role.ADMIN && daten.role !== Role.MEMBER) {
-      throw new ForbiddenException('Als ADMIN koennen Sie nur MEMBER einladen');
+      throw new ForbiddenException('Als ADMIN können Sie nur MEMBER einladen');
     }
 
     const rohToken = randomBytes(32).toString('base64url');
@@ -236,7 +236,7 @@ export class InvitationsService {
     // Token einmal echt war. Dasselbe Prinzip wie bei der einheitlichen
     // Login-Fehlermeldung.
     if (!einladung || einladung.acceptedAt || einladung.revokedAt) {
-      throw new NotFoundException('Einladung ungueltig');
+      throw new NotFoundException('Einladung ungültig');
     }
 
     if (einladung.expiresAt <= new Date()) {
