@@ -1,15 +1,39 @@
-import { Body, Controller, Get, Patch } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+} from '@nestjs/common';
+import { z } from 'zod';
 
+import { AktuellerNutzer } from '../auth/decorators/current-user.decorator';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { AktuelleMitgliedschaft } from './decorators/current-membership.decorator';
 import { Rollen } from './decorators/roles.decorator';
+import { updateMemberRoleSchema } from './dto/update-member-role.dto';
 import { updateOrganizationSchema } from './dto/update-organization.dto';
 import { Role } from '../generated/prisma/enums';
 import { ORG_PARAM } from './guards/membership.guard';
 import { OrganizationsService } from './organizations.service';
+import type { AngemeldeterNutzer } from '../auth/guards/access-token.guard';
+import type { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import type { UpdateOrganizationDto } from './dto/update-organization.dto';
 import type { AktiveMitgliedschaft } from './guards/membership.guard';
 import type { Mitglied, OrganisationMitRolle } from './organizations.service';
+
+/**
+ * Validiert den Nutzer-Teil des Pfads.
+ *
+ * Ohne diese Pruefung ginge eine ID wie "abc" bis zur Datenbank durch und
+ * Prisma antwortete mit einem Fehler ueber ungueltige UUID-Syntax - also
+ * einem 500er fuer eine schlicht falsche Eingabe. Am Rand validiert ergibt
+ * das ein sauberes 400.
+ */
+const nutzerIdSchema = z.uuid('Ungueltige Nutzer-ID');
 
 /**
  * Alles, was INNERHALB einer Organisation stattfindet.
@@ -113,6 +137,76 @@ export class OrganizationScopedController {
       mitgliedschaft.organizationId,
       mitgliedschaft.role,
       daten,
+    );
+  }
+
+  /**
+   * PATCH /organizations/:orgId/members/:userId
+   *
+   * Aendert die Rolle eines Mitglieds. NUR OWNER.
+   *
+   * ==========================================================================
+   * WARUM NICHT AUCH ADMIN - DER WICHTIGSTE @Rollen() IM PROJEKT
+   * ==========================================================================
+   * Duerfte ein ADMIN Rollen vergeben, koennte er sich selbst zum OWNER
+   * machen. Damit waere die Unterscheidung der beiden Rollen wertlos: Jeder
+   * ADMIN waere ein OWNER, der es nur noch nicht ausgesprochen hat.
+   *
+   * Merksatz: WER RECHTE VERGEBEN DARF, HAT SIE. Die Befugnis, Rollen zu
+   * aendern, ist deshalb immer die hoechste Befugnis im System - und gehoert
+   * an die hoechste Rolle.
+   */
+  @Rollen(Role.OWNER)
+  @Patch('members/:userId')
+  async aendereRolle(
+    @AktuelleMitgliedschaft() mitgliedschaft: AktiveMitgliedschaft,
+    @Param('userId', new ZodValidationPipe(nutzerIdSchema))
+    zielNutzerId: string,
+    @Body(new ZodValidationPipe(updateMemberRoleSchema))
+    daten: UpdateMemberRoleDto,
+  ): Promise<Mitglied> {
+    return this.organizations.aendereRolle(
+      mitgliedschaft.organizationId,
+      zielNutzerId,
+      daten,
+    );
+  }
+
+  /**
+   * DELETE /organizations/:orgId/members/:userId
+   *
+   * Entfernt ein Mitglied. Mit der eigenen ID aufgerufen bedeutet das
+   * "Organisation verlassen" - derselbe Endpoint, kein eigener.
+   *
+   * ==========================================================================
+   * WARUM HIER KEIN @Rollen() STEHT
+   * ==========================================================================
+   * Weil die Antwort davon abhaengt, WEN es trifft: sich selbst darf jeder
+   * entfernen, andere nur OWNER und ADMIN, einen OWNER nur ein OWNER.
+   *
+   * Ein Guard kennt die Zielressource nicht - er weiss, wer anfragt, aber
+   * nicht, wen es betrifft. Ein @Rollen(OWNER, ADMIN) wuerde einen MEMBER
+   * abweisen, bevor klar ist, dass er nur sich selbst meint.
+   *
+   * Faustregel: Ein Guard entscheidet ueber den ZUGANG, nicht ueber den
+   * EINZELFALL. Die Pruefung liegt deshalb im Service.
+   *
+   * 204 No Content: erfolgreich, nichts zurueckzugeben. Ein leeres Objekt mit
+   * 200 waere eine Behauptung ueber Inhalt, den es nicht gibt.
+   */
+  @Delete('members/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async entferneMitglied(
+    @AktuellerNutzer() nutzer: AngemeldeterNutzer,
+    @AktuelleMitgliedschaft() mitgliedschaft: AktiveMitgliedschaft,
+    @Param('userId', new ZodValidationPipe(nutzerIdSchema))
+    zielNutzerId: string,
+  ): Promise<void> {
+    return this.organizations.entferneMitglied(
+      mitgliedschaft.organizationId,
+      nutzer.id,
+      mitgliedschaft.role,
+      zielNutzerId,
     );
   }
 }
