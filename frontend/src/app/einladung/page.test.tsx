@@ -99,20 +99,20 @@ describe('Einladungsseite', () => {
   });
 
   /**
-   * Die Meldung kommt unveraendert vom Server. "Einladung ungueltig" steht
+   * Die Meldung kommt unveraendert vom Server. "Einladung ungültig" steht
    * dort fuer unbekannt, bereits eingeloest UND zurueckgezogen - damit
    * niemand erfaehrt, ob ein Token einmal echt war.
    */
   it('zeigt die Serverbegruendung bei einer ungueltigen Einladung', async () => {
     const nutzer = userEvent.setup();
-    annehmen.mockRejectedValue(new ApiFehler('Einladung ungueltig', 404));
+    annehmen.mockRejectedValue(new ApiFehler('Einladung ungültig', 404));
 
     render(<EinladungSeite />);
     await nutzer.click(
       await screen.findByRole('button', { name: 'Beitreten' }),
     );
 
-    expect(await screen.findByText('Einladung ungueltig')).toBeInTheDocument();
+    expect(await screen.findByText('Einladung ungültig')).toBeInTheDocument();
     expect(replace).not.toHaveBeenCalled();
   });
 

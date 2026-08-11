@@ -139,7 +139,7 @@ function Inhalt() {
       router.replace(`/organizations/${organizationId}`);
     } catch (problem) {
       // Unveraendert vom Server. Die Meldungen sind dort bewusst gewaehlt:
-      // "Einladung ungueltig" fuer unbekannt, bereits eingeloest UND
+      // "Einladung ungültig" fuer unbekannt, bereits eingeloest UND
       // zurueckgezogen - damit niemand erfaehrt, ob ein Token einmal echt war.
       setFehler(
         problem instanceof ApiFehler

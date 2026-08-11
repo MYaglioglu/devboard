@@ -113,7 +113,7 @@ describe('Anmeldeseite', () => {
     await nutzer.click(screen.getByRole('button', { name: 'Anmelden' }));
 
     expect(
-      await screen.findByText(/gueltige E-Mail-Adresse/i),
+      await screen.findByText(/gültige E-Mail-Adresse/i),
     ).toBeInTheDocument();
 
     // Der Sinn der Validierung im Browser: keine unnoetige Anfrage. Sie ist
@@ -181,7 +181,7 @@ describe('Anmeldeseite', () => {
     await nutzer.click(screen.getByRole('button', { name: 'Anmelden' }));
 
     expect(
-      await screen.findByText(/derzeit nicht moeglich/i),
+      await screen.findByText(/derzeit nicht möglich/i),
     ).toBeInTheDocument();
     expect(replace).not.toHaveBeenCalled();
   });

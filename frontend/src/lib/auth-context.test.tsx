@@ -41,7 +41,7 @@ describe('AuthProvider', () => {
   describe('stille Anmeldung beim Seitenaufruf', () => {
     it('ruft genau einmal /auth/refresh auf', async () => {
       fetchMock.mockResolvedValue(
-        antwort(401, { message: 'Sitzung ungueltig' }),
+        antwort(401, { message: 'Sitzung ungültig' }),
       );
 
       await rendern();
@@ -62,7 +62,7 @@ describe('AuthProvider', () => {
 
     it('bleibt ohne gueltiges Cookie abgemeldet', async () => {
       fetchMock.mockResolvedValue(
-        antwort(401, { message: 'Sitzung ungueltig' }),
+        antwort(401, { message: 'Sitzung ungültig' }),
       );
 
       const { result } = await rendern();
