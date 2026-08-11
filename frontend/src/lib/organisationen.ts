@@ -178,3 +178,109 @@ export function useMitgliedEntfernen(orgId: string) {
     },
   });
 }
+
+export const einladungenKey = (orgId: string) =>
+  [...organisationKey(orgId), 'invitations'] as const;
+
+/** Eine offene Einladung, wie die Verwaltungsansicht sie sieht. */
+export interface Einladung {
+  id: string;
+  email: string;
+  role: Rolle;
+  expiresAt: string;
+  createdAt: string;
+}
+
+/**
+ * Die Antwort auf das Aussprechen einer Einladung.
+ *
+ * ============================================================================
+ * DER TOKEN EXISTIERT GENAU EINMAL
+ * ============================================================================
+ * Das Backend gibt ihn nur hier zurueck, nie in der Liste - erzwungen ueber
+ * zwei getrennte Rueckgabetypen. Dieselbe Trennung bilden wir im Frontend ab,
+ * damit der Compiler mitdenkt: Wer den Token aus der Liste lesen wollte,
+ * bekaeme einen Typfehler statt `undefined` zur Laufzeit.
+ *
+ * Fuer die Oberflaeche heisst das: Sie MUSS ihn im Moment des Anlegens
+ * anzeigen und deutlich machen, dass er danach weg ist. Dasselbe Verhalten
+ * kennt man von frisch erzeugten API-Schluesseln bei GitHub oder Stripe - und
+ * es ist kein Designeinfall, sondern die Folge einer Sicherheitsentscheidung
+ * im Backend.
+ */
+export interface AusgestellteEinladung extends Einladung {
+  token: string;
+}
+
+/** Laedt die offenen Einladungen. Nur fuer OWNER und ADMIN erreichbar. */
+export function useEinladungen(orgId: string, aktiv: boolean) {
+  const { authFetch } = useAuth();
+
+  return useQuery({
+    queryKey: einladungenKey(orgId),
+    queryFn: () =>
+      authFetch<Einladung[]>(`/organizations/${orgId}/invitations`),
+    // Ein MEMBER bekommt hier 403. Die Abfrage wird deshalb gar nicht erst
+    // gestartet, statt einen Fehler zu erzeugen, den niemand anzeigen will -
+    // `enabled` ist der vorgesehene Weg dafuer.
+    enabled: aktiv,
+    retry: false,
+  });
+}
+
+/** Spricht eine Einladung aus. */
+export function useEinladen(orgId: string) {
+  const { authFetch } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (daten: { email: string; role: Rolle }) =>
+      authFetch<AusgestellteEinladung>(`/organizations/${orgId}/invitations`, {
+        method: 'POST',
+        body: JSON.stringify(daten),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: einladungenKey(orgId) });
+    },
+  });
+}
+
+/** Zieht eine Einladung zurueck. */
+export function useEinladungZurueckziehen(orgId: string) {
+  const { authFetch } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (einladungId: string) =>
+      authFetch<void>(`/organizations/${orgId}/invitations/${einladungId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: einladungenKey(orgId) });
+    },
+  });
+}
+
+/**
+ * Loest eine Einladung ein.
+ *
+ * Kein `orgId` - welche Organisation gemeint ist, ergibt sich aus dem TOKEN.
+ * Der Eingeladene kennt die ID nicht und soll sie auch nicht raten koennen.
+ */
+export function useEinladungAnnehmen() {
+  const { authFetch } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (token: string) =>
+      authFetch<{ organizationId: string; role: Rolle }>(
+        '/invitations/accept',
+        { method: 'POST', body: JSON.stringify({ token }) },
+      ),
+    onSuccess: () => {
+      // Der Beitritt aendert die Organisationsliste - ohne Entwertung bliebe
+      // die neue Organisation unsichtbar.
+      void queryClient.invalidateQueries({ queryKey: ORGANISATIONEN_KEY });
+    },
+  });
+}

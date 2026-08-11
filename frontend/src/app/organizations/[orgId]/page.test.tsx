@@ -21,6 +21,13 @@ vi.mock('@/components/geschuetzt', () => ({
   Geschuetzt: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+// Der Einladungsbereich hat eigene Tests. Hier wuerde er nur die Attrappe von
+// `@/lib/organisationen` um vier weitere Hooks aufblaehen, ohne dass dieser
+// Test etwas davon prueft.
+vi.mock('@/components/einladungen', () => ({
+  EinladungenBereich: () => null,
+}));
+
 vi.mock('@/lib/auth-context', () => ({
   useAuth: () => ({ nutzer: { id: 'ich', email: 'ich@example.com' } }),
 }));

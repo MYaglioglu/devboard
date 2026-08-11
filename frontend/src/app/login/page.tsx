@@ -2,14 +2,15 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { Feld, Hinweis, Karte, Knopf } from '@/components/ui';
 import { ApiFehler } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { sichererPfad } from '@/lib/weiterleitung';
 
 /**
  * Validierung im Browser.
@@ -37,9 +38,40 @@ const anmeldeSchema = z.object({
 type AnmeldeDaten = z.infer<typeof anmeldeSchema>;
 
 export default function LoginSeite() {
+  // `useSearchParams` liest Daten, die es beim Vorab-Rendern noch nicht gibt.
+  // Ohne Suspense-Grenze wuerde der Baum darueber clientseitig gerendert -
+  // siehe die mitgelieferte Doku zu use-search-params.
+  return (
+    <Suspense
+      fallback={
+        <Karte titel="Anmelden" untertitel="DevBoard">
+          <p className="text-sm text-zinc-500">Einen Moment …</p>
+        </Karte>
+      }
+    >
+      <Formular />
+    </Suspense>
+  );
+}
+
+function Formular() {
   const { anmelden, nutzer, laedt } = useAuth();
   const router = useRouter();
+  const suchparameter = useSearchParams();
   const [fehler, setFehler] = useState<string | null>(null);
+
+  /**
+   * Wohin nach erfolgreicher Anmeldung?
+   *
+   * `?weiter=` kommt von der Einladungsseite, damit der Nutzer nach dem
+   * Anmelden dorthin zurueckkehrt, statt ratlos auf dem Dashboard zu landen.
+   *
+   * Der Wert wird GEPRUEFT, nicht uebernommen: Ein ungefilterter Parameter
+   * waere eine Open-Redirect-Luecke - der Absender eines Links koennte
+   * bestimmen, wohin der Nutzer nach der Anmeldung geschickt wird, und ihm
+   * eine nachgebaute Anmeldeseite unterschieben. Siehe lib/weiterleitung.ts.
+   */
+  const ziel = sichererPfad(suchparameter.get('weiter'), '/dashboard');
 
   const {
     register,
@@ -49,14 +81,14 @@ export default function LoginSeite() {
 
   // Wer bereits angemeldet ist, hat auf der Anmeldeseite nichts zu suchen.
   useEffect(() => {
-    if (!laedt && nutzer) router.replace('/dashboard');
-  }, [laedt, nutzer, router]);
+    if (!laedt && nutzer) router.replace(ziel);
+  }, [laedt, nutzer, router, ziel]);
 
   const absenden = handleSubmit(async (daten) => {
     setFehler(null);
     try {
       await anmelden(daten.email, daten.password);
-      router.replace('/dashboard');
+      router.replace(ziel);
     } catch (problem) {
       // Die Meldung kommt bewusst unveraendert vom Server: Sie ist dort
       // absichtlich generisch ("E-Mail oder Passwort ist falsch"), damit
@@ -95,7 +127,13 @@ export default function LoginSeite() {
 
       <p className="text-sm text-zinc-500">
         Noch kein Konto?{' '}
-        <Link href="/register" className="text-emerald-600 hover:underline">
+        <Link
+          // Das Ziel wird mitgenommen. Ohne diesen Anhang verloere ein
+          // Eingeladener, der hier erst ein Konto anlegt, seine Einladung -
+          // und landete nach der Registrierung auf dem Dashboard.
+          href={`/register?weiter=${encodeURIComponent(ziel)}`}
+          className="text-emerald-600 hover:underline"
+        >
           Registrieren
         </Link>
       </p>
