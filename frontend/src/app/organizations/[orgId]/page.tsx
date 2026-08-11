@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+import { EinladungenBereich } from '@/components/einladungen';
 import { Geschuetzt } from '@/components/geschuetzt';
 import { Hinweis } from '@/components/ui';
 import { ApiFehler } from '@/lib/api';
@@ -120,6 +121,8 @@ function Inhalt() {
           </ul>
         )}
       </section>
+
+      <EinladungenBereich orgId={orgId} eigeneRolle={organisation.data.role} />
     </main>
   );
 }

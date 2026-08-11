@@ -2,14 +2,15 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { Feld, Hinweis, Karte, Knopf } from '@/components/ui';
 import { ApiFehler } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { sichererPfad } from '@/lib/weiterleitung';
 
 /**
  * Muss zu den Regeln des Backends passen (siehe register.dto.ts):
@@ -32,9 +33,30 @@ const registrierSchema = z.object({
 type RegistrierDaten = z.infer<typeof registrierSchema>;
 
 export default function RegisterSeite() {
+  // Suspense-Grenze wegen `useSearchParams` - siehe die mitgelieferte Doku
+  // und den gleichlautenden Kommentar auf der Anmeldeseite.
+  return (
+    <Suspense
+      fallback={
+        <Karte titel="Konto anlegen" untertitel="DevBoard">
+          <p className="text-sm text-zinc-500">Einen Moment …</p>
+        </Karte>
+      }
+    >
+      <Formular />
+    </Suspense>
+  );
+}
+
+function Formular() {
   const { registrieren, nutzer, laedt } = useAuth();
   const router = useRouter();
+  const suchparameter = useSearchParams();
   const [fehler, setFehler] = useState<string | null>(null);
+
+  // Geprueft, nicht uebernommen - ohne Pruefung waere das eine
+  // Open-Redirect-Luecke. Siehe lib/weiterleitung.ts.
+  const ziel = sichererPfad(suchparameter.get('weiter'), '/dashboard');
 
   const {
     register,
@@ -43,14 +65,14 @@ export default function RegisterSeite() {
   } = useForm<RegistrierDaten>({ resolver: zodResolver(registrierSchema) });
 
   useEffect(() => {
-    if (!laedt && nutzer) router.replace('/dashboard');
-  }, [laedt, nutzer, router]);
+    if (!laedt && nutzer) router.replace(ziel);
+  }, [laedt, nutzer, router, ziel]);
 
   const absenden = handleSubmit(async (daten) => {
     setFehler(null);
     try {
       await registrieren(daten.email, daten.password, daten.name || undefined);
-      router.replace('/dashboard');
+      router.replace(ziel);
     } catch (problem) {
       setFehler(
         problem instanceof ApiFehler
@@ -92,7 +114,12 @@ export default function RegisterSeite() {
 
       <p className="text-sm text-zinc-500">
         Bereits registriert?{' '}
-        <Link href="/login" className="text-emerald-600 hover:underline">
+        <Link
+          // Das Ziel wird mitgenommen, damit eine Einladung beim Wechsel
+          // zwischen den beiden Formularen nicht verloren geht.
+          href={`/login?weiter=${encodeURIComponent(ziel)}`}
+          className="text-emerald-600 hover:underline"
+        >
           Anmelden
         </Link>
       </p>
