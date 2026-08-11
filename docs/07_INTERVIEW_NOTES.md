@@ -1410,3 +1410,68 @@ Organisation hinein?" – nicht „gehört *diese Ressource* dorthin?". Die zwei
 die `WHERE`-Bedingung.
 
 Nachgewiesen: Filter entfernt, der zugehörige E2E-Test schlägt fehl.
+
+---
+
+## Frontend & Mandanten
+
+### 89. Ihr legt den Access-Token nicht in `localStorage`, die aktive Organisation aber schon. Ist das nicht inkonsequent?
+
+Nein – und der Unterschied ist genau die Frage, die man sich bei *jedem* persistierten Wert stellen
+sollte: **Wäre es schlimm, wenn ein fremdes Skript das liest?**
+
+- Der **Access-Token** ist ein *Zugangsmittel*. Wer ihn hat, **ist** der Nutzer. Eine einzige
+  XSS-Lücke – auch in einer fremden Bibliothek – genügt, und die Sitzung ist übernommen. Er liegt
+  deshalb in einer JavaScript-Variablen und ist beim Neuladen weg (ADR-007).
+- Die **Organisations-ID** ist eine *Anzeigepräferenz*. Wer sie hat, hat nichts. Sie steht ohnehin
+  in jeder URL, und der Server prüft bei jeder Anfrage die Mitgliedschaft neu.
+
+Die Faustregel „nichts in `localStorage`" ist zu grob. Richtig ist: **keine Geheimnisse und nichts,
+worauf sich eine Berechtigung stützt.**
+
+### 90. Ihr blendet Knöpfe je nach Rolle aus. Ist das eure Berechtigungsprüfung?
+
+Nein, und diese Verwechslung ist eine der häufigsten Ursachen echter Lücken.
+
+Einen Knopf auszublenden ist **Benutzerführung**. Es verhindert, dass jemand eine Aktion versucht,
+die ohnehin scheitern würde. Es verhindert nicht, dass er sie ausführt – die Entwicklerwerkzeuge
+brauchen dafür zehn Sekunden, und ein Angreifer würde die Oberfläche gar nicht erst benutzen,
+sondern die API direkt ansprechen.
+
+Der Schutz sitzt im Backend: `@Rollen()` am Endpoint, Mandantenfilter in jeder Abfrage. Selbst wenn
+jemand den Knopf zurückholt, bekommt er `403` oder `404`.
+
+> **Merksatz:** Frontend-Schutz ist Führung, Backend-Schutz ist Sicherheit. Wer beides verwechselt,
+> baut eine Anwendung, die nur so lange sicher wirkt, wie niemand F12 drückt.
+
+Dieselbe Trennung gilt für die Formularvalidierung: im Browser aus **Bequemlichkeit**, im Backend
+aus **Sicherheit**. Beide prüfen dieselbe Regel – aus zwei verschiedenen Gründen.
+
+### 91. Wann benutzt man `useSyncExternalStore` statt `useState` plus `useEffect`?
+
+Sobald die Daten aus einer Quelle stammen, die **React nicht gehört**: `localStorage`,
+`matchMedia`, `navigator.onLine`, ein WebSocket, ein Store außerhalb von React.
+
+Der übliche Reflex sieht so aus:
+
+```ts
+const [wert, setWert] = useState(null);
+useEffect(() => { setWert(localStorage.getItem(schluessel)); }, []);
+```
+
+Drei Probleme:
+
+1. **Doppeltes Rendern.** Erst `null`, dann der echte Wert – sichtbar als Flackern. Der
+   React-Compiler in Next 16 lehnt das mit `react-hooks/set-state-in-effect` ab.
+2. **Änderungen von außen werden nicht bemerkt.** Schreibt ein anderer Tab, zeigt dieser weiter den
+   alten Wert.
+3. **Der Serverfall bleibt offen** – man merkt es erst, wenn `window is not defined` fliegt oder
+   die Hydration warnt.
+
+`useSyncExternalStore(abonniere, leseImBrowser, leseAufServer)` beantwortet alle drei: ein
+Abonnement für Änderungen, ein Lesevorgang für den Browser, einer für den Server. Das dritte
+Argument ist der eigentliche Punkt – es **zwingt** dazu, den Serverfall auszusprechen.
+
+**Ein Detail, das man kennen muss:** `localStorage.setItem` löst im *eigenen* Tab **kein**
+`storage`-Ereignis aus, nur in den anderen. Wer nur darauf hört, sieht die eigene Änderung nie – die
+Abonnenten müssen zusätzlich von Hand benachrichtigt werden.
