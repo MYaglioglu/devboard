@@ -68,6 +68,52 @@ describe('Organizations (e2e)', () => {
     return (antwort.body as OrganisationAntwort).id;
   };
 
+  /**
+   * Baut eine Organisation mit OWNER, ADMIN und MEMBER auf.
+   *
+   * Die beiden zusaetzlichen Mitgliedschaften entstehen direkt in der
+   * Datenbank, weil der Einladungs-Flow erst in der naechsten Scheibe kommt.
+   * Sobald es ihn gibt, laeuft dieser Aufbau ueber die HTTP-Schnittstelle -
+   * bis dahin ist es ehrlicher, die Abkuerzung sichtbar zu nehmen, als den
+   * Test um eine Mechanik herumzubauen, die es noch nicht gibt.
+   */
+  const baueTeam = async (kennung: string) => {
+    const ownerToken = await meldeAn(`${kennung}-owner`);
+    const adminToken = await meldeAn(`${kennung}-admin`);
+    const memberToken = await meldeAn(`${kennung}-member`);
+
+    const orgId = await legeAn(ownerToken, orgName(kennung));
+
+    const idVon = async (rolle: string): Promise<string> => {
+      const nutzer = await prisma.user.findUniqueOrThrow({
+        where: { email: email(`${kennung}-${rolle}`) },
+        select: { id: true },
+      });
+      return nutzer.id;
+    };
+
+    const ownerId = await idVon('owner');
+    const adminId = await idVon('admin');
+    const memberId = await idVon('member');
+
+    await prisma.membership.createMany({
+      data: [
+        { organizationId: orgId, userId: adminId, role: 'ADMIN' },
+        { organizationId: orgId, userId: memberId, role: 'MEMBER' },
+      ],
+    });
+
+    return {
+      orgId,
+      ownerId,
+      adminId,
+      memberId,
+      ownerToken,
+      adminToken,
+      memberToken,
+    };
+  };
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -462,6 +508,328 @@ describe('Organizations (e2e)', () => {
         .set('Authorization', `Bearer ${token}`)
         .send({ name: '   ' })
         .expect(400);
+    });
+  });
+
+  describe('PATCH /organizations/:orgId/members/:userId', () => {
+    it('erlaubt dem OWNER, ein Mitglied zum ADMIN zu machen', async () => {
+      const { orgId, memberId, ownerToken } = await baueTeam('befoerdern');
+
+      const antwort = await request(app.getHttpServer())
+        .patch(`/organizations/${orgId}/members/${memberId}`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ role: 'ADMIN' })
+        .expect(200);
+
+      expect((antwort.body as MitgliedAntwort).role).toBe('ADMIN');
+    });
+
+    /**
+     * ========================================================================
+     * DER WICHTIGSTE ROLLENTEST: KEINE RECHTEAUSWEITUNG
+     * ========================================================================
+     * Duerfte ein ADMIN Rollen vergeben, koennte er sich selbst zum OWNER
+     * machen - und die Unterscheidung der beiden Rollen waere wertlos.
+     *
+     * Merksatz: Wer Rechte vergeben darf, hat sie.
+     */
+    it('verbietet einem ADMIN das Aendern von Rollen mit 403', async () => {
+      const { orgId, memberId, adminToken } = await baueTeam('eskalation');
+
+      await request(app.getHttpServer())
+        .patch(`/organizations/${orgId}/members/${memberId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ role: 'ADMIN' })
+        .expect(403);
+    });
+
+    it('verbietet einem ADMIN, sich selbst zum OWNER zu machen', async () => {
+      const { orgId, adminId, adminToken } = await baueTeam('selbst-owner');
+
+      // Derselbe Schutz, aber der Fall, der im Ernstfall wirklich versucht
+      // wird - deshalb ausdruecklich als eigener Test.
+      await request(app.getHttpServer())
+        .patch(`/organizations/${orgId}/members/${adminId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ role: 'OWNER' })
+        .expect(403);
+    });
+
+    /**
+     * Die Regel aus Frage 67, jetzt umgesetzt.
+     *
+     * 409 und nicht 403: Der OWNER IST berechtigt. Die Anfrage widerspricht
+     * nur dem aktuellen Zustand - mit einem zweiten OWNER waere dieselbe
+     * Anfrage erfolgreich.
+     */
+    it('verhindert das Herabstufen des LETZTEN OWNER mit 409', async () => {
+      const { orgId, ownerId, ownerToken } = await baueTeam('letzter-owner');
+
+      const antwort = await request(app.getHttpServer())
+        .patch(`/organizations/${orgId}/members/${ownerId}`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ role: 'MEMBER' })
+        .expect(409);
+
+      expect((antwort.body as FehlerAntwort).message).toContain('OWNER');
+    });
+
+    it('erlaubt das Herabstufen, sobald ein zweiter OWNER existiert', async () => {
+      const { orgId, ownerId, memberId, ownerToken } =
+        await baueTeam('zweiter-owner');
+
+      // Erst den zweiten Eigentuemer ernennen ...
+      await request(app.getHttpServer())
+        .patch(`/organizations/${orgId}/members/${memberId}`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ role: 'OWNER' })
+        .expect(200);
+
+      // ... dann darf sich der erste zurueckziehen. Die Regel lautet
+      // "mindestens einer", nicht "der Ersteller fuer immer".
+      await request(app.getHttpServer())
+        .patch(`/organizations/${orgId}/members/${ownerId}`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ role: 'MEMBER' })
+        .expect(200);
+    });
+
+    it('antwortet bei unbekanntem Mitglied mit 404', async () => {
+      const { orgId, ownerToken } = await baueTeam('unbekannt');
+
+      await request(app.getHttpServer())
+        .patch(
+          `/organizations/${orgId}/members/00000000-0000-4000-8000-000000000000`,
+        )
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ role: 'ADMIN' })
+        .expect(404);
+    });
+
+    it('weist eine ungueltige Rolle mit 400 ab', async () => {
+      const { orgId, memberId, ownerToken } = await baueTeam('rolle-ungueltig');
+
+      await request(app.getHttpServer())
+        .patch(`/organizations/${orgId}/members/${memberId}`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ role: 'SUPERADMIN' })
+        .expect(400);
+    });
+
+    it('weist eine ungueltige Nutzer-ID mit 400 statt 500 ab', async () => {
+      const { orgId, ownerToken } = await baueTeam('id-ungueltig');
+
+      // Ohne Validierung am Rand ginge "abc" bis zur Datenbank durch und
+      // Prisma antwortete mit einem Fehler ueber UUID-Syntax - also 500 fuer
+      // eine schlicht falsche Eingabe.
+      await request(app.getHttpServer())
+        .patch(`/organizations/${orgId}/members/abc`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ role: 'ADMIN' })
+        .expect(400);
+    });
+  });
+
+  describe('DELETE /organizations/:orgId/members/:userId', () => {
+    it('erlaubt dem OWNER das Entfernen eines MEMBER', async () => {
+      const { orgId, memberId, ownerToken } = await baueTeam('entfernen');
+
+      await request(app.getHttpServer())
+        .delete(`/organizations/${orgId}/members/${memberId}`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .expect(204);
+
+      const uebrig = await prisma.membership.findMany({
+        where: { organizationId: orgId },
+      });
+      expect(uebrig.map((m) => m.userId)).not.toContain(memberId);
+    });
+
+    /**
+     * ========================================================================
+     * DER FALL, DEN EIN GUARD NICHT ENTSCHEIDEN KANN
+     * ========================================================================
+     * Ein MEMBER darf niemanden entfernen - aber sich selbst schon. Ein
+     * @Rollen(OWNER, ADMIN) haette ihn abgewiesen, bevor ueberhaupt klar ist,
+     * wen er meint. Der Guard kennt den Anfragenden, nicht die Zielressource.
+     */
+    it('laesst einen MEMBER die Organisation verlassen', async () => {
+      const { orgId, memberId, memberToken } = await baueTeam('verlassen');
+
+      await request(app.getHttpServer())
+        .delete(`/organizations/${orgId}/members/${memberId}`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .expect(204);
+
+      // Danach ist die Organisation fuer ihn nicht mehr sichtbar - der
+      // Mandantenschutz greift sofort, ohne dass sich am Token etwas aendert.
+      await request(app.getHttpServer())
+        .get(`/organizations/${orgId}`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .expect(404);
+    });
+
+    it('verbietet einem MEMBER das Entfernen eines anderen mit 403', async () => {
+      const { orgId, ownerId, memberToken } = await baueTeam('member-fremd');
+
+      await request(app.getHttpServer())
+        .delete(`/organizations/${orgId}/members/${ownerId}`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .expect(403);
+    });
+
+    /**
+     * Ohne diesen Schutz koennte ein ADMIN alle OWNER entfernen und die
+     * Organisation uebernehmen. Wer den Hoeherstehenden entfernen kann, steht
+     * hoeher - die Rangfolge waere wirkungslos.
+     */
+    it('verbietet einem ADMIN das Entfernen eines OWNER mit 403', async () => {
+      const { orgId, ownerId, adminToken } = await baueTeam('admin-vs-owner');
+
+      await request(app.getHttpServer())
+        .delete(`/organizations/${orgId}/members/${ownerId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(403);
+    });
+
+    it('erlaubt einem ADMIN das Entfernen eines MEMBER', async () => {
+      const { orgId, memberId, adminToken } = await baueTeam('admin-entfernt');
+
+      await request(app.getHttpServer())
+        .delete(`/organizations/${orgId}/members/${memberId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(204);
+    });
+
+    it('verhindert, dass der letzte OWNER die Organisation verlaesst (409)', async () => {
+      const { orgId, ownerId, ownerToken } = await baueTeam('owner-verlaesst');
+
+      // Derselbe Schutz wie beim Herabstufen - und genau deshalb liegt er im
+      // Service. Vier Wege fuehren zu dieser Regel; am Endpoint muesste man
+      // sie viermal schreiben und wuerde einen davon vergessen.
+      await request(app.getHttpServer())
+        .delete(`/organizations/${orgId}/members/${ownerId}`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .expect(409);
+    });
+
+    /**
+     * ========================================================================
+     * ZWEI GLEICHZEITIGE AUSTRITTE - EIN INVARIANTENTEST
+     * ========================================================================
+     * Zwei OWNER verlassen die Organisation im selben Moment. Danach muss
+     * genau einer uebrig sein.
+     *
+     * EHRLICHE EINORDNUNG: Dieser Test ist auch dann gruen, wenn man die
+     * Zeilensperre entfernt - nachgeprueft. Der Grund ist, dass zwei Anfragen
+     * ueber HTTP nur selten so eng verschraenkt laufen, dass beide ihre
+     * Zaehlung vor dem Schreiben der jeweils anderen abschliessen. Die
+     * Race Condition ist echt, aber ueber diesen Weg nicht zuverlaessig
+     * ausloesbar.
+     *
+     * Er bleibt trotzdem: Er sichert die INVARIANTE ("es bleibt ein OWNER")
+     * und wuerde eine grobe Regression bemerken. Er beweist nur nicht, dass
+     * die Sperre wirkt - das tut der Test darunter.
+     *
+     * Merksatz: Ein Test, der mit und ohne den Schutz gruen ist, bewacht ihn
+     * nicht. Das faellt nur auf, wenn man es ausprobiert.
+     */
+    it('laesst bei zwei gleichzeitigen Austritten genau einen OWNER uebrig', async () => {
+      const { orgId, ownerId, memberId, ownerToken, memberToken } =
+        await baueTeam('gleichzeitig');
+
+      // Zweiten OWNER ernennen - jetzt sind es zwei.
+      await request(app.getHttpServer())
+        .patch(`/organizations/${orgId}/members/${memberId}`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ role: 'OWNER' })
+        .expect(200);
+
+      // Beide verlassen gleichzeitig. Ohne Sperre kaemen beide durch.
+      const ergebnisse = await Promise.all([
+        request(app.getHttpServer())
+          .delete(`/organizations/${orgId}/members/${ownerId}`)
+          .set('Authorization', `Bearer ${ownerToken}`),
+        request(app.getHttpServer())
+          .delete(`/organizations/${orgId}/members/${memberId}`)
+          .set('Authorization', `Bearer ${memberToken}`),
+      ]);
+
+      const status = ergebnisse.map((e) => e.status).sort();
+      expect(status).toEqual([204, 409]);
+
+      // Die eigentliche Zusicherung: Die Organisation hat noch einen
+      // Eigentuemer. Der Statuscode oben ist nur das sichtbare Symptom.
+      const owner = await prisma.membership.count({
+        where: { organizationId: orgId, role: 'OWNER' },
+      });
+      expect(owner).toBe(1);
+    });
+
+    /**
+     * ========================================================================
+     * DER NACHWEIS, DASS DIE ZEILENSPERRE WIRKT
+     * ========================================================================
+     * Statt zu hoffen, dass zwei Anfragen sich zufaellig verschraenken, wird
+     * der Konflikt hier ERZWUNGEN: Eine eigene Transaktion nimmt die Sperre
+     * auf der Organisationszeile und haelt sie eine halbe Sekunde.
+     *
+     * Nimmt der Endpoint dieselbe Sperre, MUSS er warten - seine Antwort kann
+     * nicht vor dem Ende der blockierenden Transaktion kommen. Genau das wird
+     * gemessen.
+     *
+     * Ohne `FOR UPDATE` im Service laeuft die Anfrage sofort durch und der
+     * Test schlaegt fehl. Damit bewacht er den Schutz tatsaechlich - anders
+     * als der Test darueber.
+     *
+     * Warum eine Zeitmessung vertretbar ist: Gemessen wird nicht, ob etwas
+     * "schnell genug" ist (das waere bruechig), sondern ob eine kuenstlich
+     * erzeugte Wartezeit von 500 ms UEBERHAUPT abgewartet wurde. Der Abstand
+     * zwischen "sofort" und "eine halbe Sekunde" ist gross genug, dass
+     * Schwankungen keine Rolle spielen.
+     */
+    it('wartet auf die Zeilensperre der Organisation', async () => {
+      const { orgId, memberId, ownerToken } = await baueTeam('sperre');
+
+      const SPERRDAUER_MS = 500;
+      let sperreGesetzt: () => void = () => {};
+      const sperreBereit = new Promise<void>((aufloesen) => {
+        sperreGesetzt = aufloesen;
+      });
+
+      // Eigene Transaktion, die die Zeile blockiert und dann losslaesst.
+      const blockierer = prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${orgId}::uuid FOR UPDATE`;
+        sperreGesetzt();
+        await new Promise((weiter) => setTimeout(weiter, SPERRDAUER_MS));
+      });
+
+      // Erst starten, wenn die Sperre wirklich steht - sonst waere der Test
+      // von der Reihenfolge zweier Verbindungen abhaengig.
+      await sperreBereit;
+
+      const start = Date.now();
+      await request(app.getHttpServer())
+        .delete(`/organizations/${orgId}/members/${memberId}`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .expect(204);
+      const dauer = Date.now() - start;
+
+      await blockierer;
+
+      // Grosszuegiger Abstand nach unten: Es geht um "hat gewartet" gegen
+      // "lief sofort durch", nicht um Millisekunden.
+      expect(dauer).toBeGreaterThan(SPERRDAUER_MS * 0.6);
+    });
+
+    it('antwortet fuer ein Nichtmitglied mit 404', async () => {
+      const { orgId, memberId } = await baueTeam('fremder-loescht');
+      const fremderToken = await meldeAn('fremder-loescht-b');
+
+      await request(app.getHttpServer())
+        .delete(`/organizations/${orgId}/members/${memberId}`)
+        .set('Authorization', `Bearer ${fremderToken}`)
+        .expect(404);
     });
   });
 });

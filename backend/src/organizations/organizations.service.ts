@@ -1,9 +1,30 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 
 import { Role } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
+import type { Prisma } from '../generated/prisma/client';
 import type { CreateOrganizationDto } from './dto/create-organization.dto';
+import type { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import type { UpdateOrganizationDto } from './dto/update-organization.dto';
+
+/**
+ * Der Prisma-Client INNERHALB einer Transaktion.
+ *
+ * Nicht derselbe Typ wie der PrismaService: Er kann alles ausser den
+ * Methoden, die eine eigene Verbindung eroeffnen wuerden - `$transaction`
+ * etwa laesst sich nicht verschachteln, `$connect` waere sinnlos.
+ *
+ * Der Typ wird von Prisma mitgeliefert statt von Hand als `Omit<...>` gebaut.
+ * Ein handgeschriebener Ausschluss waere eine Kopie einer Liste, die Prisma
+ * pflegt - und liefe bei der naechsten Version auseinander.
+ */
+type TransaktionsClient = Prisma.TransactionClient;
 
 /**
  * Eine Organisation aus der Sicht eines bestimmten Nutzers.
@@ -297,5 +318,237 @@ export class OrganizationsService {
     this.logger.log(`Organisation umbenannt: ${organisation.id}`);
 
     return { ...organisation, role: eigeneRolle };
+  }
+
+  /**
+   * Aendert die Rolle eines Mitglieds.
+   *
+   * Wer das ueberhaupt aufrufen darf - ausschliesslich OWNER -, entscheidet
+   * der @Rollen()-Decorator am Controller. Hier steht die fachliche Regel:
+   * Die LETZTE OWNER-Mitgliedschaft darf nicht herabgestuft werden.
+   */
+  async aendereRolle(
+    organizationId: string,
+    zielNutzerId: string,
+    daten: UpdateMemberRoleDto,
+  ): Promise<Mitglied> {
+    return this.mitGesperrterOrganisation(organizationId, async (tx) => {
+      const ziel = await tx.membership.findUnique({
+        where: {
+          organizationId_userId: { organizationId, userId: zielNutzerId },
+        },
+        select: { role: true },
+      });
+
+      if (!ziel) {
+        // 404 fuer das MITGLIED, nicht fuer die Organisation - die kennt der
+        // Anfragende bereits, sonst waere er nicht durch den Guard gekommen.
+        throw new NotFoundException('Mitglied nicht gefunden');
+      }
+
+      if (ziel.role === Role.OWNER && daten.role !== Role.OWNER) {
+        await this.stelleSicherDassEinOwnerBleibt(tx, organizationId);
+      }
+
+      const aktualisiert = await tx.membership.update({
+        where: {
+          organizationId_userId: { organizationId, userId: zielNutzerId },
+        },
+        data: { role: daten.role },
+        select: {
+          role: true,
+          createdAt: true,
+          user: { select: { id: true, email: true, name: true } },
+        },
+      });
+
+      this.logger.log(
+        `Rolle geaendert in ${organizationId}: ${zielNutzerId} -> ${daten.role}`,
+      );
+
+      return {
+        userId: aktualisiert.user.id,
+        email: aktualisiert.user.email,
+        name: aktualisiert.user.name,
+        role: aktualisiert.role,
+        mitgliedSeit: aktualisiert.createdAt,
+      };
+    });
+  }
+
+  /**
+   * Entfernt ein Mitglied aus der Organisation.
+   *
+   * ==========================================================================
+   * WARUM DIE BERECHTIGUNG HIER STEHT UND NICHT IM GUARD
+   * ==========================================================================
+   * Die Regel haengt davon ab, WEN es trifft:
+   *
+   *   - sich selbst entfernen darf jeder, auch MEMBER ("Organisation
+   *     verlassen")
+   *   - andere entfernen duerfen OWNER und ADMIN
+   *   - einen OWNER entfernen darf nur ein OWNER
+   *
+   * Ein Guard kann das nicht entscheiden. Er weiss, WER anfragt, aber nicht,
+   * WEN es trifft - die Zielressource kennt er nicht. Ein
+   * @Rollen(OWNER, ADMIN) wuerde einen MEMBER schon abweisen, bevor
+   * ueberhaupt klar ist, dass er nur sich selbst meint.
+   *
+   * Faustregel: Ein Guard entscheidet ueber den ZUGANG, nicht ueber den
+   * EINZELFALL. Sobald die Antwort davon abhaengt, welche Ressource betroffen
+   * ist, gehoert sie in den Service.
+   */
+  async entferneMitglied(
+    organizationId: string,
+    eigeneNutzerId: string,
+    eigeneRolle: Role,
+    zielNutzerId: string,
+  ): Promise<void> {
+    await this.mitGesperrterOrganisation(organizationId, async (tx) => {
+      const ziel = await tx.membership.findUnique({
+        where: {
+          organizationId_userId: { organizationId, userId: zielNutzerId },
+        },
+        select: { role: true },
+      });
+
+      if (!ziel) {
+        throw new NotFoundException('Mitglied nicht gefunden');
+      }
+
+      const entferntSichSelbst = zielNutzerId === eigeneNutzerId;
+
+      if (!entferntSichSelbst) {
+        if (eigeneRolle !== Role.OWNER && eigeneRolle !== Role.ADMIN) {
+          throw new ForbiddenException(
+            'Nur OWNER und ADMIN duerfen Mitglieder entfernen',
+          );
+        }
+
+        // Ohne diese Zeile koennte ein ADMIN alle OWNER entfernen und die
+        // Organisation uebernehmen. Die Rangfolge der Rollen waere damit
+        // wirkungslos - wer den Hoeherstehenden entfernen kann, steht hoeher.
+        if (ziel.role === Role.OWNER && eigeneRolle !== Role.OWNER) {
+          throw new ForbiddenException(
+            'Nur ein OWNER darf einen anderen OWNER entfernen',
+          );
+        }
+      }
+
+      // Gilt auch fuer den Fall "ich verlasse die Organisation": Der letzte
+      // OWNER darf nicht gehen, sonst bleibt sie unverwaltbar zurueck. Das ist
+      // der Grund, warum diese Pruefung im Service liegt - es gibt mehrere
+      // Wege hierher, und jeder einzelne muss sie durchlaufen.
+      if (ziel.role === Role.OWNER) {
+        await this.stelleSicherDassEinOwnerBleibt(tx, organizationId);
+      }
+
+      await tx.membership.delete({
+        where: {
+          organizationId_userId: { organizationId, userId: zielNutzerId },
+        },
+      });
+
+      this.logger.log(
+        `Mitglied entfernt aus ${organizationId}: ${zielNutzerId}` +
+          (entferntSichSelbst ? ' (selbst)' : ` durch ${eigeneNutzerId}`),
+      );
+    });
+  }
+
+  /**
+   * Wirft, wenn die Organisation nur noch EINEN OWNER hat.
+   *
+   * Aufzurufen INNERHALB der Transaktion und NACH der Sperre - sonst ist das
+   * Ergebnis schon beim Lesen veraltet.
+   */
+  private async stelleSicherDassEinOwnerBleibt(
+    tx: TransaktionsClient,
+    organizationId: string,
+  ): Promise<void> {
+    const anzahlOwner = await tx.membership.count({
+      where: { organizationId, role: Role.OWNER },
+    });
+
+    if (anzahlOwner <= 1) {
+      // 409 Conflict, nicht 403: Die Anfrage ist formal in Ordnung und der
+      // Anfragende ist berechtigt - sie widerspricht nur dem aktuellen
+      // ZUSTAND der Ressource. Mit einem zweiten OWNER waere dieselbe Anfrage
+      // erfolgreich. Genau dafuer gibt es 409.
+      throw new ConflictException(
+        'Die Organisation braucht mindestens einen OWNER. ' +
+          'Ernennen Sie zuerst einen anderen Eigentuemer.',
+      );
+    }
+  }
+
+  /**
+   * Fuehrt eine Aenderung an den Mitgliedschaften unter einer Zeilensperre aus.
+   *
+   * ==========================================================================
+   * WARUM EINE TRANSAKTION HIER NICHT REICHT
+   * ==========================================================================
+   * Beide Aufrufer arbeiten nach dem Muster LESEN, ENTSCHEIDEN, SCHREIBEN:
+   * "Wie viele OWNER gibt es? Mehr als einer? Dann darf dieser weg."
+   *
+   * Zwei gleichzeitige Anfragen ergeben dann:
+   *
+   *     A: zaehlt OWNER -> 2 -> "einer darf weg" -> entfernt Owner 1
+   *     B: zaehlt OWNER -> 2 -> "einer darf weg" -> entfernt Owner 2
+   *
+   * Beide in einer Transaktion. Beide atomar. Danach: NULL Eigentuemer.
+   *
+   * Der Grund ist die Isolationsstufe. PostgreSQL faehrt standardmaessig READ
+   * COMMITTED: Jede Transaktion sieht den Stand, der bei ihrem Beginn
+   * festgeschrieben war. Atomaritaet schuetzt gegen HALBE Schreibvorgaenge,
+   * nicht gegen eine veraltete Entscheidungsgrundlage.
+   *
+   * Merksatz: Eine Transaktion macht Schreibvorgaenge unteilbar. Sie macht
+   * LESEN UND SCHREIBEN nicht automatisch zu einer Einheit.
+   *
+   * ==========================================================================
+   * DIE LOESUNG: PESSIMISTISCHE SPERRE AUF DER ORGANISATIONSZEILE
+   * ==========================================================================
+   * `SELECT ... FOR UPDATE` sperrt die Zeile bis zum Ende der Transaktion.
+   * Die zweite Anfrage WARTET dort, statt weiterzulaufen - und liest danach
+   * den bereits aktualisierten Stand. Aus gleichzeitig wird nacheinander.
+   *
+   * Gesperrt wird die ORGANISATION, nicht die einzelne Mitgliedschaft. Das
+   * ist der Punkt: Die Regel betrifft die Organisation als Ganzes ("wie viele
+   * OWNER hat sie?"), also braucht es einen gemeinsamen Punkt, an dem sich
+   * konkurrierende Aenderungen begegnen. Zwei Sperren auf zwei verschiedenen
+   * Mitgliedschaften wuerden sich nie in die Quere kommen.
+   *
+   * ALTERNATIVEN, und warum nicht:
+   *
+   *   Isolationsstufe SERIALIZABLE - PostgreSQL erkennt den Konflikt selbst
+   *     und laesst eine Transaktion fehlschlagen. Sauberer und ohne explizite
+   *     Sperre, verlangt aber eine Wiederholungslogik fuer den Fehlercode
+   *     P2034. Mehr bewegliche Teile fuer denselben Effekt.
+   *
+   *   Optimistisches Sperren (Versionsspalte) - passt, wenn Konflikte selten
+   *     sind und der Nutzer eine Fehlermeldung akzeptiert ("wurde inzwischen
+   *     geaendert"). Beim Kanban-Board in Sprint 3 ist das die richtige Wahl.
+   *     Hier nicht: Ein verlorener Eigentuemer laesst sich nicht nachtraeglich
+   *     durch Neuladen beheben.
+   *
+   *   Datenbank-Constraint - waere das Robusteste, ist aber in PostgreSQL
+   *     nicht direkt ausdrueckbar: "mindestens eine Zeile mit role=OWNER pro
+   *     organizationId" braucht einen Trigger oder eine materialisierte
+   *     Zaehlspalte. Vermerkt in 06_BACKLOG.md.
+   */
+  private async mitGesperrterOrganisation<T>(
+    organizationId: string,
+    arbeit: (tx: TransaktionsClient) => Promise<T>,
+  ): Promise<T> {
+    return this.prisma.$transaction(async (tx) => {
+      // $queryRaw mit Template-String: Prisma setzt daraus eine
+      // PARAMETRISIERTE Abfrage ($1), keine Zeichenkettenverkettung. Mit
+      // `$queryRawUnsafe` und einem zusammengebauten String waere das eine
+      // SQL-Injection - hier ist es keine.
+      await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${organizationId}::uuid FOR UPDATE`;
+
+      return arbeit(tx);
+    });
   }
 }
