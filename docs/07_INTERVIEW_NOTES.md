@@ -1475,3 +1475,44 @@ Argument ist der eigentliche Punkt – es **zwingt** dazu, den Serverfall auszus
 **Ein Detail, das man kennen muss:** `localStorage.setItem` löst im *eigenen* Tab **kein**
 `storage`-Ereignis aus, nur in den anderen. Wer nur darauf hört, sieht die eigene Änderung nie – die
 Abonnenten müssen zusätzlich von Hand benachrichtigt werden.
+
+### 92. Erzähl mir von einem Fehler, den deine Tests nicht gefunden haben.
+
+Nach Abschluss von Sprint 2 habe ich DevBoard zum ersten Mal seit Wochen tatsächlich **gestartet** –
+155 Tests grün, CI grün. In der Netzwerkansicht stand bei einem einfachen Seitenneuladen:
+
+```
+POST /auth/refresh → 200 OK
+POST /auth/refresh → 200 OK
+```
+
+Zwei Erneuerungen für einen Seitenaufruf. In der Datenbank: zwei **gleichzeitig gültige**
+Refresh-Token in derselben Familie, zehn Millisekunden auseinander. Das Cookie hält nur einen – der
+andere bleibt 30 Tage gültig, ohne Besitzer.
+
+**Warum das gefährlich ist:** Wir rotieren Refresh-Token und erkennen Wiederverwendung – ein bereits
+verbrauchter Token gilt als Diebstahlverdacht, dann wird die ganze Familie widerrufen. Laufen die
+beiden Anfragen *versetzt* statt parallel, legt die zweite einen entwerteten Token vor, und der
+Nutzer fliegt aus der Sitzung. Genau das ist mir in derselben Sitzung passiert: Nach ein paar
+Neuladungen waren alle Token der Familie widerrufen.
+
+**Ursache:** Das Frontend fasste gleichzeitige Aufrufe von `erneuere()` nicht zusammen. Sichtbar
+gemacht hat es der StrictMode von Next, der Effekte doppelt ausführt – aber das war nur der
+Auslöser. In Produktion genügen zwei parallele Abfragen, die beide in ein `401` laufen, oder zwei
+offene Tabs.
+
+**Behebung:** Single Flight – der erste Aufrufer startet die Anfrage, alle weiteren bekommen
+dasselbe Promise und warten mit. Wichtig ist das Zurücksetzen im `finally`, sonst bliebe das alte
+Promise für immer stehen und eine spätere echte Erneuerung fände nie statt.
+
+**Was ich daraus mitnehme** – und das ist der eigentliche Inhalt der Antwort:
+
+- **Eine grüne Testsuite ist kein Ersatz dafür, die Anwendung zu benutzen.** Der Fehler entstand aus
+  dem Zusammenspiel von React-Lebenszyklus, Netzwerk-Zeitverhalten und einer serverseitigen
+  Sicherheitsfunktion. Jeder Teil für sich war korrekt und getestet.
+- **Ein Sicherheitsmechanismus kann zur Ausfallursache werden.** Wer Wiederverwendungs-Erkennung
+  einbaut, übernimmt die Pflicht, jeden Weg zu prüfen, auf dem ein Token zweimal vorgelegt werden
+  kann – auch die harmlosen.
+- **Jede Operation, die einen Zustand rotiert, braucht Single Flight.**
+- Der doppelte Effektaufruf im StrictMode ist **genau dafür da**, solche Annahmen aufzudecken. Der
+  bequeme Weg wäre gewesen, ihn abzuschalten.

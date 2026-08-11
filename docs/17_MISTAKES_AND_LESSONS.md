@@ -440,3 +440,90 @@ hätte, weil sie ohnehin nur einmal beim Aufbau liest.
 4. **Lint lief nach den Tests.** Grüne Tests und ein grüner Build haben den Fehler nicht bemerkt –
    er war kein Fehlverhalten, sondern ein Muster mit absehbaren Folgen. Genau dafür gibt es
    statische Analyse neben Tests.
+
+---
+
+## 2026-08-11 – Doppelte Token-Erneuerung: der Fehler, den keine Testsuite gefunden hat
+
+**Situation:** Nach Abschluss von Scheibe 2.7 wurde die Anwendung zum ersten Mal seit Sprint 1
+tatsächlich **gestartet**. 155 Tests grün, CI grün, alle Scheiben gemergt. Ein Blick in die
+Netzwerkansicht bei einem einfachen Seitenneuladen:
+
+```
+POST /auth/refresh → 200 OK
+POST /auth/refresh → 200 OK
+```
+
+**Zwei Erneuerungen für einen Seitenaufruf.** Bestätigt in der Datenbank:
+
+```
+createdAt                | widerrufen
+2026-08-11 12:06:56.628  | f
+2026-08-11 12:06:56.638  | f     ← zehn Millisekunden später
+```
+
+Zwei **gleichzeitig gültige** Refresh-Token in derselben Familie. Das Cookie hält nur einen davon –
+der andere ist eine Waise, 30 Tage lang gültig, ohne Besitzer. Genau das, was Rotation verhindern
+soll.
+
+**Warum das kein Schönheitsfehler ist:** Je nach Zeitablauf gibt es zwei Ausgänge.
+
+| Ablauf | Folge |
+|---|---|
+| **parallel** | Beide lesen den Token, bevor der andere ihn entwertet. Zwei neue Token, einer verwaist. |
+| **versetzt** | Der zweite legt den bereits entwerteten Token vor → Wiederverwendungs-Erkennung → **die ganze Familie wird widerrufen** → der Nutzer fliegt aus der Sitzung. |
+
+Der zweite Fall ist im Verlauf dieser Sitzung **tatsächlich eingetreten**: Nach einigen Neuladungen
+waren alle zehn Token der Familie widerrufen, und die Anmeldung war weg – ohne dass jemand etwas
+falsch gemacht hatte.
+
+**Ursache:** `erneuere()` in `auth-context.tsx` fasste gleichzeitige Aufrufe nicht zusammen. Jeder
+Aufrufer schickte seine eigene Anfrage.
+
+Sichtbar gemacht hat es der StrictMode von Next im Entwicklungsmodus, der Effekte doppelt ausführt.
+**Das ist aber nur der Auslöser, nicht die Ursache.** In Produktion genügt: zwei parallele Abfragen
+laufen gleichzeitig in ein `401` und rufen beide `erneuere()`. Oder der Nutzer öffnet zwei Tabs.
+Mit dem Ausbau in Sprint 3 (Board lädt Projekte, Tasks und Mitglieder gleichzeitig) wäre es
+zwangsläufig aufgetreten.
+
+**Behebung – Single Flight:** Der erste Aufrufer startet die Anfrage, alle weiteren bekommen
+**dasselbe Promise** und warten mit.
+
+```ts
+const laufendeErneuerung = useRef<Promise<boolean> | null>(null);
+
+const erneuere = useCallback(async () => {
+  if (laufendeErneuerung.current) return laufendeErneuerung.current;
+
+  const versuch = (async () => { /* … */ })();
+  laufendeErneuerung.current = versuch;
+
+  try {
+    return await versuch;
+  } finally {
+    laufendeErneuerung.current = null;   // ohne das bliebe es für immer stehen
+  }
+}, [uebernehme, verwerfe]);
+```
+
+Nachgewiesen auf drei Wegen: neuer Unit-Test (zwei parallele `authFetch` → **eine** Erneuerung),
+Gegenprobe (Zusammenfassung entfernt → Test rot), und in der laufenden Anwendung – nach der Korrektur
+genau ein Token pro Neuladen statt zwei.
+
+**Learnings:**
+
+1. **Eine grüne Testsuite ist kein Ersatz dafür, die Anwendung zu benutzen.** 155 Tests, und keiner
+   konnte diesen Fehler finden: Er entsteht aus dem *Zusammenspiel* von React-Lebenszyklus,
+   Netzwerk-Zeitverhalten und einer serverseitigen Sicherheitsfunktion. Jeder Teil für sich war
+   korrekt und getestet.
+2. **Ein Sicherheitsmechanismus kann zur Ausfallursache werden.** Die Wiederverwendungs-Erkennung
+   ist richtig und bleibt. Aber wer sie einbaut, übernimmt die Pflicht, **jeden** Weg zu prüfen, auf
+   dem ein Token zweimal vorgelegt werden könnte – auch die harmlosen.
+3. **Jede Operation, die einen Zustand rotiert, braucht Single Flight.** Token erneuern, ein Gerät
+   registrieren, eine Sitzung aufbauen: Sobald der Aufruf beim zweiten Mal ein *anderes* Ergebnis
+   hat als beim ersten, darf er nicht parallel laufen.
+4. **Der Entwicklungsmodus ist ein Werkzeug, kein Störenfried.** Der doppelte Effektaufruf im
+   StrictMode ist genau dafür da, solche Annahmen aufzudecken. Der bequeme Weg wäre gewesen, ihn
+   abzuschalten – und den Fehler in Produktion zu erleben.
+5. **Netzwerkansicht und Datenbank sind Diagnosewerkzeuge.** Die Oberfläche sah einwandfrei aus. Der
+   Beweis stand in zwei Zeilen SQL.
