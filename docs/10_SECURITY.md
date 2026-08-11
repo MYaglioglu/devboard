@@ -185,6 +185,28 @@ dazwischenschiebt – und Rechte sind ohnehin keine saubere Kette („wer darf s
 **Nachgewiesen statt behauptet:** Die Prüfung wurde versuchsweise auf `return true` gesetzt. Ein
 Unit-Test und vier E2E-Tests schlagen fehl. Ein grüner Test beweist nur, dass er läuft.
 
+### Einladungen (Sprint 2, Scheibe 6) – umgesetzt
+
+- **Token nur als SHA-256-Hash gespeichert**, nie im Klartext – wie beim Refresh-Token. Der Rohwert
+  existiert genau einmal, in der Antwort auf das Anlegen; erzwungen über zwei getrennte
+  Rückgabetypen.
+- **Keine User Enumeration:** Ob unter der Adresse ein Konto existiert, ändert weder Statuscode noch
+  Antwortform. Sonst hätte jeder `ADMIN` einen Prüfdienst für fremde E-Mail-Adressen.
+- **An eine Adresse gebunden, nicht an den Link:** Beim Einlösen muss die Kontoadresse übereinstimmen
+  (`403` sonst). Ein weitergeleiteter Link ist damit kein Zugang.
+- **`OWNER` ist nicht einladbar**, und ein `ADMIN` darf nur `MEMBER` einladen. Eine Einladung ist
+  eine Rechtevergabe – wer sie ausspricht, darf nicht mehr vergeben, als er selbst hat.
+- **Ablauf nach 7 Tagen.** Eine Einladung ohne Ablauf ist ein dauerhaft gültiger Zugang in einem
+  Postfach, das irgendwann jemand anderem gehört.
+- **`POST` statt `GET` zum Einlösen**, Token im Körper statt im Pfad – Pfade landen in Logs,
+  Browserverlauf und `Referer`.
+- **Mandantenfilter beim Zurückziehen:** `updateMany({ where: { id, organizationId } })`. Der Guard
+  prüft die Organisation im Pfad, nicht die Zugehörigkeit der Ressource.
+
+> **Bewusste Abweichung, offen:** Der Einladungs-Token steht derzeit in der HTTP-Antwort, damit der
+> Flow ohne E-Mail-Versand benutzbar ist. Korrekt wäre: ausschließlich per E-Mail, sodass der
+> Einladende ihn nie sieht und die Einladung nicht selbst einlösen kann. Geparkt in `06_BACKLOG.md`.
+
 ### Sprint 5 – Webhooks
 - HMAC-Signaturprüfung eingehender GitHub-Events, ungültige Signaturen werden abgewiesen
 - Idempotenz gegen mehrfach zugestellte Events
