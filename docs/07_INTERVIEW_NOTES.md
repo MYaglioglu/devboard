@@ -1516,3 +1516,89 @@ Promise für immer stehen und eine spätere echte Erneuerung fände nie statt.
 - **Jede Operation, die einen Zustand rotiert, braucht Single Flight.**
 - Der doppelte Effektaufruf im StrictMode ist **genau dafür da**, solche Annahmen aufzudecken. Der
   bequeme Weg wäre gewesen, ihn abzuschalten.
+
+### 93. Was ist ein Open Redirect, und wo ist er euch begegnet?
+
+Ein Endpoint, der den Nutzer auf eine Adresse weiterleitet, die **aus der Anfrage stammt** – ohne
+sie zu prüfen.
+
+Bei uns entsteht der Bedarf durch die Einladungen: Wer einen Einladungslink öffnet, ist meist nicht
+angemeldet. Die Anmeldeseite muss sich merken, wohin es danach zurückgeht:
+
+```
+/login?weiter=/einladung%3Ftoken%3D9Xk2
+```
+
+Der naive Weg ist `router.replace(weiter)`. Damit bestimmt aber der **Absender des Links**, wohin
+der Nutzer nach der Anmeldung geschickt wird:
+
+```
+/login?weiter=https://devb0ard-anmeldung.example/login
+```
+
+Der Nutzer prüft die Adresszeile, sieht eine **echte** DevBoard-Adresse, meldet sich an – und landet
+auf einer nachgebauten Seite, die ihn erneut nach seinen Zugangsdaten fragt. Weil er den
+Anmeldevorgang selbst begonnen hat, wirkt das plausibel.
+
+**Der Punkt, der die Antwort stark macht:** Ein Open Redirect stiehlt selbst nichts. Er verleiht
+einer Phishing-Seite die **Glaubwürdigkeit der echten Domain** – und genau die ist das, was Nutzer
+prüfen sollen. Deshalb wird die Lücke oft unterschätzt.
+
+**Unsere Prüfung:** Der Wert muss mit *genau einem* Schrägstrich beginnen.
+
+```ts
+if (!/^\/(?![/\])/.test(weiter)) return ersatz;
+```
+
+Was damit abgewiesen wird:
+
+| Eingabe | Warum gefährlich |
+|---|---|
+| `https://boese.example` | absolute Adresse |
+| `//boese.example` | **protokollrelativ** – der Browser ergänzt das Protokoll und landet auf einem fremden Host |
+| `/\boese.example` | manche Browser behandeln `\` wie `/` |
+| `javascript:…` | Skript statt Adresse |
+
+Der zweite Fall ist der eigentliche Fallstrick: Eine Prüfung auf „beginnt mit einem Schrägstrich"
+lässt ihn durch. Deshalb eine **Positivliste** statt einer Sperrliste – wer verbotene Muster
+aufzählt, vergisst eines.
+
+Nachgewiesen mit einer Gegenprobe: Prüfung entfernt → sechs Tests werden rot.
+
+### 94. Warum zeigt ihr den Einladungs-Token in einem Kasten, den man wegklicken muss?
+
+Weil er genau **einmal** existiert. Das Backend speichert nur den SHA-256-Hash; der Rohwert kommt
+ausschließlich in der Antwort auf das Anlegen zurück und lässt sich nicht nachschlagen. Wer ihn
+verliert, muss neu einladen.
+
+Das ist keine Unbequemlichkeit, sondern die Folge einer Sicherheitsentscheidung: Bei einem
+Datenbankleck wären gespeicherte Rohwerte sofort verwendbare Zugänge zu fremden Organisationen.
+
+Für die Oberfläche heißt das zweierlei: Sie muss den Wert **deutlich zeigen** und **deutlich sagen**,
+dass er danach weg ist. Ein Kasten, der nach drei Sekunden verschwindet, wäre hier eine Falle.
+Deshalb muss der Nutzer ihn ausdrücklich schließen.
+
+Genau so verhalten sich frisch erzeugte API-Schlüssel bei GitHub oder Stripe – dieselbe Ursache,
+dieselbe Gestaltung. Das ist ein gutes Beispiel dafür, dass eine Entscheidung im Backend die
+Gestaltung im Frontend **bestimmt**: Man kann das eine nicht sinnvoll entwerfen, ohne das andere zu
+kennen.
+
+Im Typsystem ist die Einmaligkeit ebenfalls abgebildet – `Einladung` (ohne Token) und
+`AusgestellteEinladung` (mit) sind zwei Typen. Wer den Token aus der Liste lesen wollte, bekäme
+einen Compilerfehler statt `undefined` zur Laufzeit.
+
+### 95. Warum steht auf eurer Einladungsseite kein Anmeldeschutz?
+
+Weil der typische Besucher dort **nicht angemeldet** ist – er hat gerade eine Einladung bekommen.
+
+Unsere `<Geschuetzt>`-Komponente würde ihn auf `/login` werfen und dabei den Token aus der
+Adresszeile verlieren. Nach der Anmeldung stünde er ratlos auf dem Dashboard, ohne zu wissen, was
+mit seiner Einladung passiert ist.
+
+Die Seite behandelt den abgemeldeten Fall deshalb selbst: Sie zeigt Links zu Anmeldung und
+Registrierung, die das Ziel über `?weiter=` mitnehmen – geprüft, siehe Frage 93. Auch der Wechsel
+*zwischen* den beiden Formularen trägt das Ziel weiter, sonst ginge es dort verloren.
+
+Der Endpoint dahinter ist trotzdem geschützt: Eine Einladung anzunehmen setzt ein Konto voraus, und
+der globale `AccessTokenGuard` antwortet ohne Token mit `401`. **Der Schutz sitzt im Backend, die
+Führung im Frontend** – die Seite ohne Schutzmantel zu bauen, öffnet nichts.
