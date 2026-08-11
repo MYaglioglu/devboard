@@ -108,13 +108,40 @@ neu laden.
 
 ## Stand
 
-**Sprint 0 und 1 abgeschlossen** (Stand 11.08.2026). Auth vollständig: Registrierung, Login,
-Refresh-Rotation mit Wiederverwendungs-Erkennung, globaler Guard, Frontend, Rate Limiting.
-**155 Tests**, CI grün, `main` geschützt.
+**Sprint 0, 1 und 2 abgeschlossen** (Stand 11.08.2026). **284 Tests** (98 Backend-Unit,
+105 Backend-E2E, 81 Frontend), CI grün, `main` geschützt.
 
-**Als Nächstes: Sprint 2 – Organisationen und Multi-Tenancy.** Der stärkste Senioritäts-Marker im
-Projekt: Autorisierung auf **Datenebene**, nicht nur am Endpoint. Erster `403` – bisher gab es
-ausschließlich `401`.
+- **Auth** vollständig: Registrierung, Login, Refresh-Rotation mit Wiederverwendungs-Erkennung,
+  globaler Guard, Rate Limiting.
+- **Mandantentrennung** vollständig: Organisationen, Rollen (`OWNER`/`ADMIN`/`MEMBER`),
+  Einladungen per gehashtem Token, Frontend mit umschaltbarer aktiver Organisation.
+  Autorisierung auf **Datenebene** – der Mandant steht in der `WHERE`-Bedingung, nicht in einer
+  Prüfung danach. Siehe Kapitel *Mandantentrennung* in `02_ARCHITECTURE.md`.
+
+**Als Nächstes: Sprint 3 – Projekte, Tasks und Kanban-Board.** Der größte Sprint. Neu darin:
+Sortier-Strategien (Integer-Positionen vs. fractional indexing), optimistische Updates mit Rollback,
+und Race Conditions beim gleichzeitigen Verschieben. Für Letzteres liegt aus Sprint 2 bereits ein
+Muster vor – dort allerdings **pessimistisch** gesperrt; beim Board ist optimistisches Sperren die
+passendere Wahl (begründet in `09_API.md`).
+
+Das Projekt liegt **zwei Wochen vor Plan** (Roadmap sah Sprint 2 für den 24.08.–01.09. vor).
 
 **Offen daneben:** GitHub-Profil (Bio, Profil-README, gepinnte Repos) und LinkedIn. Seit Woche 2
-überfällig.
+überfällig – mit 284 Tests, ADRs, Fehlerprotokoll und Handbuch gibt es jetzt etwas zu verlinken.
+
+**Kleinigkeit:** `browser-demo-1@example.com` liegt noch in der lokalen Datenbank.
+
+## Was aus Sprint 2 weitergilt
+
+Diese Regeln sind in Sprint 2 entstanden und gelten ab jetzt für jede neue Ressource:
+
+- **Der Mandantenfilter gehört in die `WHERE`-Bedingung.** Eine Prüfung nach dem Laden ist zu spät.
+  Die ID im Pfad gehört nicht automatisch zu der Organisation im Pfad.
+- **Ein Guard entscheidet über den Zugang, nicht über den Einzelfall.** Sobald die Antwort davon
+  abhängt, *welche* Ressource betroffen ist, gehört sie in den Service.
+- **Negative Tests sind Pflicht.** Der Erfolgspfad ist auch dann grün, wenn der Filter fehlt.
+- **Mutationsprobe statt Vertrauen.** Schutz entfernen, Tests laufen lassen, zurückbauen. Ein Test,
+  der mit und ohne den Schutz grün ist, bewacht ihn nicht – Tabelle in `12_TESTING.md`.
+- **Die Anwendung wird gestartet, nicht nur getestet.** Der teuerste Fehler des Sprints stammte aus
+  Sprint 1 und wurde von 155 grünen Tests nicht bemerkt.
+- **Quelltext bleibt ASCII, nutzersichtbare Texte bekommen Umlaute.**
