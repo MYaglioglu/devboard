@@ -21,14 +21,23 @@ Ein Feature gilt erst als fertig, wenn **alle** Kriterien erfüllt sind, einschl
 **Rollen** (`Owner`/`Admin`/`Member`) folgen in Sprint 2 zusammen mit den Organisationen – ohne
 Mandanten gäbe es noch nichts, worauf sich eine Rolle beziehen könnte.
 
-## F2 – Organisationen, Mitgliedschaften & Multi-Tenancy *(Sprint 2)*
+## F2 – Organisationen, Mitgliedschaften & Multi-Tenancy *(Sprint 2 – abgeschlossen am 11.08.2026)*
 
-- [ ] Nutzer kann Organisationen anlegen und gehört zu mehreren
-- [ ] Rollen pro Organisation: Owner, Admin, Member
-- [ ] Einladungs-Flow per Token
-- [ ] Aktive Organisation im Frontend umschaltbar
-- [ ] **Jede** Datenabfrage ist auf die Organisation des Nutzers eingeschränkt
-- [ ] Tests, die *fehlgeschlagene* Zugriffe absichern: fremde Organisation ⇒ 403/404
+- [x] Nutzer kann Organisationen anlegen und gehört zu mehreren
+- [x] Rollen pro Organisation: Owner, Admin, Member
+- [x] Einladungs-Flow per Token
+- [x] Aktive Organisation im Frontend umschaltbar
+- [x] **Jede** Datenabfrage ist auf die Organisation des Nutzers eingeschränkt
+- [x] Tests, die *fehlgeschlagene* Zugriffe absichern: fremde Organisation ⇒ 403/404
+
+**Über den Umfang hinaus umgesetzt**, weil ohne diese Punkte die Regeln lückenhaft geblieben wären:
+
+- Schutz der letzten `OWNER`-Mitgliedschaft, abgesichert gegen gleichzeitige Zugriffe
+  (`SELECT … FOR UPDATE`)
+- Keine Rechteausweitung: `ADMIN` darf weder Rollen vergeben noch `OWNER` entfernen noch `ADMIN`
+  einladen
+- Einladungs-Token nur als SHA-256-Hash gespeichert, an eine E-Mail-Adresse gebunden
+- Open-Redirect-Schutz beim Rückweg nach der Anmeldung
 
 ## F3 – Projekte, Tasks & Kanban-Board *(Sprint 3)*
 

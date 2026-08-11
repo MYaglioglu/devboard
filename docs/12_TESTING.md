@@ -88,13 +88,67 @@ liefern. Sicherheitsverhalten muss getestet sein, sonst ist es nur eine Behauptu
 
 | Bereich | Tests |
 |---|---|
-| Backend, Unit | 81 |
-| Backend, E2E (echte Datenbank) | 39 |
-| Frontend, Komponenten und Hooks | 26 |
-| **Gesamt** | **146** |
+| Backend, Unit | 98 |
+| Backend, E2E (echte Datenbank) | 105 |
+| Frontend, Komponenten und Hooks | 81 |
+| **Gesamt** | **284** |
 
 Alle laufen bei jedem Pull Request in der CI. Der Backend-Job startet dafür einen echten
 PostgreSQL-Container.
+
+---
+
+## Negative Tests – ab Sprint 2 Pflicht
+
+Ab der Mandantentrennung genügt es nicht mehr, den Erfolgspfad zu prüfen. Der Grund ist unangenehm
+einfach:
+
+> Der Test „ich lege etwas an, ich rufe es ab, es ist da" ist auch dann grün, wenn der
+> Mandantenfilter **komplett fehlt**. Existiert im Test nur ein Nutzer, gehört ihm ohnehin alles.
+
+Deshalb hat jede Scheibe von Sprint 2 Tests der Form: *Nutzer A legt an, Nutzer B fragt ab, B sieht
+nichts.* Dazu gehören ausdrücklich die Statuscodes – `404` statt `403` bei fremder Organisation,
+und die **wortgleiche Meldung** in beiden Fällen.
+
+---
+
+## Mutationsproben – der einzige Beweis, dass ein Test etwas bewacht
+
+Ein grüner Test beweist, dass er läuft. Ob er etwas *schützt*, sieht man ihm nicht an. Der Nachweis
+kostet zwei Minuten: **Schutz entfernen, Tests laufen lassen, Schutz zurückbauen.**
+
+In Sprint 2 an jeder sicherheitsrelevanten Stelle durchgeführt:
+
+| Entfernt | Rot geworden |
+|---|---|
+| `where: { userId }` in der Organisationsliste | 1 Unit, 3 E2E |
+| Mandantenprüfung im `MitgliedschaftsGuard` | 1 Unit, 4 E2E |
+| `organizationId` beim Zurückziehen einer Einladung | 1 E2E |
+| `FOR UPDATE` auf der Organisationszeile | 1 E2E (60 ms statt 500 ms) |
+| Open-Redirect-Prüfung | 5 Unit, 1 Seitentest |
+| Single Flight bei der Token-Erneuerung | 1 Unit |
+
+**Ein Test, der mit und ohne den Schutz grün ist, bewacht ihn nicht** – und ist gefährlicher als gar
+keiner, weil er spätere Änderungen absegnet. Genau das ist in diesem Sprint einmal passiert: Der
+erste Nebenläufigkeitstest (`Promise.all` mit zwei gleichzeitigen Austritten) blieb auch ohne die
+Zeilensperre grün. `Promise.all` erzeugt keine Verschränkung, nur die Möglichkeit einer.
+
+Ersetzt wurde er durch einen Test, der den Konflikt **erzwingt**: Eine eigene Transaktion hält die
+Sperre 500 ms, gemessen wird, ob der Endpoint wartet. Siehe `17_MISTAKES_AND_LESSONS.md`.
+
+---
+
+## Was Tests nicht finden können
+
+Der teuerste Fehler in Sprint 2 stammte aus Sprint 1 und wurde von **155 grünen Tests** nicht
+bemerkt: zwei parallele `POST /auth/refresh` bei einem Seitenaufruf, was zu zwei gleichzeitig
+gültigen Refresh-Token führte – und zeitweise zur Widerrufung der ganzen Token-Familie.
+
+Jeder Teil für sich war korrekt und getestet. Der Fehler entstand aus dem Zusammenspiel von
+React-Lebenszyklus, Netzwerk-Zeitverhalten und einer serverseitigen Sicherheitsfunktion. Gefunden
+wurde er beim **Starten der Anwendung** und einem Blick in die Netzwerkansicht.
+
+> Eine grüne Testsuite ist kein Ersatz dafür, die Anwendung zu benutzen.
 
 ---
 
