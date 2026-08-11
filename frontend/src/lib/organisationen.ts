@@ -34,6 +34,32 @@ export interface Organisation {
  */
 export const ORGANISATIONEN_KEY = ['organizations'] as const;
 
+/**
+ * Schluessel fuer die Daten EINER Organisation.
+ *
+ * Bewusst mit `ORGANISATIONEN_KEY` als Praefix. TanStack Query vergleicht
+ * Schluessel von links: `invalidateQueries({ queryKey: ORGANISATIONEN_KEY })`
+ * trifft damit die Liste UND jede einzelne Organisation.
+ *
+ * Das ist dieselbe Praefix-Regel wie bei einem zusammengesetzten
+ * Datenbankindex - und sie wird hier bewusst ausgenutzt: Nach einem
+ * Rollenwechsel muessen die Mitgliederliste und die Uebersicht neu geladen
+ * werden, denn die eigene Rolle kann sich geaendert haben.
+ */
+export const organisationKey = (orgId: string) =>
+  [...ORGANISATIONEN_KEY, orgId] as const;
+
+export const mitgliederKey = (orgId: string) =>
+  [...organisationKey(orgId), 'members'] as const;
+
+export interface Mitglied {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: Rolle;
+  mitgliedSeit: string;
+}
+
 /** Laedt die Organisationen des angemeldeten Nutzers. */
 export function useOrganisationen() {
   const { authFetch } = useAuth();
@@ -76,6 +102,78 @@ export function useOrganisationAnlegen() {
       // Markiert die Liste als veraltet - TanStack Query laedt sie neu, sobald
       // sie angezeigt wird. Ohne diese Zeile bliebe die neue Organisation
       // unsichtbar, bis der Nutzer die Seite neu laedt.
+      void queryClient.invalidateQueries({ queryKey: ORGANISATIONEN_KEY });
+    },
+  });
+}
+
+/** Laedt eine einzelne Organisation. */
+export function useOrganisation(orgId: string) {
+  const { authFetch } = useAuth();
+
+  return useQuery({
+    queryKey: organisationKey(orgId),
+    queryFn: () => authFetch<Organisation>(`/organizations/${orgId}`),
+    // Bei 404 NICHT wiederholen. Das ist kein Netzwerkfehler, sondern eine
+    // Aussage: "Fuer dich existiert diese Organisation nicht." Ein
+    // Wiederholungsversuch aendert daran nichts und verzoegert nur die
+    // Fehlermeldung. (Die Standardregel in providers.tsx faengt bereits alle
+    // ApiFehler ab; das steht hier trotzdem, damit die Absicht sichtbar ist.)
+    retry: false,
+  });
+}
+
+/** Laedt die Mitglieder einer Organisation. */
+export function useMitglieder(orgId: string) {
+  const { authFetch } = useAuth();
+
+  return useQuery({
+    queryKey: mitgliederKey(orgId),
+    queryFn: () => authFetch<Mitglied[]>(`/organizations/${orgId}/members`),
+    retry: false,
+  });
+}
+
+/**
+ * Aendert die Rolle eines Mitglieds.
+ *
+ * ============================================================================
+ * WARUM HIER DER GANZE PRAEFIX ENTWERTET WIRD
+ * ============================================================================
+ * Naheliegend waere, nur die Mitgliederliste neu zu laden. Das reicht nicht:
+ * Aendert ein OWNER seine EIGENE Rolle (etwa nachdem er einen zweiten
+ * ernannt hat), aendert sich damit auch, was er auf dieser Seite darf - und
+ * die Rolle steht ausserdem in der Uebersichtsliste.
+ *
+ * `ORGANISATIONEN_KEY` als Praefix entwertet beides auf einmal.
+ */
+export function useRolleAendern(orgId: string) {
+  const { authFetch } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: Rolle }) =>
+      authFetch<Mitglied>(`/organizations/${orgId}/members/${userId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ORGANISATIONEN_KEY });
+    },
+  });
+}
+
+/** Entfernt ein Mitglied - mit der eigenen ID bedeutet das "verlassen". */
+export function useMitgliedEntfernen(orgId: string) {
+  const { authFetch } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (userId: string) =>
+      authFetch<void>(`/organizations/${orgId}/members/${userId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ORGANISATIONEN_KEY });
     },
   });
