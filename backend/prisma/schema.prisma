@@ -40,6 +40,10 @@ model User {
 
   refreshTokens RefreshToken[]
   memberships   Membership[]
+  /// Einladungen, die dieser Nutzer AUSGESPROCHEN hat - nicht die an ihn
+  /// gerichteten. Letztere haengen an einer E-Mail-Adresse, nicht an einem
+  /// Konto, weil es das Konto beim Einladen noch nicht geben muss.
+  sentInvitations Invitation[]
 
   @@map("users")
 }
@@ -79,8 +83,86 @@ model Organization {
   updatedAt DateTime @updatedAt
 
   memberships Membership[]
+  invitations Invitation[]
 
   @@map("organizations")
+}
+
+/// Eine ausgesprochene Einladung in eine Organisation.
+///
+/// ============================================================================
+/// WARUM DIE EINLADUNG AN EINE ADRESSE GEHT UND NICHT AN EINEN NUTZER
+/// ============================================================================
+/// Zum Zeitpunkt der Einladung gibt es das Konto moeglicherweise noch gar
+/// nicht - das ist der Normalfall bei einem neuen Kollegen. Ein
+/// Fremdschluessel auf `users` waere also nicht setzbar.
+///
+/// Der zweite, wichtigere Grund: Wuerde beim Einladen nachgeschlagen, ob es
+/// den Nutzer gibt, waeren die beiden Faelle von aussen unterscheidbar - und
+/// jeder ADMIN haette einen Dienst, mit dem er pruefen kann, wer bei DevBoard
+/// ein Konto hat. Die Adresse als Text zu speichern haelt beide Faelle gleich.
+model Invitation {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  /// Immer kleingeschrieben - dieselbe Normalisierung wie bei `users.email`.
+  /// Sonst wuerde eine Einladung an "Max@example.com" nicht zum Konto
+  /// "max@example.com" passen, obwohl es dieselbe Adresse ist.
+  email String
+
+  /// Nur ADMIN oder MEMBER. OWNER wird NIE per Einladung vergeben, sondern
+  /// ausschliesslich durch Ernennen eines bestehenden Mitglieds - sonst
+  /// koennte ein ADMIN ueber den Umweg der Einladung Rechte vergeben, die er
+  /// selbst nicht hat. Erzwungen wird das im Zod-Schema, nicht hier: Das Enum
+  /// ist dasselbe wie bei der Mitgliedschaft, und eine eigene Kopie mit zwei
+  /// Werten waere eine zweite Wahrheit.
+  role Role
+
+  /// NIE der Token selbst, sondern sein SHA-256-Hash - dasselbe Prinzip wie
+  /// bei den Refresh-Token. Bei einem Datenbankleck waeren gespeicherte
+  /// Rohwerte sofort verwendbare Zugaenge zu fremden Organisationen.
+  ///
+  /// SHA-256 statt argon2, weil der Token aus 256 Bit Zufall besteht und kein
+  /// erratbares Passwort ist - gegen Durchprobieren muss nichts gebremst
+  /// werden.
+  tokenHash String @unique
+
+  /// Wer eingeladen hat. Nur zur Nachvollziehbarkeit in der Mitgliederliste.
+  ///
+  /// SetNull statt Cascade: Verlaesst der Einladende das Unternehmen und sein
+  /// Konto wird geloescht, soll die Einladung nicht mitverschwinden - sie ist
+  /// bereits verschickt und jemand wartet darauf. Die Herkunftsangabe geht
+  /// verloren, die Einladung bleibt gueltig.
+  invitedById String? @db.Uuid
+  invitedBy   User?   @relation(fields: [invitedById], references: [id], onDelete: SetNull)
+
+  expiresAt DateTime
+
+  /// Gesetzt, sobald die Einladung eingeloest wurde. Die Zeile wird NICHT
+  /// geloescht: Nur so laesst sich eine zweite Einlosung desselben Tokens
+  /// als solche erkennen, statt sie von einer erfundenen zu nicht
+  /// unterscheiden - dasselbe Argument wie bei den Refresh-Token.
+  acceptedAt DateTime?
+
+  /// Gesetzt, wenn zurueckgezogen oder durch eine neuere Einladung an
+  /// dieselbe Adresse ersetzt.
+  revokedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  /// Fuer "alle offenen Einladungen dieser Organisation" (Verwaltungsansicht)
+  /// und fuer das Entwerten aelterer Einladungen an dieselbe Adresse.
+  ///
+  /// KEIN UNIQUE: Sauber waere ein PARTIELLER Unique-Index ueber
+  /// (organizationId, email) WHERE acceptedAt IS NULL AND revokedAt IS NULL -
+  /// also "hoechstens eine OFFENE Einladung je Adresse". Genau das kann Prisma
+  /// nicht deklarieren. Ein voller Unique-Index waere falsch: Er wuerde eine
+  /// zweite Einladung nach Ablauf der ersten verhindern. Durchgesetzt wird die
+  /// Regel deshalb im Service; der Index ist in 06_BACKLOG.md vermerkt.
+  @@index([organizationId, email])
+  @@map("invitations")
 }
 
 /// Die Zugehoerigkeit eines Nutzers zu einer Organisation - MIT seiner Rolle.
