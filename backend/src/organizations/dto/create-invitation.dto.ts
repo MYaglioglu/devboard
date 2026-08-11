@@ -33,7 +33,7 @@ export const createInvitationSchema = z.object({
     // obwohl es dieselbe Adresse ist - der Vergleich beim Annehmen ist
     // zeichengenau.
     .toLowerCase()
-    .pipe(z.email('Bitte eine gueltige E-Mail-Adresse angeben'))
+    .pipe(z.email('Bitte eine gültige E-Mail-Adresse angeben'))
     .pipe(z.string().max(255, 'E-Mail-Adresse ist zu lang')),
 
   role: z.enum([Role.ADMIN, Role.MEMBER], {

@@ -94,7 +94,7 @@ export class RefreshTokenService {
     });
 
     if (!vorhanden) {
-      throw new UnauthorizedException('Sitzung ungueltig');
+      throw new UnauthorizedException('Sitzung ungültig');
     }
 
     if (vorhanden.revokedAt !== null) {
@@ -104,7 +104,7 @@ export class RefreshTokenService {
         `Wiederverwendeter Refresh-Token erkannt, Familie ${vorhanden.familyId} wird widerrufen`,
       );
       await this.widerrufeFamilie(vorhanden.familyId);
-      throw new UnauthorizedException('Sitzung ungueltig');
+      throw new UnauthorizedException('Sitzung ungültig');
     }
 
     if (vorhanden.expiresAt <= new Date()) {

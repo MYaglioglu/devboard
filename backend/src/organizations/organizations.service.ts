@@ -421,7 +421,7 @@ export class OrganizationsService {
       if (!entferntSichSelbst) {
         if (eigeneRolle !== Role.OWNER && eigeneRolle !== Role.ADMIN) {
           throw new ForbiddenException(
-            'Nur OWNER und ADMIN duerfen Mitglieder entfernen',
+            'Nur OWNER und ADMIN dürfen Mitglieder entfernen',
           );
         }
 
@@ -477,7 +477,7 @@ export class OrganizationsService {
       // erfolgreich. Genau dafuer gibt es 409.
       throw new ConflictException(
         'Die Organisation braucht mindestens einen OWNER. ' +
-          'Ernennen Sie zuerst einen anderen Eigentuemer.',
+          'Ernennen Sie zuerst einen anderen Eigentümer.',
       );
     }
   }

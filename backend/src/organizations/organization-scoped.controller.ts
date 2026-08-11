@@ -33,7 +33,7 @@ import type { Mitglied, OrganisationMitRolle } from './organizations.service';
  * einem 500er fuer eine schlicht falsche Eingabe. Am Rand validiert ergibt
  * das ein sauberes 400.
  */
-const nutzerIdSchema = z.uuid('Ungueltige Nutzer-ID');
+const nutzerIdSchema = z.uuid('Ungültige Nutzer-ID');
 
 /**
  * Alles, was INNERHALB einer Organisation stattfindet.
