@@ -76,14 +76,71 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setNutzer(null);
   }, []);
 
-  /** Holt einen neuen Access-Token ueber das Refresh-Cookie. */
+  /**
+   * Die gerade laufende Erneuerung - oder `null`, wenn keine laeuft.
+   *
+   * `useRef` und nicht `useState`: Das ist kein Anzeigezustand, und eine
+   * Aenderung soll kein Neuzeichnen ausloesen.
+   */
+  const laufendeErneuerung = useRef<Promise<boolean> | null>(null);
+
+  /**
+   * Holt einen neuen Access-Token ueber das Refresh-Cookie.
+   *
+   * ==========================================================================
+   * WARUM GLEICHZEITIGE AUFRUFE ZUSAMMENGEFASST WERDEN MUESSEN
+   * ==========================================================================
+   * Diese Funktion darf NIE zweimal parallel laufen. Der Grund liegt im
+   * Backend: Refresh-Token werden ROTIERT, und ein bereits verbrauchter Token
+   * gilt als Diebstahlverdacht - dann wird die ganze Token-FAMILIE widerrufen.
+   *
+   * Ohne Zusammenfassung passiert bei zwei gleichzeitigen Aufrufen eines von
+   * zwei Dingen, je nach Zeitablauf:
+   *
+   *   PARALLEL   Beide lesen den Token, bevor der andere ihn entwertet. Beide
+   *              bekommen einen neuen. Das Cookie haelt nur EINEN davon - der
+   *              andere bleibt 30 Tage lang gueltig, ohne dass ihn jemand
+   *              besitzt. Genau die verwaisten Token, die Rotation verhindern
+   *              soll.
+   *
+   *   VERSETZT   Der zweite legt den bereits entwerteten Token vor. Die
+   *              Wiederverwendungs-Erkennung schlaegt an, die ganze Familie
+   *              wird widerrufen - und der Nutzer fliegt ohne eigenes Zutun
+   *              aus der Sitzung.
+   *
+   * Beides ist in der Anwendung passiert und wurde erst beim Blick in die
+   * Netzwerkansicht sichtbar. Siehe 17_MISTAKES_AND_LESSONS.md.
+   *
+   * Die Loesung heisst SINGLE FLIGHT: Der erste Aufrufer startet die Anfrage,
+   * alle weiteren bekommen DASSELBE Promise zurueck und warten mit. Es gibt
+   * pro Zeitpunkt hoechstens eine Erneuerung - und alle erhalten ihr Ergebnis.
+   *
+   * Wichtig ist das `finally`: Ohne das Zuruecksetzen bliebe das alte Promise
+   * fuer immer stehen, und eine spaetere, echte Erneuerung wuerde nie
+   * ausgefuehrt.
+   */
   const erneuere = useCallback(async (): Promise<boolean> => {
+    // Laeuft bereits eine? Dann mit anhaengen statt eine zweite starten.
+    if (laufendeErneuerung.current) {
+      return laufendeErneuerung.current;
+    }
+
+    const versuch = (async () => {
+      try {
+        uebernehme(await api<AuthAntwort>('/auth/refresh', { method: 'POST' }));
+        return true;
+      } catch {
+        verwerfe();
+        return false;
+      }
+    })();
+
+    laufendeErneuerung.current = versuch;
+
     try {
-      uebernehme(await api<AuthAntwort>('/auth/refresh', { method: 'POST' }));
-      return true;
-    } catch {
-      verwerfe();
-      return false;
+      return await versuch;
+    } finally {
+      laufendeErneuerung.current = null;
     }
   }, [uebernehme, verwerfe]);
 
