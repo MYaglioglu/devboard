@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { OrganizationScopedController } from './organization-scoped.controller';
 import { OrganizationsController } from './organizations.controller';
 import { OrganizationsService } from './organizations.service';
 
@@ -17,7 +18,7 @@ import { OrganizationsService } from './organizations.service';
  * genau das ist Kapselung auf Modulebene.
  */
 @Module({
-  controllers: [OrganizationsController],
+  controllers: [OrganizationsController, OrganizationScopedController],
   providers: [OrganizationsService],
 })
 export class OrganizationsModule {}

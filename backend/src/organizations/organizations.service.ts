@@ -1,8 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import { Role } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateOrganizationDto } from './dto/create-organization.dto';
+import type { UpdateOrganizationDto } from './dto/update-organization.dto';
 
 /**
  * Eine Organisation aus der Sicht eines bestimmten Nutzers.
@@ -20,6 +21,26 @@ export interface OrganisationMitRolle {
   name: string;
   role: Role;
   createdAt: Date;
+}
+
+/**
+ * Ein Mitglied einer Organisation.
+ *
+ * Der Schluessel heisst `userId`, nicht `id`: Die Mitgliedschaft hat eine
+ * eigene ID, und die beiden zu verwechseln waere ein teurer Fehler. Was der
+ * Client hier braucht, ist die Nutzer-ID - mit ihr adressiert er das Mitglied
+ * in `DELETE /organizations/:orgId/members/:userId`.
+ *
+ * `mitgliedSeit` ist bewusst das Datum der MITGLIEDSCHAFT, nicht das des
+ * Kontos. Wann sich jemand bei DevBoard registriert hat, geht seine Kollegen
+ * nichts an.
+ */
+export interface Mitglied {
+  userId: string;
+  email: string;
+  name: string | null;
+  role: Role;
+  mitgliedSeit: Date;
 }
 
 @Injectable()
@@ -164,5 +185,117 @@ export class OrganizationsService {
       createdAt: eintrag.organization.createdAt,
       role: eintrag.role,
     }));
+  }
+
+  /**
+   * Liefert eine einzelne Organisation.
+   *
+   * ==========================================================================
+   * WARUM HIER KEIN NUTZERFILTER STEHT - UND WARUM DAS TROTZDEM SICHER IST
+   * ==========================================================================
+   * Diese Methode laedt allein ueber die `organizationId`. Nach allem, was in
+   * diesem Sprint ueber vergessene Mandantenfilter gesagt wurde, sieht das
+   * falsch aus. Es ist der eine Fall, in dem es richtig ist:
+   *
+   * Die `orgId` stammt NICHT aus der Anfrage, sondern aus der Mitgliedschaft,
+   * die der MitgliedschaftsGuard bereits geprueft hat. Der Controller reicht
+   * `mitgliedschaft.organizationId` herein, nicht den Route-Parameter. Damit
+   * ist der Wert selbst schon das Ergebnis der Autorisierung.
+   *
+   * Das ist eine BEDINGUNG an den Aufrufer und deshalb hier festgehalten. Wer
+   * diese Methode einmal mit einer ungeprueften ID aufruft, hebt den Schutz
+   * auf - und der Code saehe dabei voellig unauffaellig aus.
+   *
+   * Die Alternative waere, `userId` sicherheitshalber noch einmal
+   * mitzufiltern. Dagegen spricht, dass zwei Stellen dann dieselbe Regel
+   * durchsetzen und die zweite bei einer Aenderung leicht vergessen wird -
+   * ein Schutz, auf den man sich halb verlaesst, ist schlechter als einer,
+   * dessen Ort eindeutig ist.
+   */
+  async findeEine(
+    organizationId: string,
+    eigeneRolle: Role,
+  ): Promise<OrganisationMitRolle> {
+    const organisation = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { id: true, name: true, createdAt: true },
+    });
+
+    if (!organisation) {
+      // Kann praktisch nicht auftreten - der Guard hat eine Mitgliedschaft
+      // gefunden, und die haengt per Fremdschluessel an einer existierenden
+      // Organisation. Denkbar nur, wenn zwischen Guard und Service geloescht
+      // wird. Ein 500er waere hier die schlechtere Antwort.
+      throw new NotFoundException('Organisation nicht gefunden');
+    }
+
+    return { ...organisation, role: eigeneRolle };
+  }
+
+  /**
+   * Liefert die Mitglieder einer Organisation.
+   *
+   * Auch hier gilt: `organizationId` kommt aus der geprueften Mitgliedschaft.
+   *
+   * ==========================================================================
+   * WAS VON DEN NUTZERN HERAUSGEGEBEN WIRD - UND WAS NICHT
+   * ==========================================================================
+   * Kollegen sollen einander erkennen, deshalb Name und E-Mail-Adresse. NICHT
+   * dabei: `passwordHash` (versteht sich), aber auch `createdAt` des KONTOS -
+   * wann sich jemand bei DevBoard registriert hat, geht seine Kollegen nichts
+   * an. Ausgegeben wird stattdessen `createdAt` der MITGLIEDSCHAFT: seit wann
+   * er in dieser Organisation ist. Das ist die Angabe, die hier fachlich
+   * gemeint ist.
+   *
+   * `select` statt `include`: `include` holt den ganzen Nutzer samt Hash und
+   * ueberlaesst es dem Code, hinterher aufzuraeumen. Wer Felder nachtraeglich
+   * entfernt, vergisst irgendwann eines - dieselbe Regel wie im AuthService.
+   */
+  async findeMitglieder(organizationId: string): Promise<Mitglied[]> {
+    const mitgliedschaften = await this.prisma.membership.findMany({
+      where: { organizationId },
+      select: {
+        role: true,
+        createdAt: true,
+        user: { select: { id: true, email: true, name: true } },
+      },
+      // Aeltestes zuerst - der Ersteller steht damit oben. Ohne `orderBy` darf
+      // PostgreSQL die Zeilen in beliebiger Reihenfolge liefern.
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return mitgliedschaften.map((eintrag) => ({
+      userId: eintrag.user.id,
+      email: eintrag.user.email,
+      name: eintrag.user.name,
+      role: eintrag.role,
+      mitgliedSeit: eintrag.createdAt,
+    }));
+  }
+
+  /**
+   * Benennt eine Organisation um.
+   *
+   * Wer das darf, entscheidet der @Rollen()-Decorator am Controller, nicht
+   * dieser Service. Die Trennung ist bewusst: Rollenpruefung ist eine Frage
+   * des ZUGANGS und gehoert damit vor den Controller. Fachliche Regeln, die
+   * unabhaengig vom Zugangsweg gelten - "die letzte OWNER-Mitgliedschaft darf
+   * nicht verschwinden" - gehoeren in den Service, weil es mehrere Wege gibt,
+   * sie zu verletzen. Das kommt in der naechsten Scheibe.
+   */
+  async benenneUm(
+    organizationId: string,
+    eigeneRolle: Role,
+    daten: UpdateOrganizationDto,
+  ): Promise<OrganisationMitRolle> {
+    const organisation = await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: { name: daten.name },
+      select: { id: true, name: true, createdAt: true },
+    });
+
+    this.logger.log(`Organisation umbenannt: ${organisation.id}`);
+
+    return { ...organisation, role: eigeneRolle };
   }
 }

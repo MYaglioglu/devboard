@@ -10,6 +10,7 @@ import { AccessTokenGuard } from './auth/guards/access-token.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { validateEnv } from './config/env.schema';
 import { HealthModule } from './health/health.module';
+import { MitgliedschaftsGuard } from './organizations/guards/membership.guard';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import type { Env } from './config/env.schema';
@@ -97,6 +98,25 @@ import type { Env } from './config/env.schema';
     //
     // SECURE BY DEFAULT: Ein Versehen muss zur sicheren Seite ausschlagen.
     { provide: APP_GUARD, useClass: AccessTokenGuard },
+
+    // ========================================================================
+    // AUTHENTIFIZIERUNG VOR AUTORISIERUNG - DIE REIHENFOLGE IST ZWINGEND
+    // ========================================================================
+    // Dieser Guard braucht `anfrage.nutzer`, und das setzt der AccessTokenGuard
+    // eine Zeile darueber. Stuende er davor, liefe er ohne angemeldeten Nutzer
+    // - er wirft dann ausdruecklich einen Fehler, statt stillschweigend
+    // durchzuwinken.
+    //
+    // Er greift NUR bei Routen mit einem :orgId-Parameter. Laut ADR-008 steht
+    // der Mandant immer im Pfad, also gilt:
+    //
+    //     Route hat :orgId  <=>  Route betrifft einen Mandanten
+    //
+    // Damit gibt es keine Markierung, die man vergessen koennte - anders als
+    // bei einem @UseGuards pro Route. Der Parametername kommt aus der
+    // Konstanten ORG_PARAM, die auch die Controller benutzen; sonst koennte
+    // ein Tippfehler im Pfad den Guard ins Leere greifen lassen.
+    { provide: APP_GUARD, useClass: MitgliedschaftsGuard },
 
     // Einheitliche Fehlerantworten - und keine Stacktraces nach aussen.
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
