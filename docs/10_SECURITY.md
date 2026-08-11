@@ -207,6 +207,44 @@ Unit-Test und vier E2E-Tests schlagen fehl. Ein grüner Test beweist nur, dass e
 > Flow ohne E-Mail-Versand benutzbar ist. Korrekt wäre: ausschließlich per E-Mail, sodass der
 > Einladende ihn nie sieht und die Einladung nicht selbst einlösen kann. Geparkt in `06_BACKLOG.md`.
 
+### Frontend-Einladungen und Weiterleitung (Sprint 2, Scheibe 9) – umgesetzt
+
+**Open-Redirect-Schutz.** Wer einen Einladungslink öffnet, ist meist nicht angemeldet. Die
+Anmeldeseite merkt sich das Ziel über `?weiter=` – und **prüft** es, statt ihm zu folgen:
+
+```ts
+if (!/^\/(?![/\])/.test(weiter)) return ersatz;   // genau ein führender Schrägstrich
+```
+
+Ohne diese Prüfung bestimmte der Absender des Links, wohin der Nutzer nach der Anmeldung geschickt
+wird:
+
+```
+/login?weiter=https://devb0ard-anmeldung.example/login
+```
+
+Der Nutzer sieht eine **echte** DevBoard-Adresse, meldet sich an – und landet auf einer nachgebauten
+Seite, die ihn erneut nach seinen Zugangsdaten fragt. Weil er den Anmeldevorgang selbst begonnen
+hat, wirkt das plausibel. Eine Open-Redirect-Lücke stiehlt selbst nichts; sie verleiht einer
+Phishing-Seite die Glaubwürdigkeit der echten Domain.
+
+Abgewiesen werden: absolute Adressen, **protokollrelative** (`//fremder.host` – der Klassiker, den
+eine Prüfung auf „beginnt mit `/`" durchlässt), Backslash-Varianten und Skript-Schemata. Eine
+Positivliste ist hier sicherer als eine Sperrliste: Wer verbotene Muster aufzählt, vergisst eines.
+
+Nachgewiesen: acht Tests auf der Hilfsfunktion plus einer auf Seitenebene; mit entfernter Prüfung
+schlagen sechs davon fehl.
+
+**Einmalige Anzeige des Einladungstokens.** Das Backend gibt den Rohwert genau einmal zurück; die
+Oberfläche zeigt ihn in einem auffälligen Kasten, der ausdrücklich geschlossen werden muss. Ein
+Kasten, der von selbst verschwindet, wäre hier eine Falle – der Wert ist danach unwiederbringlich
+weg. Dieselbe Interaktion wie bei frisch erzeugten API-Schlüsseln bei GitHub oder Stripe, aus
+derselben Ursache.
+
+**Die Einlöseseite trägt bewusst keinen Anmeldezwang.** `<Geschuetzt>` würde den Besucher auf
+`/login` werfen und dabei den Token aus der Adresszeile verlieren. Sie behandelt den abgemeldeten
+Fall selbst und reicht das Ziel geprüft weiter.
+
 ### Sprint 5 – Webhooks
 - HMAC-Signaturprüfung eingehender GitHub-Events, ungültige Signaturen werden abgewiesen
 - Idempotenz gegen mehrfach zugestellte Events
