@@ -209,7 +209,7 @@ describe('Einladungsbereich', () => {
   it('zeigt die Serverbegruendung bei einem Fehlschlag', async () => {
     const nutzer = userEvent.setup();
     einladen.mockRejectedValue(
-      new ApiFehler('Als ADMIN koennen Sie nur MEMBER einladen', 403),
+      new ApiFehler('Als ADMIN können Sie nur MEMBER einladen', 403),
     );
 
     render(<EinladungenBereich orgId="org-1" eigeneRolle="OWNER" />);

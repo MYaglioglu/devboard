@@ -31,7 +31,7 @@ import { sichererPfad } from '@/lib/weiterleitung';
  * nicht Kontrolle.
  */
 const anmeldeSchema = z.object({
-  email: z.email('Bitte eine gueltige E-Mail-Adresse angeben'),
+  email: z.email('Bitte eine gültige E-Mail-Adresse angeben'),
   password: z.string().min(1, 'Bitte ein Passwort angeben'),
 });
 
@@ -96,7 +96,7 @@ function Formular() {
       setFehler(
         problem instanceof ApiFehler
           ? problem.message
-          : 'Anmeldung derzeit nicht moeglich',
+          : 'Anmeldung derzeit nicht möglich',
       );
     }
   });

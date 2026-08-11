@@ -11,6 +11,7 @@ const useOrganisation = vi.fn();
 const useMitglieder = vi.fn();
 const rolleAendern = vi.fn();
 const entfernen = vi.fn();
+const umbenennen = vi.fn();
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ orgId: 'org-1' }),
@@ -37,6 +38,10 @@ vi.mock('@/lib/organisationen', () => ({
   useMitglieder: () => useMitglieder() as unknown,
   useRolleAendern: () => ({ mutateAsync: rolleAendern, isPending: false }),
   useMitgliedEntfernen: () => ({ mutateAsync: entfernen, isPending: false }),
+  useOrganisationUmbenennen: () => ({
+    mutateAsync: umbenennen,
+    isPending: false,
+  }),
 }));
 
 const organisation = (rolle: Organisation['role'] = 'OWNER'): Organisation => ({
@@ -78,6 +83,92 @@ describe('Organisationsdetailseite', () => {
     entfernen.mockReset();
     rolleAendern.mockResolvedValue(mitglied());
     entfernen.mockResolvedValue(undefined);
+    umbenennen.mockReset();
+    umbenennen.mockResolvedValue(organisation());
+  });
+
+  describe('Umbenennen', () => {
+    it('zeigt einem MEMBER keinen Umbenennen-Knopf', () => {
+      zeige('MEMBER', [mitglied({ role: 'MEMBER' })]);
+
+      render(<OrganisationSeite />);
+
+      // Benutzerfuehrung, kein Schutz - das Backend antwortet ohnehin mit 403.
+      expect(
+        screen.queryByRole('button', { name: 'Umbenennen' }),
+      ).not.toBeInTheDocument();
+    });
+
+    it('oeffnet das Formular erst auf Klick', async () => {
+      const nutzer = userEvent.setup();
+      zeige('ADMIN', [mitglied({ role: 'ADMIN' })]);
+
+      render(<OrganisationSeite />);
+
+      // Ein dauerhaft sichtbares Feld an der Stelle einer Ueberschrift laedt
+      // zum versehentlichen Aendern ein.
+      expect(
+        screen.queryByLabelText('Name der Organisation'),
+      ).not.toBeInTheDocument();
+
+      await nutzer.click(screen.getByRole('button', { name: 'Umbenennen' }));
+      expect(screen.getByLabelText('Name der Organisation')).toHaveValue(
+        'Acme GmbH',
+      );
+    });
+
+    it('speichert den neuen Namen', async () => {
+      const nutzer = userEvent.setup();
+      zeige('OWNER', [mitglied()]);
+
+      render(<OrganisationSeite />);
+      await nutzer.click(screen.getByRole('button', { name: 'Umbenennen' }));
+
+      const feld = screen.getByLabelText('Name der Organisation');
+      await nutzer.clear(feld);
+      await nutzer.type(feld, 'Acme AG');
+      await nutzer.click(screen.getByRole('button', { name: 'Speichern' }));
+
+      await waitFor(() => expect(umbenennen).toHaveBeenCalledWith('Acme AG'));
+    });
+
+    it('lehnt einen zu kurzen Namen ab, ohne den Server zu fragen', async () => {
+      const nutzer = userEvent.setup();
+      zeige('OWNER', [mitglied()]);
+
+      render(<OrganisationSeite />);
+      await nutzer.click(screen.getByRole('button', { name: 'Umbenennen' }));
+
+      const feld = screen.getByLabelText('Name der Organisation');
+      await nutzer.clear(feld);
+      await nutzer.type(feld, 'A');
+      await nutzer.click(screen.getByRole('button', { name: 'Speichern' }));
+
+      expect(
+        await screen.findByText(/mindestens 2 Zeichen/i),
+      ).toBeInTheDocument();
+      expect(umbenennen).not.toHaveBeenCalled();
+    });
+
+    it('verwirft die Eingabe beim Abbrechen', async () => {
+      const nutzer = userEvent.setup();
+      zeige('OWNER', [mitglied()]);
+
+      render(<OrganisationSeite />);
+      await nutzer.click(screen.getByRole('button', { name: 'Umbenennen' }));
+
+      const feld = screen.getByLabelText('Name der Organisation');
+      await nutzer.clear(feld);
+      await nutzer.type(feld, 'Verworfen');
+      await nutzer.click(screen.getByRole('button', { name: 'Abbrechen' }));
+
+      // Beim erneuten Oeffnen steht wieder der aktuelle Name da, nicht die
+      // verworfene Eingabe von vorhin.
+      await nutzer.click(screen.getByRole('button', { name: 'Umbenennen' }));
+      expect(screen.getByLabelText('Name der Organisation')).toHaveValue(
+        'Acme GmbH',
+      );
+    });
   });
 
   /**

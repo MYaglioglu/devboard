@@ -13,6 +13,7 @@ import {
   useMitglieder,
   useMitgliedEntfernen,
   useOrganisation,
+  useOrganisationUmbenennen,
   useRolleAendern,
 } from '@/lib/organisationen';
 import type { Mitglied, Rolle } from '@/lib/organisationen';
@@ -90,9 +91,11 @@ function Inhalt() {
         >
           ← Übersicht
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">
-          {organisation.data.name}
-        </h1>
+        <NameBereich
+          orgId={orgId}
+          name={organisation.data.name}
+          eigeneRolle={organisation.data.role}
+        />
         <p className="mt-1 text-sm text-zinc-500">
           Ihre Rolle: {ROLLEN_TEXT[organisation.data.role]}
         </p>
@@ -124,6 +127,123 @@ function Inhalt() {
 
       <EinladungenBereich orgId={orgId} eigeneRolle={organisation.data.role} />
     </main>
+  );
+}
+
+/**
+ * Zeigt den Namen - und laesst ihn aendern, wenn die Rolle es hergibt.
+ *
+ * ============================================================================
+ * WARUM DAS FORMULAR ERST AUF KLICK ERSCHEINT
+ * ============================================================================
+ * Ein dauerhaft sichtbares Eingabefeld an der Stelle einer Ueberschrift laedt
+ * zum versehentlichen Aendern ein - besonders, weil hier niemand ein Formular
+ * erwartet. Der Umweg ueber "Umbenennen" macht aus einer Aenderung eine
+ * ABSICHT.
+ *
+ * Fuer MEMBER gibt es den Knopf nicht. Das ist Benutzerfuehrung: Das Backend
+ * antwortet ohnehin mit 403 (@Rollen(OWNER, ADMIN) am Endpoint).
+ */
+function NameBereich({
+  orgId,
+  name,
+  eigeneRolle,
+}: {
+  orgId: string;
+  name: string;
+  eigeneRolle: Rolle;
+}) {
+  const umbenennen = useOrganisationUmbenennen(orgId);
+  const [bearbeitet, setBearbeitet] = useState(false);
+  const [entwurf, setEntwurf] = useState(name);
+  const [fehler, setFehler] = useState<string | null>(null);
+
+  const darfUmbenennen = eigeneRolle === 'OWNER' || eigeneRolle === 'ADMIN';
+
+  const speichern = async (ereignis: React.FormEvent) => {
+    ereignis.preventDefault();
+    setFehler(null);
+
+    // Dieselbe Regel wie im Backend-Schema - hier aus Bequemlichkeit, dort
+    // als Sicherheit. Ohne sie ginge eine leere Anfrage bis zum Server.
+    if (entwurf.trim().length < 2) {
+      setFehler('Der Name muss mindestens 2 Zeichen lang sein');
+      return;
+    }
+
+    try {
+      await umbenennen.mutateAsync(entwurf.trim());
+      setBearbeitet(false);
+    } catch (problem) {
+      setFehler(
+        problem instanceof ApiFehler
+          ? problem.message
+          : 'Umbenennen derzeit nicht möglich',
+      );
+    }
+  };
+
+  if (!bearbeitet) {
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">{name}</h1>
+        {darfUmbenennen && (
+          <button
+            type="button"
+            onClick={() => {
+              // Der Entwurf startet beim aktuellen Namen - sonst stuende beim
+              // zweiten Oeffnen noch die verworfene Eingabe von vorhin da.
+              setEntwurf(name);
+              setFehler(null);
+              setBearbeitet(true);
+            }}
+            className="rounded-lg border border-zinc-300 px-2 py-1 text-xs
+              transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+          >
+            Umbenennen
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <form
+      onSubmit={(e) => void speichern(e)}
+      className="mt-2 flex flex-col gap-2"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <label htmlFor="organisationsname" className="sr-only">
+          Name der Organisation
+        </label>
+        <input
+          id="organisationsname"
+          value={entwurf}
+          onChange={(ereignis) => setEntwurf(ereignis.target.value)}
+          autoFocus
+          className="rounded-lg border border-zinc-300 px-3 py-2 text-lg font-semibold
+            outline-none focus:ring-2 focus:ring-emerald-500/40
+            dark:border-zinc-700 dark:bg-zinc-900"
+        />
+        <button
+          type="submit"
+          disabled={umbenennen.isPending}
+          className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white
+            transition hover:bg-emerald-700 disabled:opacity-50"
+        >
+          Speichern
+        </button>
+        <button
+          type="button"
+          onClick={() => setBearbeitet(false)}
+          className="rounded-lg border border-zinc-300 px-3 py-2 text-sm
+            transition hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-900"
+        >
+          Abbrechen
+        </button>
+      </div>
+      {fehler && <Hinweis>{fehler}</Hinweis>}
+    </form>
   );
 }
 

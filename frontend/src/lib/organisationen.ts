@@ -284,3 +284,22 @@ export function useEinladungAnnehmen() {
     },
   });
 }
+
+/** Benennt eine Organisation um. Nur OWNER und ADMIN. */
+export function useOrganisationUmbenennen(orgId: string) {
+  const { authFetch } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (name: string) =>
+      authFetch<Organisation>(`/organizations/${orgId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+      }),
+    onSuccess: () => {
+      // Der Name steht auf der Detailseite UND in der Uebersichtsliste - der
+      // gemeinsame Praefix entwertet beides auf einmal.
+      void queryClient.invalidateQueries({ queryKey: ORGANISATIONEN_KEY });
+    },
+  });
+}

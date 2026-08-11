@@ -23,11 +23,11 @@ import { sichererPfad } from '@/lib/weiterleitung';
  */
 const registrierSchema = z.object({
   name: z.string().trim().max(100).optional(),
-  email: z.email('Bitte eine gueltige E-Mail-Adresse angeben'),
+  email: z.email('Bitte eine gültige E-Mail-Adresse angeben'),
   password: z
     .string()
     .min(10, 'Mindestens 10 Zeichen')
-    .max(128, 'Hoechstens 128 Zeichen'),
+    .max(128, 'Höchstens 128 Zeichen'),
 });
 
 type RegistrierDaten = z.infer<typeof registrierSchema>;
@@ -77,7 +77,7 @@ function Formular() {
       setFehler(
         problem instanceof ApiFehler
           ? problem.message
-          : 'Registrierung derzeit nicht moeglich',
+          : 'Registrierung derzeit nicht möglich',
       );
     }
   });
