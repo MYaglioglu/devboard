@@ -65,6 +65,25 @@ Einladungs-Flow. Jede Datenabfrage wird auf die aktive Organisation eingeschrän
 Join-Tabellen mit zusätzlichen Attributen · warum „vergessener Tenant-Filter" die häufigste
 kritische Sicherheitslücke in B2B-SaaS ist.
 
+**Abgeschlossen am 11.08.2026** – zwei Wochen vor Plan, in zehn Scheiben:
+
+- [x] Datenmodell: `Organization`, `Membership`, Rollen-Enum (ADR-008: Mandant als Pfad-Parameter)
+- [x] Organisation anlegen und auflisten – erste Transaktion
+- [x] `MitgliedschaftsGuard` und `@Rollen()` – **erster 403**, erster 404 durch Mandantenfilter
+- [x] Mitgliederverwaltung mit Schutz der letzten `OWNER`-Mitgliedschaft (Zeilensperre)
+- [x] Einladungen mit gehashten Token, an eine Adresse gebunden
+- [x] Frontend: Liste, Anlegen, aktive Organisation
+- [x] Frontend: Detailseite mit Mitgliederverwaltung
+- [x] Frontend: Einladungen aussprechen und einlösen, Open-Redirect-Schutz
+- [x] Politur: Umlaute in nutzersichtbaren Meldungen, Umbenennen
+- [x] Zwischendurch behoben: doppelte Token-Erneuerung aus Sprint 1 (Single Flight)
+
+**284 Tests** (98 Backend-Unit, 105 Backend-E2E, 81 Frontend), CI grün.
+
+Drei Fehler wurden protokolliert – der veraltete Prisma-Client, ein Nebenläufigkeitstest, der nichts
+bewachte, und die doppelte Token-Erneuerung. Der letzte stammte aus Sprint 1 und wurde erst
+sichtbar, als die Anwendung tatsächlich gestartet wurde.
+
 ---
 
 ## Sprint 3 – Projekte, Tasks & Kanban-Board

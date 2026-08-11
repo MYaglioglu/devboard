@@ -8,6 +8,33 @@ Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Sprint 2 abgeschlossen** – Organisationen, Rollen und Mandantentrennung von der Datenbank bis
+  zur UI, 284 Tests
+- **Sprint 2, Scheibe 10:** Organisation umbenennen; Umlaute in nutzersichtbaren Fehlermeldungen
+  (Quelltext bleibt ASCII, die Oberfläche nicht)
+- **Sprint 2, Scheibe 9:** Einladungen aussprechen, zurückziehen und einlösen; einmalige Anzeige des
+  Tokens; `?weiter=` mit Open-Redirect-Schutz
+- **Sprint 2, Scheibe 8:** Detailseite mit Mitgliederverwaltung – Rollenwechsel, Entfernen,
+  Organisation verlassen
+- **Sprint 2, Scheibe 7:** Organisationsliste, Anlegen, aktive Organisation über `localStorage`
+- **Sprint 2, Scheibe 6:** Einladungs-Flow im Backend – Token nur als SHA-256-Hash, an eine
+  E-Mail-Adresse gebunden, keine User Enumeration
+- **Sprint 2, Scheibe 5:** Mitgliederverwaltung mit Schutz der letzten `OWNER`-Mitgliedschaft,
+  abgesichert über eine Zeilensperre
+- **Sprint 2, Scheibe 3:** `MitgliedschaftsGuard` und `@Rollen()` – erster `403` im Projekt,
+  fremde Organisation ⇒ `404` mit wortgleicher Meldung
+- **Sprint 2, Scheibe 2:** `POST` und `GET /organizations`, Ersteller wird `OWNER` in einer
+  Transaktion
+- **Sprint 2, Scheibe 1:** Datenmodell `Organization` und `Membership`, ADR-008 (Mandant als
+  Pfad-Parameter)
+
+### Behoben
+- **Doppelte Token-Erneuerung** (Sprint-1-Fehler): Gleichzeitige Aufrufe von `erneuere()` erzeugten
+  zwei gültige Refresh-Token derselben Familie – und lösten zeitweise die
+  Wiederverwendungs-Erkennung aus, die die ganze Familie widerrief. Behoben mit Single Flight.
+  Gefunden beim ersten Start der Anwendung seit Sprint 1, nicht von einem Test.
+
+### Hinzugefügt (Sprint 1)
 - **Sprint 1 abgeschlossen** – Authentifizierung von der Datenbank bis zur UI, 155 Tests
 - **Sprint 1, Scheibe 6:** Rate Limiting (5/min für Anmelden), Helmet-Security-Header,
   globaler Exception-Filter ohne Stacktraces nach außen
@@ -60,9 +87,9 @@ Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 | Sprint | Inhalt | Status |
 |---|---|---|
-| 0 | Fundament (Walking Skeleton) | in Arbeit – Schritte 1–2 von 5 fertig |
-| 1 | Authentifizierung & RBAC | offen |
-| 2 | Organisationen & Multi-Tenancy | offen |
+| 0 | Fundament (Walking Skeleton) | **abgeschlossen** 09.08.2026 |
+| 1 | Authentifizierung & RBAC | **abgeschlossen** 11.08.2026 |
+| 2 | Organisationen & Multi-Tenancy | **abgeschlossen** 11.08.2026 |
 | 3 | Projekte, Tasks & Kanban | offen |
 | 4 | Dashboard & Aktivitäts-Feed | offen |
 | 5 | GitHub-Integration | offen |

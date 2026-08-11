@@ -484,3 +484,71 @@ Keiner davon wäre beim Ausprobieren von Hand aufgefallen.
 **Sprint 2: Organisationen und Multi-Tenancy.** Der stärkste Senioritäts-Marker im ganzen Projekt:
 Autorisierung auf Datenebene, nicht nur am Endpoint. Und der erste `403` – bisher gab es
 ausschließlich `401`.
+
+---
+
+## Session 7 – 11.08.2026 · Sprint 2 abgeschlossen
+
+**Organisationen, Rollen, Mandantentrennung.** Zehn Scheiben, 284 Tests, zwei Wochen vor Plan.
+
+### Gelernt
+
+**Autorisierung passiert in der `WHERE`-Bedingung, nicht in einer Prüfung danach.** Das ist der
+Satz, der den ganzen Sprint zusammenfasst. `findUnique({ where: { id } })` und
+`findFirst({ where: { id, organizationId } })` liefern im Erfolgsfall dasselbe – der erste ist eine
+Sicherheitslücke, und keine normale Testsuite bemerkt den Unterschied.
+
+**Ein Guard entscheidet über den Zugang, nicht über den Einzelfall.** Er kennt den Anfragenden, aber
+nicht die Zielressource. „Sich selbst entfernen darf jeder" lässt sich deshalb nicht als
+`@Rollen()` ausdrücken – die Regel hängt daran, *wen* es trifft. Sobald das der Fall ist, gehört sie
+in den Service.
+
+**Eine Transaktion macht Schreibvorgänge unteilbar – nicht Lesen und Schreiben.** Unter
+`READ COMMITTED` sehen zwei gleichzeitige Anfragen beide „es gibt noch zwei Eigentümer" und
+entfernen beide einen. Gelöst mit `SELECT … FOR UPDATE` auf der Organisationszeile.
+
+**Statuscodes tragen Information, die man nicht verschenken darf.** `404` statt `403` bei fremder
+Organisation – und beide Fälle mit *wortgleicher* Meldung, sonst ist der vorsichtige Statuscode
+wieder aufgehoben.
+
+**Wer Rechte vergeben darf, hat sie.** Deshalb darf nur `OWNER` Rollen ändern, und ein `ADMIN` darf
+keinen `ADMIN` einladen – eine Einladung *ist* eine Rechtevergabe.
+
+**Ein zusammengesetzter Index hilft nur von links gelesen.** Der Extra-Index auf `memberships.userId`
+sah redundant aus und ist es nicht.
+
+### Schwierig
+
+**Nebenläufigkeit zu testen.** Mein erster Test – zwei gleichzeitige Austritte per `Promise.all` –
+war grün, auch **ohne** die Sperre. `Promise.all` erzeugt keine Verschränkung, nur die Möglichkeit
+einer. Erst ein Test, der den Konflikt *erzwingt* (eine gehaltene Sperre, gemessene Wartezeit),
+bewacht wirklich etwas.
+
+Daraus die allgemeinere Erkenntnis: **Ob ein Test etwas bewacht, sieht man ihm nicht an.** Man muss
+den Code kaputt machen und nachschauen. Das habe ich in diesem Sprint bei jeder sicherheitsrelevanten
+Stelle gemacht – Mandantenfilter, Guard, Open-Redirect-Schutz, Zeilensperre.
+
+**Der Fehler, den 155 grüne Tests nicht finden konnten.** Beim ersten Start der Anwendung seit
+Sprint 1 standen zwei `POST /auth/refresh` für einen Seitenaufruf in der Netzwerkansicht. Ergebnis:
+zwei gleichzeitig gültige Refresh-Token, und kurz darauf eine komplett widerrufene Token-Familie –
+die Wiederverwendungs-Erkennung hatte zugeschlagen.
+
+Jeder Teil für sich war korrekt und getestet. Der Fehler entstand aus dem Zusammenspiel von
+React-Lebenszyklus, Netzwerk-Zeitverhalten und einer serverseitigen Sicherheitsfunktion.
+
+**Eine grüne Testsuite ist kein Ersatz dafür, die Anwendung zu benutzen.**
+
+### Offen
+
+- GitHub-Profil und LinkedIn – seit Woche 2 überfällig, jetzt der beste Zeitpunkt: zwei Wochen
+  Puffer und ein vorzeigbares Repository
+- E-Mail-Versand für Einladungen (derzeit steht der Token in der HTTP-Antwort – bewusst und
+  dokumentiert, aber nicht produktionsreif)
+- Partieller Unique-Index für offene Einladungen, Datenbank-Trigger für „mindestens ein OWNER"
+- `browser-demo-1@example.com` liegt noch in der lokalen Datenbank
+
+### Interviewfragen dazu
+
+Nr. 64–95 in `07_INTERVIEW_NOTES.md`. Die stärksten: **72** (warum der Erfolgspfad nicht reicht),
+**82** (warum eine Transaktion nicht gegen Race Conditions hilft), **83** (wie man eine Race
+Condition testet), **92** (der Fehler, den die Tests nicht fanden), **93** (Open Redirect).

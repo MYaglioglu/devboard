@@ -231,6 +231,97 @@ ist, bleibt privat – Kapselung auf Modulebene.
 
 ---
 
+## Mandantentrennung
+
+Ab Sprint 2 gehört jedes fachliche Datum zu genau einer **Organisation**. Sie ist die Grenze, an der
+Sichtbarkeit endet – und die Frage, wie diese Grenze durchgesetzt wird, prägt jede Schicht.
+
+### Die Grenze wird an drei Stellen durchgesetzt
+
+```
+Anfrage
+  │
+  ├─ AccessTokenGuard      "Wer bist du?"                     → 401
+  │
+  ├─ MitgliedschaftsGuard  "Darfst du in diese Organisation?" → 404
+  │                        "Reicht deine Rolle?"              → 403
+  │
+  └─ Service               "Gehört diese Ressource dorthin?"  → 404
+                           "Erlaubt der Zustand das?"         → 409
+```
+
+Die **dritte** Stelle ist die, die am häufigsten fehlt. Ein Guard prüft die Organisation aus dem
+**Pfad** – nicht, ob die angesprochene Ressource zu ihr gehört:
+
+```ts
+// FALSCH – der Guard hat die Organisation geprüft, nicht diese Einladung
+prisma.invitation.update({ where: { id: einladungId } })
+
+// RICHTIG
+prisma.invitation.updateMany({ where: { id: einladungId, organizationId } })
+```
+
+> **Merksatz:** Die ID im Pfad gehört nicht automatisch zu der Organisation im Pfad.
+
+### Der Mandant steht in der Bedingung, nicht in einer Prüfung danach
+
+```ts
+// Die Lücke: erst laden, dann filtern – die fremden Daten wurden schon gelesen
+const alle = await prisma.membership.findMany();
+return alle.filter((m) => m.userId === nutzerId);
+
+// Richtig
+return prisma.membership.findMany({ where: { userId: nutzerId } });
+```
+
+Beide liefern dasselbe Ergebnis. Der erste ist eine Lücke, die spätestens dann aufreißt, wenn jemand
+später ein `select` erweitert oder Paginierung einbaut.
+
+### Wo welche Regel liegt – und warum
+
+| Regel | Ort | Warum dort |
+|---|---|---|
+| „bist du angemeldet?" | globaler Guard | hängt an nichts Fachlichem |
+| „bist du Mitglied?" | globaler Guard | hängt nur an Anfragendem und Route |
+| „nur `OWNER` darf Rollen ändern" | `@Rollen()` am Endpoint | hängt nur am Anfragenden |
+| „`ADMIN` darf keinen `OWNER` entfernen" | Service | hängt an der Rolle des **Ziels** |
+| „sich selbst entfernen darf jeder" | Service | hängt daran, **wen** es trifft |
+| „der letzte `OWNER` darf nicht gehen" | Service | hängt am **Zustand** der Organisation |
+
+> **Faustregel:** Ein Guard entscheidet über den **Zugang**, nicht über den **Einzelfall**. Sobald
+> die Antwort davon abhängt, welche Ressource betroffen ist, gehört sie in den Service.
+
+Die letzte Regel kann auf **vier** Wegen verletzt werden – entfernt werden, selbst gehen,
+herabgestuft werden, Konto löschen. Deshalb steht sie einmal im Service statt viermal am Endpoint.
+
+### Der Mandant steht im Pfad (ADR-008)
+
+```
+GET /organizations/:orgId/members
+```
+
+Damit gilt die Äquivalenz *„Route hat `:orgId`" ⟺ „Route betrifft einen Mandanten"* – und der Guard
+kann global laufen, ohne dass man ihn irgendwo eintragen müsste. Ein vergessener Guard ist damit
+strukturell ausgeschlossen.
+
+Die Kehrseite: Der Guard kann nicht vergessen werden, aber **ins Leere greifen**. Schriebe ein
+Controller `:organizationId`, fände er nichts und gäbe `true` zurück. Deshalb kommt der
+Parametername aus einer geteilten Konstanten – ein Tippfehler ist ein Compilerfehler.
+
+### Rollen kommen nicht aus dem Token
+
+Sie werden bei jeder Anfrage aus der Datenbank gelesen. Der Preis ist eine Abfrage (ein exakter
+Treffer im `UNIQUE (organizationId, userId)`), der Gewinn ist **Frische**: Ein Rollenentzug wirkt
+sofort statt erst nach Ablauf des Access-Tokens.
+
+### Im Frontend ist die Rolle Anzeigelogik
+
+Ausgeblendete Knöpfe sind **Benutzerführung**. Wer sie mit den Entwicklerwerkzeugen zurückholt,
+bekommt `403` oder `409`. Dieselbe Trennung wie bei der Formularvalidierung: im Browser aus
+Bequemlichkeit, im Backend aus Sicherheit.
+
+---
+
 ## Konfiguration
 
 Umgebungsvariablen werden beim Start **validiert**. Fehlt eine Variable oder enthält sie Unsinn,
