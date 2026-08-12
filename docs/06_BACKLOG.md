@@ -95,3 +95,21 @@ Zu trennen sind zwei Dinge: **Quelltext** (Kommentare, Bezeichner) darf ASCII bl
 **nutzersichtbare Texte** brauchen korrekte Umlaute. Betrifft `auth.service.ts`,
 `membership.guard.ts`, `invitations.service.ts`, `organizations.service.ts` und die Zod-Meldungen.
 Wird beim Sprint-2-Abschluss gezogen – für ein Portfolio-Projekt ist das kein Detail.
+
+### Frei konfigurierbare Board-Spalten *(Sprint 3, 12.08.2026)*
+`TaskStatus` ist ein Enum mit `TODO`/`IN_PROGRESS`/`DONE` – drei feste Spalten für alle Projekte.
+Echte Kanban-Werkzeuge lassen Spalten pro Projekt definieren, benennen und umsortieren. Dafür
+müsste das Enum einer Tabelle `BoardColumn` weichen (`projectId`, `name`, `position`), und `tasks`
+bekäme einen Fremdschlüssel darauf statt eines Enum-Werts.
+
+Bewusst nicht in Sprint 3: Das Lernziel des Sprints ist die **Sortierung**, nicht die
+Konfigurierbarkeit. Zudem sagt der Kommentar bei `role` in `08_DATABASE.md`, dass ein Enum nur
+taugt, solange die Werteliste fest ist – genau deshalb ist sie hier für Sprint 3 fest definiert und
+nicht halb konfigurierbar.
+
+### Neuverteilung der Sortierpositionen als Hintergrundarbeit *(Sprint 3, 12.08.2026)*
+`tasks.position` ist `numeric(65,30)`. Wer 30-mal hintereinander an dieselbe Stelle einfügt,
+verbraucht die Nachkommastellen; danach muss die Spalte neu verteilt werden. In Sprint 3 geschieht
+das **synchron** in der Anfrage, die die Grenze erreicht – ein seltener, dafür langsamer Aufruf.
+Sauberer wäre eine Hintergrundaufgabe, die betroffene Spalten außerhalb des Anfragepfades
+neu verteilt. Braucht einen Job-Runner, den das Projekt bislang nicht hat.
