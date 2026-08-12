@@ -844,6 +844,90 @@ bleibt unangetastet.
 
 ---
 
+## Projekte
+
+Alle Endpoints liegen unter `/organizations/:orgId/projects` und sind damit **mandantengebunden** –
+der `MitgliedschaftsGuard` greift über den `:orgId`-Parameter, ohne dass eine Markierung nötig
+wäre. Es gilt das gemeinsame Verhalten von oben: fremde oder unbekannte Organisation ⇒ `404`.
+
+### Wer darf was
+
+| | `OWNER` | `ADMIN` | `MEMBER` |
+|---|---|---|---|
+| Projekte lesen | ✓ | ✓ | ✓ |
+| Anlegen, ändern, archivieren | ✓ | ✓ | – |
+
+**Warum die Grenze hier liegt:** Ein Projekt ist die **Struktur**, in der gearbeitet wird – nicht
+die Arbeit selbst. Die Arbeit (Tasks, Scheibe 3.3) darf jedes Mitglied anlegen und verschieben.
+Die Alternative wäre, auch `MEMBER` Projekte anlegen zu lassen; vertretbar, aber dann verändert
+jeder die Struktur des Teams und niemand räumt sie auf. **Eine enge Vorgabe lässt sich später
+öffnen – der umgekehrte Weg nimmt Rechte weg, die schon jemand benutzt.**
+
+### `POST /organizations/:orgId/projects` · `OWNER`, `ADMIN`
+
+```json
+{ "name": "Relaunch", "description": "Website neu" }
+```
+
+Antwort `201` mit dem Projekt. `description` ist optional.
+
+**Die `organizationId` steht bewusst *nicht* im Körper.** Sie kommt aus dem Pfad – aus genau dem
+Pfad, den der Guard geprüft hat. Stünde sie zusätzlich im Körper, gäbe es zwei Angaben, die sich
+widersprechen können: die geprüfte und die geschriebene. Wer dann versehentlich die falsche nimmt,
+umgeht den Mandantenschutz, ohne eine Zeile Sicherheitscode anzufassen. Ein E2E-Test schiebt eine
+fremde `organizationId` im Körper unter und weist nach, dass sie folgenlos bleibt.
+
+### `GET /organizations/:orgId/projects` · alle Mitglieder
+
+Liefert die **nicht archivierten** Projekte, neueste zuerst. `?includeArchived=true` nimmt die
+archivierten dazu.
+
+**Warum die Voreinstellung filtert und nicht umgekehrt:** Das ungefilterte Ergebnis wäre die
+bequemere Vorgabe, aber dann müsste jeder Aufrufer an den Filter denken – und der erste, der ihn
+vergisst, zeigt archivierte Projekte an, ohne dass jemand einen Fehler sieht.
+
+Der Query-Parameter wird gegen `'true'` verglichen, nicht per `Boolean()` ausgewertet:
+`Boolean('false')` ist `true`, also das genaue Gegenteil der Absicht.
+
+### `GET /organizations/:orgId/projects/:projectId` · alle Mitglieder
+
+`404`, wenn das Projekt nicht zu dieser Organisation gehört – **auch wenn es die ID gibt**. Der
+Mandant steht in der `WHERE`-Bedingung (`findFirst`, nicht `findUnique` mit anschließender
+Prüfung); siehe `08_DATABASE.md`. Ungültige UUID ⇒ `400`, nicht `500`.
+
+### `PATCH /organizations/:orgId/projects/:projectId` · `OWNER`, `ADMIN`
+
+```json
+{ "name": "Neuer Name", "description": null }
+```
+
+Beide Felder optional, aber **mindestens eines erforderlich** – ein leerer Körper ergibt `400`.
+Ein `PATCH`, der nichts ändert und `200` meldet, sähe für den Client wie ein Erfolg aus, obwohl
+seine Absicht verlorengegangen ist (etwa bei einem falsch benannten Feld).
+
+`description: null` **entfernt** die Beschreibung, ein *fehlendes* `description` lässt sie
+unverändert. Das ist der Unterschied zwischen `null` und `undefined`, den Prisma beim Update
+ausdrücklich beachtet – ohne ihn gäbe es keine Schreibweise für „Beschreibung löschen".
+
+### `DELETE /organizations/:orgId/projects/:projectId` · `OWNER`, `ADMIN`
+
+Antwort `204`. **Gelöscht wird nichts** – gesetzt wird `archivedAt`. Der Verlauf bleibt erhalten,
+Sprint 4 zieht seine Kennzahlen daraus.
+
+**Warum trotzdem `DELETE`:** Aus Sicht des Clients ist es dasselbe – das Projekt verschwindet aus
+der Liste. Dass wir archivieren, ist eine Entscheidung *unserer* Seite. Ein Endpoint `POST …/archive`
+wäre ehrlicher im Namen, macht aber eine interne Entscheidung nach außen sichtbar, die sich dann
+nicht mehr ändern lässt.
+
+**Der Aufruf ist idempotent:** Ein zweites `DELETE` antwortet wieder `204`, nicht `404`. Der Service
+unterscheidet dafür zwei Fälle, die `updateMany` mit `count: 0` zusammenwirft – „gibt es nicht"
+(⇒ `404`) und „war schon archiviert" (⇒ nichts zu tun). Ohne diese Unterscheidung würde jeder
+Doppelklick und jeder automatische Wiederholungsversuch zu einer Fehlermeldung.
+
+Wieder-Aktivieren gibt es bewusst noch nicht – vermerkt in `06_BACKLOG.md`.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |

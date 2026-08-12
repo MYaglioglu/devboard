@@ -1602,3 +1602,164 @@ Registrierung, die das Ziel über `?weiter=` mitnehmen – geprüft, siehe Frage
 Der Endpoint dahinter ist trotzdem geschützt: Eine Einladung anzunehmen setzt ein Konto voraus, und
 der globale `AccessTokenGuard` antwortet ohne Token mit `401`. **Der Schutz sitzt im Backend, die
 Führung im Frontend** – die Seite ohne Schutzmantel zu bauen, öffnet nichts.
+
+---
+
+## Sprint 3 – Projekte, Tasks & Kanban-Board
+
+### 96. Ihr sortiert Kanban-Karten über eine `numeric`-Spalte. Warum nicht `float`?
+
+Weil die Grenze bei Gleitkomma **unsichtbar** ist.
+
+Das Verfahren heißt fractional indexing: Eine Karte bekommt den Mittelwert ihrer beiden künftigen
+Nachbarn – zwischen 100 und 200 wird 150. Der Gewinn ist, dass eine Verschiebung **eine** Zeile
+schreibt statt der ganzen Spalte.
+
+Der Preis ist, dass die Zahl bei jedem Einfügen an derselben Stelle länger wird. Bei `float8` sind
+nach etwa 50 Halbierungen die Mantissenbits verbraucht: Der Mittelwert zweier benachbarter Werte
+*ist* dann einer der beiden Werte. Zwei Karten haben dieselbe Position, die Reihenfolge wird
+stillschweigend zufällig – und niemand bekommt einen Fehler.
+
+Bei `numeric(65,30)` ist die Grenze bekannt und nachrechenbar: Die *n*-te Halbierung an derselben
+Stelle braucht *n* Nachkommastellen, ab 30 muss die Spalte neu verteilt werden. Damit ist sie
+testbar, und genau das prüfen die Grenzfalltests der Sortierlogik.
+
+**Der Kern der Antwort:** Beide Varianten haben eine Grenze. Die eine kann man behandeln, die andere
+merkt man erst, wenn die Daten schon falsch sind.
+
+### 97. Warum steht `organizationId` nicht auf `tasks`, obwohl das jede Abfrage einen Join spart?
+
+Weil es eine **zweite Wahrheit** wäre.
+
+Ein Task hängt am Projekt, das Projekt an der Organisation. Speicherten wir den Mandanten zusätzlich
+am Task, gäbe es zwei Angaben über dieselbe Tatsache. Solange sie übereinstimmen, ist alles gut –
+und wenn nicht, ist genau der Filter kaputt, dem die ganze Mandantentrennung vertraut. Ein Fehler
+in einem Migrationsskript oder ein vergessenes Feld beim Kopieren eines Projekts genügt.
+
+Gefiltert wird stattdessen über die Beziehung: `where: { id, project: { organizationId } }`. Prisma
+übersetzt das in eine Bedingung **innerhalb** der Abfrage, nicht in eine Prüfung danach – die
+Sprint-2-Regel bleibt gewahrt. Und ein Projekt wechselt nie die Organisation, die geerbte
+Zugehörigkeit ist also stabil.
+
+**Wann ich anders entscheiden würde:** Wenn die Abfrage über mehrere Ebenen ginge und der Join
+messbar teuer wäre. Dann wäre die Denormalisierung vertretbar – aber mit einem Datenbank-Constraint
+oder Trigger, der die Übereinstimmung erzwingt, nicht auf Zuruf.
+
+### 98. Euer Index ist `(projectId, status, position)`. Was passiert, wenn `position` vorne steht?
+
+Dann ist er für die Board-Abfrage **nutzlos**.
+
+Die Abfrage lautet `WHERE projectId = ? AND status = ? ORDER BY position`. Ein zusammengesetzter
+Index ist ein Baum, sortiert erst nach der ersten Spalte, dann nach der zweiten. Er hilft nur von
+**links** gelesen: Steht `position` vorne, liegen die Zeilen eines Projekts über den ganzen Index
+verstreut, und PostgreSQL liest die Tabelle vollständig.
+
+In der gewählten Reihenfolge passiert das Gegenteil, und zwar zweimal: Der Index findet den Block
+für Projekt + Spalte, **und** die Zeilen liegen darin bereits nach `position` sortiert. Der
+Sortierschritt entfällt komplett – im Ausführungsplan verschwindet der `Sort`-Knoten.
+
+Dasselbe Argument steht hinter dem zusätzlichen Index auf `memberships.userId` aus Sprint 2.
+
+### 99. In Sprint 2 habt ihr pessimistisch gesperrt, beim Board optimistisch. Was unterscheidet die Fälle?
+
+Ob der Konflikt **heilbar** ist.
+
+Sprint 2, letzte `OWNER`-Mitgliedschaft: Treten zwei Eigentümer gleichzeitig aus und beide lesen
+„es gibt noch einen anderen", bleibt die Organisation ohne Eigentümer zurück. Das lässt sich durch
+Neuladen nicht reparieren – der Zustand ist bereits kaputt. Also muss die zweite Anfrage warten:
+`SELECT … FOR UPDATE`.
+
+Board: Zwei Nutzer verschieben dieselbe Karte. Die zweite Anfrage bekommt `409`, das Board lädt neu,
+die Karte liegt woanders als gedacht. Ärgerlich, nicht kaputt – und **selten**, weil zwei Menschen
+selten dieselbe Karte in derselben Sekunde anfassen. Sperren würde hier jeden Normalfall
+verlangsamen, um einen Ausnahmefall zu vermeiden, der ohnehin harmlos ist.
+
+**Die Faustregel:** Pessimistisch sperren, wenn ein Konflikt Daten zerstört. Optimistisch, wenn er
+nur eine Wiederholung kostet.
+
+### 100. `Task.assignee` zeigt auf `Membership`, nicht auf `User`. Vorteil und Preis?
+
+Zugewiesen wird nicht „ein Mensch", sondern „jemand, der in dieser Organisation mitarbeitet" – und
+das *ist* eine Mitgliedschaft. Das Modell bildet damit ab, was fachlich gemeint ist.
+
+Der praktische Gewinn ist ein geschenkter: Wird jemand aus der Organisation entfernt, verschwindet
+seine Mitgliedschaft, und `ON DELETE SET NULL` löst seine Zuweisungen von selbst. Bei einem
+Fremdschlüssel auf `users` bliebe ein Ex-Kollege auf den Karten stehen, oder wir müssten es im Code
+aufräumen – und würden dabei irgendwann einen Pfad vergessen. **Was die Datenbank erzwingt, kann
+kein Codepfad umgehen.**
+
+`SET NULL` und nicht `CASCADE`, weil die *Aufgabe* bleiben soll, nur unzugewiesen. `CASCADE` würde
+beim Entfernen eines Mitglieds dessen Tasks mitlöschen.
+
+Der Preis: Für den Anzeigenamen geht es einen Schritt weiter – `task.assignee.user.name`. Und „meine
+Aufgaben über alle Organisationen" braucht einen Umweg über die Mitgliedschaften des Nutzers.
+
+### 101. Warum ist `TaskStatus` ein Enum, obwohl euer eigener Kommentar bei `Role` davon abrät?
+
+Der Kommentar sagt genauer: Ein Enum taugt, **solange die Werteliste fest ist**. Bei etwas Volatilem
+wie frei definierbaren Status wäre Text mit Referenztabelle richtig.
+
+Genau das ist der Punkt: In Sprint 3 sind die Spalten *nicht* konfigurierbar. Drei feste Spalten für
+alle Projekte. Solange das gilt, ist das Enum der bessere Tausch – die Datenbank erzwingt die Werte,
+ein Tippfehler kommt gar nicht erst hinein, und Prisma erzeugt daraus einen TypeScript-Union-Typ.
+
+Werden Spalten später konfigurierbar, ersetzt eine Tabelle `BoardColumn` das Enum. Das steht so im
+Backlog, mit dem Migrationsweg. **Der Widerspruch ist benannt statt übergangen** – und das ist der
+Unterschied zwischen einer Abkürzung und einem Versehen.
+
+### 102. Ihr habt `findFirst` statt `findUnique` benutzt. Warum ist das eine Sicherheitsentscheidung?
+
+`findUnique` akzeptiert nur eindeutige Spalten. Die Projekt-ID ist eindeutig, `organizationId` nicht
+– also lässt sich der Mandant dort gar nicht mit hineinschreiben. Der naheliegende Weg wäre dann:
+laden, und danach `if (projekt.organizationId !== organizationId) throw`.
+
+Damit sind die fremden Daten aber bereits **gelesen**. Solange nur verglichen wird, fällt das nicht
+auf – bis jemand einen früheren Rückgabepfad einbaut, die Reihenfolge ändert oder beim Debuggen
+loggt, was er geladen hat. Der Schutz hängt an einer Codezeile, die man verschieben kann.
+
+`findFirst` erlaubt beliebige Filter. Damit lautet die Abfrage „das Projekt mit dieser ID, **sofern**
+es zu dieser Organisation gehört" statt „das Projekt mit dieser ID, und dann sehen wir weiter".
+Beim Schreiben gilt dasselbe: `update({ where: { id, organizationId } })` – Prisma erlaubt neben der
+eindeutigen Bedingung zusätzliche Filter; passt der Mandant nicht, ändert sich nichts.
+
+### 103. Warum antwortet euer `DELETE` beim zweiten Aufruf mit `204` statt `404`?
+
+Weil `DELETE` idempotent sein soll: Der zweite Aufruf hinterlässt denselben Zustand wie der erste,
+also gibt es nichts zu melden. Ohne das wird jeder Doppelklick, jeder Wiederholungsversuch nach
+einem Timeout und jedes erneute Absenden zu einer Fehlermeldung, hinter der kein Problem steckt.
+
+Interessant ist, was das im Code kostet: `updateMany` liefert `count: 0` für **zwei** fachlich
+verschiedene Fälle – „gibt es nicht" und „war schon archiviert". Die Antwort ist einmal `404` und
+einmal `204`. Deshalb steht dort eine zweite Abfrage, die die beiden unterscheidet. Sie läuft nur im
+Ausnahmefall, nie im Normalbetrieb.
+
+**Was ich daraus mitgenommen habe:** Eine Rückgabe wie „0 Zeilen geändert" beantwortet nicht die
+Frage, die man eigentlich stellt. Sie fasst Fälle zusammen, die man auseinanderhalten muss.
+
+### 104. Ihr archiviert, nennt den Endpoint aber `DELETE`. Ist das nicht irreführend?
+
+Für den Client nicht: Das Projekt verschwindet aus der Liste, genau das hat er angefordert. Dass wir
+stattdessen `archivedAt` setzen, ist eine Entscheidung *unserer* Seite – der Verlauf bleibt
+erhalten, und Sprint 4 zieht seine Kennzahlen daraus.
+
+Die Alternative wäre `POST /projects/:id/archive`. Ehrlicher im Namen, aber sie macht eine interne
+Entscheidung nach außen sichtbar. Wenn wir später doch hart löschen wollten, müsste sich die API
+ändern – bei `DELETE` nicht.
+
+**Wo die Grenze liegt:** Sobald Archivieren und Löschen *beide* fachlich existieren und der Nutzer
+zwischen ihnen wählen soll, brauchen sie zwei Endpoints. Solange es nur eine Bedeutung gibt, ist
+`DELETE` die richtige.
+
+### 105. Eure Mutationsprobe ließ zuerst *alle* Tests der Datei fehlschlagen. Warum war das ein schlechtes Zeichen?
+
+Weil ein Schutz, der genau eine Stelle absichert, auch genau die Tests rot machen sollte, die diese
+Stelle prüfen. Werden es plötzlich alle, ist die wahrscheinlichere Erklärung, dass die **Probe**
+kaputt ist – nicht dass der Schutz überall wirkt.
+
+Genau so war es: Aufgerufen wurde `npx jest` statt `npm run test:e2e`, und damit fehlte
+`THROTTLE_LIMIT=0`. Das Rate Limiting wies schon die Registrierungen im Testaufbau ab, die Tests
+scheiterten also vor der eigentlichen Prüfung. Mit der richtigen Umgebung wurde genau **ein** E2E-
+und **ein** Unit-Test rot – der Nachweis, den wir wollten.
+
+**Die Lehre:** Ein zu breites Rot ist genauso verdächtig wie ein ausbleibendes. Beide bedeuten, dass
+der Test etwas anderes misst, als man glaubt.

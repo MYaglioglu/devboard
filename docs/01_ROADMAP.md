@@ -99,7 +99,7 @@ mit Rollback bei Fehlern.
 **Definition of Done** – die Scheiben, jede einzeln mergebar:
 
 - [x] 3.1 Datenmodell: `Project`, `Task`, `TaskStatus`, `position`, `version` (12.08.2026)
-- [ ] 3.2 Projekte CRUD im Backend, mit negativen Tests (fremde Organisation ⇒ 404)
+- [x] 3.2 Projekte CRUD im Backend, mit negativen Tests (fremde Organisation ⇒ 404) (12.08.2026)
 - [ ] 3.3 Tasks CRUD, Zuweisung nur an Mitglieder derselben Organisation
 - [ ] 3.4 `PATCH …/tasks/:id/move` – Sortierlogik, 409 bei Versionskonflikt, Mutationsprobe
 - [ ] 3.5 Frontend: Projektliste und Projektdetail

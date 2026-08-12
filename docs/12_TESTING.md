@@ -128,6 +128,21 @@ In Sprint 2 an jeder sicherheitsrelevanten Stelle durchgeführt:
 | Open-Redirect-Prüfung | 5 Unit, 1 Seitentest |
 | Single Flight bei der Token-Erneuerung | 1 Unit |
 
+Sprint 3:
+
+| Entfernt | Rot geworden |
+|---|---|
+| `organizationId` im `where` von `ProjectsService.findeEines` | 1 Unit, 1 E2E |
+
+**Nebenbefund aus dieser Probe:** Der erste Durchlauf ließ *alle 17* Tests der Datei fehlschlagen –
+was nach einem sehr wirksamen Schutz ausgesehen hätte. Tatsächlich war die Probe selbst kaputt:
+Aufgerufen wurde `npx jest` statt `npm run test:e2e`, und damit fehlte `THROTTLE_LIMIT=0`. Das Rate
+Limiting wies die Registrierungen im Testaufbau ab.
+
+Die Lehre gehört zur Mutationsprobe dazu: **Ein zu breites Rot ist genauso verdächtig wie ein
+ausbleibendes.** Wird ein Schutz entfernt, muss *genau* der Test rot werden, der ihn bewacht – wird
+alles rot, prüft man zuerst die Testumgebung, nicht den Code.
+
 **Ein Test, der mit und ohne den Schutz grün ist, bewacht ihn nicht** – und ist gefährlicher als gar
 keiner, weil er spätere Änderungen absegnet. Genau das ist in diesem Sprint einmal passiert: Der
 erste Nebenläufigkeitstest (`Promise.all` mit zwei gleichzeitigen Austritten) blieb auch ohne die
