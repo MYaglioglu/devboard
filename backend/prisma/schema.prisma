@@ -84,8 +84,171 @@ model Organization {
 
   memberships Membership[]
   invitations Invitation[]
+  projects    Project[]
 
   @@map("organizations")
+}
+
+/// Ein Projekt innerhalb genau einer Organisation.
+///
+/// Die Organisation ist die Grenze, an der Sichtbarkeit endet. Ein Projekt
+/// wechselt sie NIE - deshalb darf alles darunter (Tasks) seinen Mandanten
+/// ueber diese Beziehung erben, statt ihn noch einmal selbst zu speichern.
+model Project {
+  id String @id @default(uuid()) @db.Uuid
+
+  organizationId String       @db.Uuid
+  /// Cascade: Ohne Organisation gibt es kein Projekt. Loescht jemand die
+  /// Organisation, gehen Projekte UND (ueber deren eigenes Cascade) alle
+  /// Tasks mit. Das ist gewollt - ein Projekt ohne Mandanten waere eine
+  /// Zeile, die niemand mehr sehen darf und niemand mehr aufraeumt.
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+
+  /// Archivieren statt Loeschen: Ein abgeschlossenes Projekt verschwindet aus
+  /// der Liste, seine Tasks bleiben aber als Verlauf erhalten. Ein echtes
+  /// DELETE waere unumkehrbar und wuerde ueber Cascade auch die Historie
+  /// mitnehmen, aus der Sprint 4 seine Kennzahlen zieht.
+  archivedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks Task[]
+
+  /// Fuer "alle Projekte dieser Organisation" - die haeufigste Abfrage
+  /// ueberhaupt, weil sie auf jedem Seitenaufruf im Projektbereich laeuft.
+  ///
+  /// BEWUSST KEIN @@unique([organizationId, name]): Zwei Projekte gleichen
+  /// Namens sind fachlich erlaubt (derselbe Relaunch in zwei Jahren).
+  /// Eindeutigkeit wuerde hier eine Regel erzwingen, die es fachlich nicht
+  /// gibt - anders als bei Membership, wo doppelte Zeilen die Rolle
+  /// mehrdeutig machen wuerden.
+  @@index([organizationId])
+  @@map("projects")
+}
+
+/// Der Status einer Aufgabe - zugleich die Spalte auf dem Kanban-Board.
+///
+/// ============================================================================
+/// WARUM HIER EIN ENUM STEHT, OBWOHL DER KOMMENTAR BEI `Role` DAVON ABRAET
+/// ============================================================================
+/// Bei `Role` steht, dass etwas Volatiles wie "frei definierbare Task-Status"
+/// besser als Text mit Referenztabelle aufgehoben waere. Das gilt weiterhin -
+/// aber nur fuer den Fall, dass Spalten pro Projekt konfigurierbar sind.
+///
+/// In Sprint 3 sind sie es nicht: Drei feste Spalten fuer alle. Solange die
+/// Liste fest ist, ist das Enum der bessere Tausch (die Datenbank erzwingt die
+/// Werte, TypeScript bekommt einen Union-Typ). Werden Spalten spaeter
+/// konfigurierbar, ersetzt eine Tabelle `BoardColumn` dieses Enum - vermerkt
+/// in 06_BACKLOG.md.
+///
+/// Die Reihenfolge entspricht dem Ablauf von links nach rechts. Auch hier
+/// gilt: Der Code darf sich darauf NICHT verlassen und keine Groesser-Kleiner-
+/// Vergleiche darauf bauen.
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+
+  @@map("task_status")
+}
+
+/// Eine Aufgabe - eine Karte auf dem Board.
+model Task {
+  id String @id @default(uuid()) @db.Uuid
+
+  projectId String  @db.Uuid
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+
+  status TaskStatus @default(TODO)
+
+  /// ==========================================================================
+  /// DIE SORTIERPOSITION - WARUM `numeric` UND NICHT `int` ODER `float`
+  /// ==========================================================================
+  /// Eine Karte wird eingefuegt, indem sie den Mittelwert ihrer beiden
+  /// kuenftigen Nachbarn bekommt: zwischen 100 und 200 wird 150.
+  /// Das schreibt EINE Zeile - unabhaengig davon, wie lang die Spalte ist.
+  ///
+  /// Die naheliegende Alternative waere, die Spalte danach mit 1, 2, 3 neu
+  /// durchzunummerieren. Das schreibt N Zeilen und macht aus jedem Verschieben
+  /// einen Konflikt mit jedem anderen gleichzeitigen Verschieben derselben
+  /// Spalte - genau der Datenverlust, den die Definition of Done ausschliesst.
+  ///
+  /// Warum `numeric(65,30)` und nicht `double precision`: Gleitkomma hat eine
+  /// Grenze, die man nicht sieht. Nach etwa 50 Halbierungen an DERSELBEN
+  /// Stelle sind die Bits verbraucht, und zwei Karten bekommen denselben Wert -
+  /// die Sortierung wird stillschweigend zufaellig. Bei `numeric` mit 30
+  /// Nachkommastellen ist die Grenze bekannt und nachrechenbar: Die n-te
+  /// Halbierung an derselben Stelle braucht n Nachkommastellen. Ab 30 muss die
+  /// Spalte neu verteilt werden, und genau das prueft die Sortierlogik in
+  /// Scheibe 3.4.
+  ///
+  /// Eine bekannte Grenze mit Gegenmassnahme ist besser als eine unsichtbare.
+  position Decimal @db.Decimal(65, 30)
+
+  /// ==========================================================================
+  /// OPTIMISTISCHES SPERREN
+  /// ==========================================================================
+  /// Jedes Verschieben erhoeht diesen Zaehler und verlangt im WHERE den Wert,
+  /// den der Client vorher gelesen hat. Aendert die Abfrage 0 Zeilen, war
+  /// jemand schneller - die Antwort ist 409 Conflict, das Board laedt neu.
+  ///
+  /// Warum nicht die Zeilensperre (`SELECT ... FOR UPDATE`) aus Sprint 2?
+  /// Dort ging es um die letzte OWNER-Mitgliedschaft: Ein verlorener
+  /// Eigentuemer laesst sich durch Neuladen nicht heilen, also muss die zweite
+  /// Anfrage warten. Auf dem Board ist der Konflikt harmlos und selten - eine
+  /// Karte ist woanders gelandet als gedacht. Warten waere hier der teurere
+  /// Weg. Begruendet in 09_API.md.
+  version Int @default(0)
+
+  /// ==========================================================================
+  /// WARUM DIE ZUWEISUNG AN DER MITGLIEDSCHAFT HAENGT, NICHT AM NUTZER
+  /// ==========================================================================
+  /// Zugewiesen wird nicht "ein Mensch", sondern "jemand, der in dieser
+  /// Organisation mitarbeitet". Genau das ist eine Mitgliedschaft.
+  ///
+  /// Der praktische Gewinn: Wird jemand aus der Organisation entfernt,
+  /// verschwindet seine Mitgliedschaft - und mit SetNull fallen seine
+  /// Zuweisungen von selbst weg. Bei einem Fremdschluessel auf `users` bliebe
+  /// ein Ex-Kollege auf den Karten stehen, oder wir muessten es im Code
+  /// aufraeumen und wuerden dabei irgendwann einen Pfad vergessen.
+  ///
+  /// SetNull statt Cascade, weil die AUFGABE bleiben soll - nur unzugewiesen.
+  /// Cascade wuerde beim Entfernen eines Mitglieds dessen Tasks mitloeschen.
+  ///
+  /// Preis: Fuer den Anzeigenamen geht es einen Schritt weiter
+  /// (task.assignee.user.name). Das ist der Aufwand wert.
+  assigneeId String?     @db.Uuid
+  assignee   Membership? @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  dueDate DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// ==========================================================================
+  /// DER INDEX IST EXAKT DIE BOARD-ABFRAGE
+  /// ==========================================================================
+  /// Das Board laedt "alle Tasks dieses Projekts, je Spalte, in Reihenfolge" -
+  /// also WHERE projectId = ? AND status = ? ORDER BY position.
+  ///
+  /// Weil `position` als DRITTE Spalte im Index steht und der Index sortiert
+  /// abgelegt ist, liest PostgreSQL die Karten bereits in der richtigen
+  /// Reihenfolge - der Sortierschritt entfaellt vollstaendig. Stuende
+  /// `position` vorne, waere der Index fuer diese Abfrage nutzlos:
+  /// Ein zusammengesetzter Index hilft nur von LINKS gelesen.
+  @@index([projectId, status, position])
+  /// Fuer "meine Aufgaben" und fuer das Aufraeumen beim Entfernen eines
+  /// Mitglieds. Ohne diesen Index muesste PostgreSQL fuer jedes entfernte
+  /// Mitglied die gesamte Task-Tabelle lesen, um SetNull anzuwenden.
+  @@index([assigneeId])
+  @@map("tasks")
 }
 
 /// Eine ausgesprochene Einladung in eine Organisation.
@@ -191,6 +354,11 @@ model Membership {
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   role Role @default(MEMBER)
+
+  /// Aufgaben, die dieser Mitgliedschaft zugewiesen sind. Verschwindet die
+  /// Mitgliedschaft, werden die Zuweisungen auf NULL gesetzt - die Aufgaben
+  /// selbst bleiben. Siehe Kommentar bei Task.assignee.
+  assignedTasks Task[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
