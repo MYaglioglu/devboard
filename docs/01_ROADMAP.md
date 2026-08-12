@@ -96,6 +96,26 @@ Kanban-Board mit Drag & Drop und persistierter Sortierung.
 Transaktionen · Race Conditions bei gleichzeitigem Verschieben · optimistische Updates im Frontend
 mit Rollback bei Fehlern.
 
+**Definition of Done** – die Scheiben, jede einzeln mergebar:
+
+- [x] 3.1 Datenmodell: `Project`, `Task`, `TaskStatus`, `position`, `version` (12.08.2026)
+- [ ] 3.2 Projekte CRUD im Backend, mit negativen Tests (fremde Organisation ⇒ 404)
+- [ ] 3.3 Tasks CRUD, Zuweisung nur an Mitglieder derselben Organisation
+- [ ] 3.4 `PATCH …/tasks/:id/move` – Sortierlogik, 409 bei Versionskonflikt, Mutationsprobe
+- [ ] 3.5 Frontend: Projektliste und Projektdetail
+- [ ] 3.6 Frontend: Board mit dnd-kit, optimistisches Update mit Rollback
+- [ ] 3.7 Politur, Interviewfragen, Handbuch
+
+**Entschieden in 3.1:**
+
+- Sortierung per **fractional indexing** auf `numeric(65,30)` – ein `UPDATE` pro Verschiebung
+  statt N. Begründung und Vergleichstabelle in `08_DATABASE.md`.
+- Nebenläufigkeit **optimistisch** (Versionsspalte, 409), nicht pessimistisch wie in Sprint 2.
+- Der Mandant wird über die Beziehung `project.organizationId` gefiltert, **nicht** auf `tasks`
+  dupliziert – keine zweite Wahrheit im Mandantenfilter.
+
+**Parallel:** GitHub-Profil – Bio geschärft, Bootcamp-Repos entpinnen. Nicht wieder verschieben.
+
 ---
 
 ## Sprint 4 – Dashboard & Aktivitäts-Feed

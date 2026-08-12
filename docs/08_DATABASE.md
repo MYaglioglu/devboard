@@ -196,6 +196,129 @@ beim Entfernen eines Kontos auch dessen Mitgliedschaften. War der Nutzer letzter
 Organisation, bliebe diese **ohne Eigentümer** zurück. Das ist Anwendungslogik, keine
 Datenbanklogik – behandelt in Scheibe 2.3.
 
+### `projects`
+
+| Spalte | Typ | Constraints |
+|---|---|---|
+| `id` | `uuid` | Primärschlüssel |
+| `organizationId` | `uuid` | Fremdschlüssel auf `organizations`, Index, `ON DELETE CASCADE` |
+| `name` | `text` | **NOT NULL** |
+| `description` | `text` | optional |
+| `archivedAt` | `timestamp(3)` | optional – gesetzt heißt „archiviert" |
+| `createdAt` | `timestamp(3)` | Default `CURRENT_TIMESTAMP` |
+| `updatedAt` | `timestamp(3)` | von Prisma gesetzt |
+
+**Warum kein zweites `organizationId` auf `tasks`:** Ein Task hängt am Projekt, das Projekt an der
+Organisation. Den Mandanten zusätzlich auf `tasks` zu duplizieren, wäre schneller (kein Join), aber
+es entstünde eine **zweite Wahrheit**. Weichen `task.organizationId` und
+`task.project.organizationId` je voneinander ab, ist genau der Filter kaputt, dem die gesamte
+Mandantentrennung vertraut. Wir filtern stattdessen über die Beziehung:
+
+```ts
+where: { id: taskId, project: { organizationId } }
+```
+
+Prisma übersetzt das in eine Bedingung **innerhalb** der Abfrage, nicht in eine Prüfung danach – die
+Sprint-2-Regel bleibt gewahrt. Ein Projekt wechselt nie die Organisation, deshalb ist die geerbte
+Zugehörigkeit stabil.
+
+**Warum `archivedAt` statt `DELETE`:** Ein abgeschlossenes Projekt verschwindet aus der Liste,
+seine Tasks bleiben als Verlauf erhalten. Ein echtes `DELETE` wäre unumkehrbar und nähme über
+`ON DELETE CASCADE` auch die Historie mit, aus der Sprint 4 seine Kennzahlen zieht.
+
+**Bewusst kein `UNIQUE (organizationId, name)`:** Zwei Projekte gleichen Namens sind fachlich
+erlaubt – derselbe „Relaunch" in zwei Jahren. Eindeutigkeit würde hier eine Regel erzwingen, die es
+fachlich nicht gibt. Anders als bei `memberships`, wo doppelte Zeilen die Rolle mehrdeutig machten.
+
+### `tasks`
+
+| Spalte | Typ | Constraints |
+|---|---|---|
+| `id` | `uuid` | Primärschlüssel |
+| `projectId` | `uuid` | Fremdschlüssel auf `projects`, `ON DELETE CASCADE` |
+| `title` | `text` | **NOT NULL** |
+| `description` | `text` | optional |
+| `status` | `task_status` (Enum) | **NOT NULL**, Default `TODO` |
+| `position` | `numeric(65,30)` | **NOT NULL** – Sortierposition, siehe unten |
+| `version` | `integer` | **NOT NULL**, Default `0` – optimistisches Sperren |
+| `assigneeId` | `uuid` | Fremdschlüssel auf `memberships`, Index, `ON DELETE SET NULL` |
+| `dueDate` | `timestamp(3)` | optional |
+| `createdAt` | `timestamp(3)` | Default `CURRENT_TIMESTAMP` |
+| `updatedAt` | `timestamp(3)` | von Prisma gesetzt |
+
+#### Die Sortierposition – warum `numeric` und nicht `int` oder `float`
+
+Eine Karte wird eingefügt, indem sie den **Mittelwert ihrer beiden künftigen Nachbarn** bekommt:
+zwischen `100` und `200` wird `150`. Das schreibt **eine** Zeile, unabhängig davon, wie lang die
+Spalte ist.
+
+| Ansatz | Schreibzugriffe pro Verschiebung | Problem |
+|---|---|---|
+| `int`, danach 1,2,3… neu vergeben | **N** (die ganze Spalte) | Zwei gleichzeitige Verschiebungen überschreiben sich gegenseitig – der Datenverlust, den F3 ausschließt |
+| `int` mit Lücken (100, 200, 300) | 1 | Die Lücken gehen aus; irgendwann doch Neuvergabe |
+| `numeric`, Mittelwert bilden | 1 | Die Zahl wird bei jedem Einfügen an derselben Stelle länger |
+| `float8`, Mittelwert bilden | 1 | **Grenze unsichtbar** – nach ~50 Halbierungen sind die Bits verbraucht, zwei Karten bekommen denselben Wert, die Sortierung wird stillschweigend zufällig |
+
+Gewählt: `numeric(65,30)`. Die *n*-te Halbierung an derselben Stelle braucht *n* Nachkommastellen –
+ab 30 muss die Spalte neu verteilt werden. Der entscheidende Unterschied zu `float8`: **Die Grenze
+ist bekannt und nachrechenbar**, also testbar. Eine bekannte Grenze mit Gegenmaßnahme ist besser
+als eine unsichtbare ohne.
+
+Zu beachten im Code: Prisma bildet `Decimal` auf ein `Decimal.js`-Objekt ab, nicht auf `number`.
+Rechnen mit `+` und `/` wäre stiller Präzisionsverlust – genau der Fehler, den der Typ verhindern
+soll.
+
+#### `version` – optimistisches Sperren
+
+Jedes Verschieben erhöht den Zähler und verlangt im `WHERE` den zuvor gelesenen Wert. Ändert das
+`UPDATE` **0 Zeilen**, war jemand schneller ⇒ **409 Conflict**, das Board lädt neu.
+
+Warum nicht die Zeilensperre (`SELECT … FOR UPDATE`) aus Sprint 2? Dort ging es um die letzte
+`OWNER`-Mitgliedschaft: Ein verlorener Eigentümer lässt sich durch Neuladen nicht heilen, also muss
+die zweite Anfrage warten. Auf dem Board ist der Konflikt selten und harmlos – eine Karte ist
+woanders gelandet als gedacht. Warten wäre hier der teurere Weg. Abwägung in `09_API.md`.
+
+#### Warum die Zuweisung an der Mitgliedschaft hängt, nicht am Nutzer
+
+Zugewiesen wird nicht „ein Mensch", sondern „jemand, der in dieser Organisation mitarbeitet" – und
+genau das *ist* eine Mitgliedschaft. Der praktische Gewinn: Wird jemand aus der Organisation
+entfernt, verschwindet seine Mitgliedschaft, und `ON DELETE SET NULL` löst seine Zuweisungen von
+selbst. Bei einem Fremdschlüssel auf `users` bliebe ein Ex-Kollege auf den Karten stehen, oder wir
+müssten es im Code aufräumen und dabei irgendwann einen Pfad vergessen.
+
+`SET NULL` statt `CASCADE`, weil die **Aufgabe** bleiben soll, nur unzugewiesen. `CASCADE` würde
+beim Entfernen eines Mitglieds dessen Tasks mitlöschen. Preis: Für den Anzeigenamen geht es einen
+Schritt weiter (`task.assignee.user.name`).
+
+#### Zum Enum `task_status`
+
+Bei `role` steht oben, dass etwas Volatiles wie „frei definierbare Task-Status" besser als `TEXT`
+mit Referenztabelle aufgehoben wäre. Das gilt weiterhin – aber nur, wenn Spalten pro Projekt
+konfigurierbar sind. In Sprint 3 sind sie es nicht: drei feste Spalten für alle. Solange die Liste
+fest ist, ist das Enum der bessere Tausch. Werden Spalten später konfigurierbar, ersetzt eine
+Tabelle `BoardColumn` dieses Enum – vermerkt in `06_BACKLOG.md`.
+
+#### Der Index ist exakt die Board-Abfrage
+
+```sql
+CREATE INDEX "tasks_projectId_status_position_idx"
+    ON "tasks"("projectId", "status", "position");
+```
+
+Das Board lädt „alle Tasks dieses Projekts, je Spalte, in Reihenfolge":
+
+```sql
+WHERE "projectId" = $1 AND "status" = $2 ORDER BY "position"
+```
+
+Weil `position` als **dritte** Spalte im Index steht und ein Index sortiert abgelegt ist, liest
+PostgreSQL die Karten bereits in der richtigen Reihenfolge – der Sortierschritt entfällt
+vollständig. Stünde `position` vorne, wäre der Index für diese Abfrage nutzlos: derselbe Merksatz
+wie bei `memberships` – **ein zusammengesetzter Index hilft nur von links gelesen**.
+
+Der zweite Index auf `assigneeId` dient „meine Aufgaben" und dem `SET NULL` beim Entfernen eines
+Mitglieds; ohne ihn läse PostgreSQL dafür jedes Mal die ganze Tabelle.
+
 ---
 
 ## Arbeiten mit Migrationen
@@ -232,8 +355,8 @@ Umgebungen auseinander – dieselbe Logik wie bei Git-Commits nach dem Push.
 | `User` erweitert | 1 | `passwordHash`, Refresh-Token |
 | ~~`Organization`, `Membership`~~ | 2 | Mandanten und Rollen – **umgesetzt** |
 | `Invitation` | 2 | Einladungen per Token |
-| `Project` | 3 | Projekte innerhalb einer Organisation |
-| `Task` | 3 | Aufgaben mit Status und Sortierposition |
+| ~~`Project`~~ | 3 | Projekte innerhalb einer Organisation – **umgesetzt** |
+| ~~`Task`~~ | 3 | Aufgaben mit Status und Sortierposition – **umgesetzt** |
 | `ActivityEvent` | 4 | Aktivitäts-Feed |
 
 Zu jedem Modell wird hier festgehalten: Felder, Constraints, Indizes – und **warum** ein Index
