@@ -14,6 +14,7 @@ import { MitgliedschaftsGuard } from './organizations/guards/membership.guard';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProjectsModule } from './projects/projects.module';
+import { TasksModule } from './tasks/tasks.module';
 import type { Env } from './config/env.schema';
 
 @Module({
@@ -80,6 +81,7 @@ import type { Env } from './config/env.schema';
     AuthModule,
     OrganizationsModule,
     ProjectsModule,
+    TasksModule,
   ],
   providers: [
     // ========================================================================
