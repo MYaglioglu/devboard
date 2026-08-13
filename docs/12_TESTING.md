@@ -133,6 +133,14 @@ Sprint 3:
 | Entfernt | Rot geworden |
 |---|---|
 | `organizationId` im `where` von `ProjectsService.findeEines` | 1 Unit, 1 E2E |
+| `project: { organizationId }` im `where` von `TasksService.loesche` | 1 Unit, 1 E2E |
+
+Bei der zweiten Probe wurde die Erwartung **vorher** notiert („rot werden müssen der Unit-Test
+*nimmt den Mandanten in die Löschbedingung auf* und der E2E-Test *löscht keine Aufgabe aus einem
+fremden Projekt*"). Genau die beiden wurden es. Das ist der Unterschied zwischen einem Nachweis und
+einem Gefühl – und es hat sich sofort ausgezahlt: Ein Zwischenlauf zeigte wieder *alle 21* Tests
+rot, diesmal weil der Docker-Daemon nicht lief. Ohne vorher festgelegte Erwartung wäre das als
+„Schutz wirkt sehr breit" durchgegangen.
 
 **Nebenbefund aus dieser Probe:** Der erste Durchlauf ließ *alle 17* Tests der Datei fehlschlagen –
 was nach einem sehr wirksamen Schutz ausgesehen hätte. Tatsächlich war die Probe selbst kaputt:

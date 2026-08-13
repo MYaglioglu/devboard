@@ -928,6 +928,116 @@ Wieder-Aktivieren gibt es bewusst noch nicht – vermerkt in `06_BACKLOG.md`.
 
 ---
 
+## Aufgaben
+
+Alle Endpoints liegen unter `/organizations/:orgId/projects/:projectId/tasks`.
+
+**Warum der Pfad so lang ist:** Die Aufgaben-ID allein wäre eindeutig, `/tasks/:taskId` also
+möglich. Der lange Pfad kauft zwei Dinge: Der `:orgId` darin ist das, woran der globale
+`MitgliedschaftsGuard` greift – ohne ihn müsste jede Task-Route ihren Schutz selbst mitbringen. Und
+die Zugehörigkeit wird *überprüfbar* statt angenommen: Der Service verlangt, dass die Aufgabe zu
+diesem Projekt und das Projekt zu dieser Organisation gehört. Eine ID aus einem fremden Projekt
+läuft ins Leere, statt zufällig zu funktionieren.
+
+**Kein `@Rollen()` an irgendeinem dieser Endpoints.** Aufgaben sind die *Arbeit*, Projekte die
+*Struktur*. Jedes Mitglied darf arbeiten – anlegen, ändern, zuweisen, löschen. Wer einem Team
+angehört, aber keine Aufgabe anlegen darf, ist kein Mitglied, sondern ein Zuschauer; diese Rolle
+gibt es hier nicht.
+
+### `position` ist eine Zeichenkette, keine Zahl
+
+```json
+{ "id": "…", "title": "Login bauen", "position": "2000", "version": 0 }
+```
+
+In der Datenbank ist die Position `numeric(65,30)`. JSON kennt nur **einen** Zahlentyp, und der ist
+`float64` – eine Position wie `1500.000000000000000000000000000001` käme im Browser gerundet an.
+Damit wäre genau der Präzisionsverlust zurück, gegen den `numeric` gewählt wurde, nur auf dem
+Transportweg statt in der Datenbank.
+
+Das Frontend rechnet ohnehin nicht mit Positionen: Beim Verschieben schickt es die IDs der Nachbarn,
+den Mittelwert bildet der Server (Scheibe 3.4). Der Wert ist für den Client eine undurchsichtige
+Kennung.
+
+> Dieselbe Falle steckte in der Rechenbibliothek selbst – `decimal.js` rundet ab 20 signifikanten
+> Stellen. Siehe `17_MISTAKES_AND_LESSONS.md`, 13.08.2026.
+
+### `POST …/tasks`
+
+```json
+{ "title": "Login bauen", "status": "IN_PROGRESS", "assigneeId": "<userId>", "dueDate": "2026-09-01T00:00:00Z" }
+```
+
+Nur `title` ist Pflicht. `status` ist standardmäßig `TODO`; die Karte wird **unten in ihrer Spalte**
+angehängt (letzte Position + 1000).
+
+`404`, wenn das Projekt nicht zu dieser Organisation gehört – **oder archiviert ist**. In einen
+archivierten Behälter gehört keine neue Aufgabe; sonst ließe sich über die Task-Schnittstelle in
+etwas hineinschreiben, das in der Oberfläche nicht mehr auftaucht.
+
+**Die Zuweisung nimmt eine `userId`, keine `membershipId`** – obwohl die Spalte auf `memberships`
+zeigt. Das Frontend kennt aus `GET …/members` nur Nutzer-IDs; müsste es Mitgliedschafts-IDs
+schicken, wäre unsere Tabellenstruktur Teil der öffentlichen Schnittstelle.
+
+Der Service schlägt die Mitgliedschaft über `(organizationId, userId)` nach. **Darin steckt die
+Regel „nur an Mitglieder derselben Organisation"** – nicht als zusätzliche Prüfung, sondern als
+einziger Weg, überhaupt an eine `assigneeId` zu kommen. Kein Treffer ⇒ `400`. Was es nicht gibt,
+kann man nicht versehentlich durchlassen.
+
+`400` und nicht `404`, weil die angesprochene Ressource sehr wohl existiert – der Client hat etwas
+Ungültiges *geschickt*. Die Meldung sagt bewusst nicht, ob es den Nutzer überhaupt gibt.
+
+### `GET …/tasks` – die Board-Abfrage
+
+Flache Liste, sortiert nach `status`, dann `position` – genau die Reihenfolge des Index
+`(projectId, status, position)`, also ohne Sortierschritt in PostgreSQL.
+
+**Warum flach und nicht nach Spalten gruppiert:** `{ "TODO": [...], "DONE": [...] }` wäre bequemer
+für das Frontend und trotzdem falsch – eine leere Spalte fehlte im Ergebnis, und der Client müsste
+die Spaltenliste doch wieder selbst kennen. **Die Spalten sind eine Eigenschaft des Boards, nicht
+der Daten.**
+
+Gleichstände bei `position` werden über `createdAt` und zuletzt `id` aufgelöst. Ohne das wäre die
+Reihenfolge zweier gleich positionierter Karten von Aufruf zu Aufruf verschieden, und das Board
+„zappelt" beim Neuladen.
+
+Ein fremdes Projekt liefert eine **leere Liste**, keine `404`: Eine leere Liste gibt keine Auskunft
+darüber, ob es das Projekt gibt.
+
+### `PATCH …/tasks/:taskId`
+
+Ändert `title`, `description`, `assigneeId`, `dueDate`. Mindestens ein Feld erforderlich.
+`null` entfernt (Beschreibung, Zuweisung, Fälligkeit), ein fehlendes Feld lässt unverändert.
+
+**`status` und `position` gehen hier bewusst *nicht*.** Beide bestimmen, wo die Karte liegt, und
+beide gehören zusammen: Eine Spalte zu wechseln, ohne die Position in der neuen Spalte zu bestimmen,
+ergibt keinen sinnvollen Zustand. Dafür gibt es in Scheibe 3.4 `PATCH …/move` mit optimistischem
+Sperren. Wären sie hier erlaubt, gäbe es **zwei** Wege zum Verschieben – einen mit
+Konfliktbehandlung und einen ohne. Der ohne würde irgendwann benutzt.
+
+> Wenn zwei Felder nur gemeinsam einen gültigen Zustand ergeben, brauchen sie einen gemeinsamen
+> Endpoint – nicht zwei einzelne.
+
+### `DELETE …/tasks/:taskId`
+
+`204`. Hier wird **wirklich gelöscht**, anders als beim Projekt.
+
+**Warum der Unterschied:** Ein Projekt ist ein Behälter, dessen Verlauf interessant bleibt – Sprint 4
+zieht daraus Kennzahlen. Eine einzelne Karte ist das nicht; „falsch angelegt, weg damit" ist der
+häufigste Grund für ein `DELETE` auf einer Aufgabe. Sie unsichtbar aufzubewahren, füllt die Tabelle
+mit Zeilen, die niemand mehr sehen will, und jede künftige Abfrage müsste an den Filter denken.
+
+**Der zweite Aufruf gibt `404`, beim Projekt gibt er `204`** – das ist kein Widerspruch, sondern der
+Unterschied zwischen zwei Zuständen: Ein archiviertes Projekt existiert noch, eine gelöschte Aufgabe
+nicht. Idempotenz im Sinne der HTTP-Spezifikation betrifft den **Zustand** auf dem Server, nicht den
+Statuscode – und der ist nach dem zweiten `DELETE` derselbe wie nach dem ersten.
+
+Den Ausschlag gibt die Mandantenregel: Eine fremde Aufgabe muss sich wie eine nicht existierende
+verhalten, also `404`. Gäbe es hier `204`, wären „gelöscht" und „gehört dir nicht" von außen
+dasselbe, und der Aufrufer glaubte, etwas bewirkt zu haben.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |
