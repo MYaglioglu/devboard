@@ -107,6 +107,14 @@ Konfigurierbarkeit. Zudem sagt der Kommentar bei `role` in `08_DATABASE.md`, das
 taugt, solange die Werteliste fest ist – genau deshalb ist sie hier für Sprint 3 fest definiert und
 nicht halb konfigurierbar.
 
+### `db:migrate` und `db:generate` zu einem Schritt verbinden *(Sprint 3, 12.08.2026)*
+Der veraltete Prisma-Client hat zweimal Zeit gekostet (11.08. und 12.08., beide in
+`17_MISTAKES_AND_LESSONS.md`). Migration und Client-Erzeugung sind fachlich **ein** Vorgang; dass
+sie es technisch nicht immer sind, gehört nicht ins Gedächtnis, sondern ins Skript. Denkbar: ein
+`db:migrate`, das anschließend immer generiert, oder ein Husky-Hook, der einen Client warnend
+meldet, der älter ist als die jüngste Migration. Nicht sofort gezogen, weil es Werkzeugarbeit
+mitten in einer Feature-Scheibe wäre.
+
 ### Neuverteilung der Sortierpositionen als Hintergrundarbeit *(Sprint 3, 12.08.2026)*
 `tasks.position` ist `numeric(65,30)`. Wer 30-mal hintereinander an dieselbe Stelle einfügt,
 verbraucht die Nachkommastellen; danach muss die Spalte neu verteilt werden. In Sprint 3 geschieht

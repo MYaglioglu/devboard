@@ -527,3 +527,150 @@ genau ein Token pro Neuladen statt zwei.
    abzuschalten – und den Fehler in Produktion zu erleben.
 5. **Netzwerkansicht und Datenbank sind Diagnosewerkzeuge.** Die Oberfläche sah einwandfrei aus. Der
    Beweis stand in zwei Zeilen SQL.
+
+---
+
+## 2026-08-12 – Derselbe veraltete Prisma-Client, ein Sprint später
+
+**Situation:** Scheibe 3.1 legte `Project` und `Task` an, die Migration lief sauber durch
+(„Your database is now in sync with your schema."). In Scheibe 3.2 meldete ESLint dann 39 Fehler
+der Sorte *„Unsafe member access `.create` on a type that cannot be resolved"* – der generierte
+Client kannte `prisma.project` nicht.
+
+**Das Ärgerliche:** Genau dieser Fehler steht seit dem 11.08. in dieser Datei. Die Lehre war
+notiert, die Konsequenz nicht gezogen.
+
+**Behebung:** `npm run db:generate`, danach alles grün.
+
+**Warum es diesmal passierte:** Der erste `migrate dev`-Aufruf lief in eine Zeitüberschreitung und
+wurde abgebrochen; der zweite legte die Migration an und meldete Erfolg, ohne dass eine Zeile über
+die Client-Erzeugung in der Ausgabe stand. Die genaue Ursache ist nicht abschließend geklärt – und
+das ist der Punkt: Sie muss es auch nicht sein, wenn die Prüfung nicht am Werkzeug-Output hängt.
+
+**Learnings:**
+
+1. **Eine notierte Lehre ist keine umgesetzte Lehre.** Der Eintrag vom 11.08. endet mit „verifiziert
+   wird am Artefakt". Getan hat das niemand, weil nichts daran erinnert hat. Ein Learning, das nur
+   in einer Datei steht, wirkt beim zweiten Mal genauso wenig wie beim ersten.
+2. **Wiederholte Fehler sind ein Prozessproblem, kein Wissensproblem.** Die richtige Antwort ist
+   nicht „besser aufpassen", sondern die Schritte zusammenzubinden, die zusammengehören: Migration
+   und Client-Erzeugung sind ein Vorgang, nicht zwei. Als Konsequenz vorgemerkt in `06_BACKLOG.md`.
+3. **Immerhin hat der Fehler diesmal früh und laut geschlagen** – beim ersten Codepfad, der die
+   neuen Modelle benutzt, mit 39 Meldungen statt einer stillen Fehlfunktion. Ein Fehler, den das
+   Typsystem findet, ist der billigste, den es gibt.
+
+---
+
+## 2026-08-12 – Eine Mutationsprobe, die sich selbst überführt hat
+
+**Situation:** Nachweis, dass der Mandantenfilter in `ProjectsService.findeEines` bewacht ist:
+`organizationId` aus der `WHERE`-Bedingung entfernt, Tests laufen lassen. Ergebnis: **alle 17 Tests
+der Datei rot.**
+
+**Der Denkfehler, der beinahe passiert wäre:** Das als Erfolg zu verbuchen. Es sah nach einem sehr
+wirksam bewachten Schutz aus – tatsächlich war die Probe kaputt.
+
+**Die Ursache:** Aufgerufen wurde `npx jest --config ./test/jest-e2e.json` statt
+`npm run test:e2e`. Das npm-Skript setzt `THROTTLE_LIMIT=0`; ohne diese Variable lief das Rate
+Limiting mit und wies bereits die Registrierungen im Testaufbau ab. Die Tests scheiterten **vor**
+der Stelle, um die es ging.
+
+**Mit der richtigen Umgebung:** genau ein E2E-Test und ein Unit-Test rot – die beiden, die den
+Mandantenfilter prüfen. Das ist der Nachweis.
+
+**Learnings:**
+
+1. **Ein zu breites Rot ist genauso verdächtig wie ein ausbleibendes.** Beide bedeuten, dass der
+   Test etwas anderes misst als angenommen. Bei einer Mutationsprobe gehört deshalb zur Auswertung
+   nicht nur „wurde etwas rot", sondern „**wurde genau das rot, was ich erwartet habe**".
+2. **npm-Skripte sind Teil der Testumgebung, nicht nur Tipparbeit.** Was in `package.json` an
+   Umgebungsvariablen steht, gehört zum Testaufbau. Das Werkzeug direkt aufzurufen heißt, einen
+   anderen Test zu fahren als die CI.
+3. **Die Probe selbst braucht eine Erwartung, bevor sie läuft.** „Ich erwarte, dass Test X und Y rot
+   werden" vorher aufzuschreiben, macht den Unterschied zwischen einem Nachweis und einem Gefühl.
+
+---
+
+## 2026-08-13 – `decimal.js` rundet bei 20 Stellen, die Spalte fasst 30
+
+**Situation:** Scheibe 3.3, die Positionsberechnung. Die Spalte ist `numeric(65,30)` – ausdrücklich
+so gewählt, weil `float8` nach etwa 50 Halbierungen die Genauigkeit verliert. Ein Unit-Test sollte
+nachweisen, dass exakt gerechnet wird:
+
+```ts
+new Prisma.Decimal('0.000000000000000000000000000001').plus(1000)
+```
+
+**Erwartet:** `1000.000000000000000000000000000001`
+**Bekommen:** `1000`
+
+**Die Ursache:** Prisma bringt `decimal.js` mit, und dessen Voreinstellung ist `precision: 20` –
+zwanzig **signifikante** Stellen. Die Rechnung rundete also, bevor die Datenbank überhaupt gefragt
+wurde.
+
+**Warum das besonders bitter gewesen wäre:** Genau der Präzisionsverlust, gegen den `numeric`
+gewählt wurde – nur eine Schicht höher. Die Datenbank hätte den Wert halten können; es kam nur nie
+einer an. Und sichtbar geworden wäre es erst nach etwa 20 Verschiebungen an dieselbe Stelle, also
+frühestens beim echten Benutzen des Boards, vermutlich als „die Karte springt zurück".
+
+**Behebung:** Ein eigener Decimal-Typ mit `Prisma.Decimal.clone({ precision: 80 })`. `clone()` statt
+`Decimal.set()`, weil ein `set` beim Laden der Datei **jeden** Decimal im Prozess umkonfiguriert
+hätte – eine Fernwirkung, die niemand vermutet, der diese eine Datei nicht kennt.
+
+Zusätzlich muss der von Prisma **gelesene** Wert umhüllt werden (`new Genau(zeile.position)`): Er
+kommt mit der Voreinstellung zurück, und `decimal.js` übernimmt bei einer Rechnung die Einstellung
+des linken Operanden.
+
+**Learnings:**
+
+1. **Eine Entscheidung in der Datenbank gilt nicht automatisch im Code.** `numeric(65,30)` in
+   PostgreSQL und `precision: 20` in der Bibliothek sind zwei getrennte Einstellungen, die niemand
+   gegeneinander prüft. Wer sich für Genauigkeit entscheidet, muss die **ganze Kette** prüfen:
+   Spalte, Treiber, Rechenbibliothek, Serialisierung.
+2. **Voreinstellungen von Bibliotheken sind Annahmen über einen Anwendungsfall, der nicht meiner
+   sein muss.** 20 Stellen sind für Geldbeträge großzügig und für fractional indexing zu wenig.
+3. **Der Test hat ihn gefunden, weil er einen Grenzfall geprüft hat, nicht den Normalfall.**
+   `1000 + 1000 = 2000` wäre grün geblieben – und der Fehler hätte bis ins Board überlebt.
+4. **Ein Wert wandert über mehrere Schichten.** Deshalb steht in `tasks.e2e-spec.ts` zusätzlich ein
+   Test, der die Genauigkeit über den *gesamten* Weg prüft: PostgreSQL → Prisma → Service → JSON →
+   Testcode. Der Unit-Test allein hätte eine gerundete JSON-Serialisierung nicht bemerkt.
+
+---
+
+## 2026-08-13 – Die siebte Testsuite hat die sechste gelöscht
+
+**Situation:** Nach dem Hinzufügen von `tasks.e2e-spec.ts` schlug ein Test in
+`organizations.e2e-spec.ts` fehl – einer Datei, die in dieser Scheibe niemand angefasst hatte:
+
+```
+Foreign key constraint violated on the constraint: `memberships_userId_fkey`
+```
+
+Also: eine Mitgliedschaft für einen Nutzer, den es nicht mehr gab – **mitten im Testlauf**.
+
+**Die Ursache:** Jede E2E-Suite trennt ihre Testdaten über eine Kennung, und die war überall
+`Date.now()`. Aufgeräumt wird am Ende mit `email: { contains: '-<kennung>@' }` – ein Filter, der
+**nicht** nach der Suite unterscheidet. Starten zwei Suiten in derselben Millisekunde, löscht das
+Aufräumen der einen die Testdaten der anderen, während diese noch läuft.
+
+Mit vier Suiten war das unwahrscheinlich genug, um nie aufzufallen. Mit sieben parallel startenden
+Suiten wurde es zum realen Fall.
+
+**Behebung:** `` `${Date.now()}-${randomUUID().slice(0, 8)}` `` in **allen** sechs Suiten – nicht
+nur in den neuen. Eine Kollision setzt jetzt denselben Zeitstempel *und* dieselben acht Hex-Zeichen
+voraus.
+
+**Learnings:**
+
+1. **Eine Testisolierung, die auf Zeit beruht, ist keine Isolierung.** Sie ist eine Wette auf die
+   Auflösung der Uhr – und die Wette wird schlechter, je mehr Suiten parallel starten. Eindeutigkeit
+   muss man erzeugen, nicht ableiten.
+2. **Der Fehler zeigte sich in der Datei, die ihn nicht verursacht hat.** Das ist typisch für
+   gemeinsam genutzten Zustand: Die Symptomstelle und die Ursache liegen auseinander. Wer nur die
+   fehlgeschlagene Datei ansieht, sucht am falschen Ort.
+3. **Behoben wurde die Klasse, nicht der Fall.** Nur die beiden neuen Dateien anzupassen, hätte
+   dieselbe Kollision zwischen den vier alten weiterhin zugelassen – seltener, aber genauso
+   möglich.
+4. **Der Zufallsfehler kam während einer Mutationsprobe** und hat sich fast als „Schutz wirkt breit"
+   getarnt. Die vorher notierte Erwartung („genau diese zwei Tests werden rot") hat ihn als das
+   entlarvt, was er war.

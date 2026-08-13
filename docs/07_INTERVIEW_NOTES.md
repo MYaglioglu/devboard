@@ -1763,3 +1763,109 @@ und **ein** Unit-Test rot – der Nachweis, den wir wollten.
 
 **Die Lehre:** Ein zu breites Rot ist genauso verdächtig wie ein ausbleibendes. Beide bedeuten, dass
 der Test etwas anderes misst, als man glaubt.
+
+### 106. Ihr habt `numeric` in der Datenbank gewählt – und trotzdem gerundet. Wie kam das?
+
+Weil die Entscheidung in der Datenbank nichts über den Code sagt.
+
+Die Spalte ist `numeric(65,30)`, ausdrücklich gegen den Präzisionsverlust von `float8`. Prisma
+liefert solche Werte als `decimal.js`-Objekte – und deren Voreinstellung ist `precision: 20`, also
+zwanzig **signifikante** Stellen. Die Rechnung rundete, bevor die Datenbank überhaupt gefragt wurde:
+
+```ts
+new Prisma.Decimal('0.000000000000000000000000000001').plus(1000)  // "1000"
+```
+
+Behoben mit einem eigenen Typ: `Prisma.Decimal.clone({ precision: 80 })`. `clone()` und nicht
+`Decimal.set()`, weil ein `set` beim Laden der Datei jeden Decimal im ganzen Prozess umkonfiguriert
+hätte – eine Fernwirkung, die niemand vermutet, der diese eine Datei nicht kennt.
+
+**Was ich daraus gelernt habe:** Wer sich für Genauigkeit entscheidet, muss die *ganze Kette*
+prüfen – Spalte, Treiber, Rechenbibliothek, Serialisierung. Eine einzelne richtige Entscheidung in
+der Mitte nützt nichts, wenn eine Schicht davor oder danach rundet.
+
+### 107. Warum gibt eure API die Sortierposition als String zurück?
+
+Weil JSON nur einen Zahlentyp kennt, und der ist `float64`. Eine Position mit 30 Nachkommastellen
+käme im Browser gerundet an – derselbe Präzisionsverlust wie oben, nur auf dem Transportweg.
+
+Das Frontend rechnet ohnehin nicht damit: Beim Verschieben schickt es die IDs der beiden Nachbarn,
+den Mittelwert bildet der Server. Der Wert ist für den Client eine **undurchsichtige Kennung**, und
+als solche ist eine Zeichenkette die ehrliche Darstellung.
+
+Dasselbe Muster kennt man von großen Ganzzahlen: Deshalb geben Twitter- und Stripe-APIs IDs als
+Strings zurück, obwohl es Zahlen sind.
+
+### 108. Warum nimmt die Zuweisung eine `userId`, wenn die Spalte auf `memberships` zeigt?
+
+Zwei Gründe, ein interner und ein externer.
+
+**Extern:** Das Frontend kennt aus `GET /organizations/:orgId/members` Nutzer-IDs. Müsste es
+Mitgliedschafts-IDs schicken, wäre unsere Tabellenstruktur Teil der öffentlichen Schnittstelle –
+und ein späterer Umbau eine brechende Änderung für jeden Client.
+
+**Intern, und das ist der bessere Teil:** Der Service übersetzt, indem er die Mitgliedschaft über
+`(organizationId, userId)` nachschlägt. Genau darin steckt die Regel „nur an Mitglieder derselben
+Organisation" – nicht als zusätzliche Prüfung, sondern als der **einzige Weg**, überhaupt an eine
+`assigneeId` zu kommen. Ist der Nutzer kein Mitglied, gibt es keine Zeile und damit keine Zuweisung.
+
+Eine Prüfung kann man vergessen oder umgehen. Was es nicht gibt, kann man nicht versehentlich
+durchlassen.
+
+### 109. Euer PATCH ändert alles außer Status und Position. Warum diese Ausnahme?
+
+Weil die beiden nur *gemeinsam* einen gültigen Zustand ergeben: Eine Spalte zu wechseln, ohne die
+Position innerhalb der neuen Spalte zu bestimmen, ist kein sinnvoller Zwischenschritt.
+
+Dafür gibt es einen eigenen Endpoint mit optimistischem Sperren. Wären sie zusätzlich im PATCH
+erlaubt, gäbe es **zwei Wege zum Verschieben** – einen mit Konfliktbehandlung und einen ohne. Der
+ohne würde irgendwann benutzt, spätestens von jemandem, der den anderen nicht kennt.
+
+**Verallgemeinert:** Wenn zwei Felder nur zusammen gültig sind, brauchen sie einen gemeinsamen
+Endpoint. Ein CRUD-PATCH, der jedes Feld einzeln erlaubt, ist bequem – und macht ungültige Zustände
+erreichbar.
+
+### 110. Bei Projekten archiviert ihr, bei Aufgaben löscht ihr wirklich. Ist das nicht inkonsistent?
+
+Es ist unterschiedlich, weil die Dinge unterschiedlich sind.
+
+Ein Projekt ist ein **Behälter**, dessen Verlauf interessant bleibt – Sprint 4 zieht daraus
+Kennzahlen, und ein abgeschlossenes Projekt schlägt man nach. Eine einzelne Karte ist das nicht;
+„falsch angelegt, weg damit" ist der häufigste Grund für ihr Löschen. Sie unsichtbar aufzubewahren,
+füllt die Tabelle mit Zeilen, die niemand mehr sehen will – und jede künftige Abfrage müsste an den
+Filter denken.
+
+Sichtbar wird der Unterschied am zweiten Aufruf: beim Projekt `204`, bei der Aufgabe `404`. Auch das
+ist kein Widerspruch, sondern folgt aus dem Zustand – das archivierte Projekt existiert noch, die
+gelöschte Aufgabe nicht. Idempotenz nach HTTP-Spezifikation betrifft den *Zustand* auf dem Server,
+nicht den Statuscode.
+
+**Den Preis nenne ich offen:** Wer eine Aufgabe versehentlich löscht, bekommt sie nicht zurück.
+Sobald der Aktivitäts-Feed steht, wäre ein „gelöscht"-Ereignis die passende Ergänzung.
+
+### 111. Warum liefert `GET /tasks` eine flache Liste statt nach Spalten gruppierter Daten?
+
+Weil die Spalten eine Eigenschaft des **Boards** sind, nicht der Daten.
+
+`{ "TODO": [...], "DONE": [...] }` wäre bequemer für das Frontend und trotzdem falsch: Eine leere
+Spalte fehlte im Ergebnis. Der Client müsste die vollständige Spaltenliste also ohnehin selbst
+kennen – und hätte dann zwei Quellen dafür, von denen eine unvollständig ist.
+
+Die flache Liste ist außerdem genau das, was der Index `(projectId, status, position)` hergibt:
+sortiert nach Spalte, dann Position, ohne Sortierschritt in PostgreSQL. Serverseitig zu gruppieren
+hieße, diese Reihenfolge wieder aufzubrechen, um sie im Client neu zusammenzusetzen.
+
+### 112. Zwei Nutzer legen gleichzeitig eine Aufgabe in derselben Spalte an. Was passiert?
+
+Beide können dieselbe letzte Position lesen und damit dieselbe neue Position bekommen. Die
+Transaktion verhindert das nicht – dafür bräuchte es eine Sperre auf der ganzen Spalte, und die wäre
+für diesen Fall zu teuer.
+
+Vertretbar ist es, weil zwei gleiche Positionen **kein kaputter Zustand** sind, sondern nur eine
+unbestimmte Reihenfolge zwischen genau diesen beiden Karten. Deshalb löst `orderBy` den Gleichstand
+über `createdAt` und zuletzt über die `id` auf: Das Ergebnis ist **stabil**, auch wenn es nicht
+vorhersagbar ist – das Board zeigt bei jedem Laden dasselbe.
+
+Beim *Verschieben* ist die Lage anders: Dort geht es um einen Wert, den ein Nutzer bewusst gesetzt
+hat, und dort steht das optimistische Sperren. **Nicht jede Wettlaufsituation muss verhindert
+werden – man muss nur wissen, welche man in Kauf nimmt und warum.**
