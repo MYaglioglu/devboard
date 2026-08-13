@@ -99,6 +99,12 @@ function Inhalt() {
         <p className="mt-1 text-sm text-zinc-500">
           Ihre Rolle: {ROLLEN_TEXT[organisation.data.role]}
         </p>
+        <Link
+          href={`/organizations/${orgId}/projects`}
+          className="mt-3 inline-block text-sm text-emerald-600 hover:underline"
+        >
+          Projekte dieser Organisation →
+        </Link>
       </header>
 
       <section className="flex flex-col gap-3">
