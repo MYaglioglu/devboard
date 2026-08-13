@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
+import { Board } from '@/components/board';
 import { Geschuetzt } from '@/components/geschuetzt';
 import { Feld, Hinweis, Knopf } from '@/components/ui';
 import { ApiFehler } from '@/lib/api';
@@ -108,13 +109,15 @@ function Inhalt() {
       </header>
 
       {/*
-        Das Board folgt in Scheibe 3.6. Der Platzhalter steht hier bewusst:
-        Eine Seite, die nur einen Namen zeigt, wirkt kaputt - ein benannter
-        naechster Schritt nicht.
+        Ein archiviertes Projekt bleibt LESBAR, aber nicht veraenderbar - das
+        Backend lehnt neue Aufgaben darin ohnehin mit 404 ab. Die Oberflaeche
+        blendet deshalb aus, was scheitern wuerde, statt es anzubieten.
       */}
-      <section className="rounded-lg border border-dashed border-zinc-300 p-6 text-center text-sm text-zinc-500 dark:border-zinc-700">
-        Das Kanban-Board für dieses Projekt entsteht in der nächsten Scheibe.
-      </section>
+      <Board
+        orgId={orgId}
+        projektId={projectId}
+        schreibgeschuetzt={projekt.data.archivedAt !== null}
+      />
 
       {darfVerwalten && !projekt.data.archivedAt && (
         <VerwaltungsBereich

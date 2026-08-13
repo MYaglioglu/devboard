@@ -16,6 +16,24 @@ vi.mock('@/components/geschuetzt', () => ({
   Geschuetzt: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+/**
+ * Das Board wird ersetzt - dieser Test prueft die SEITE, nicht das Board.
+ *
+ * Ohne die Attrappe zieht das echte Board `useAufgaben` heran, das wiederum
+ * `useAuth` braucht, und der Test scheiterte an einem fehlenden Provider. Das
+ * eigentliche Board hat seine eigenen Tests in board.test.tsx.
+ *
+ * Die Attrappe zeigt den Schreibschutz an, damit die Seite pruefbar bleibt:
+ * Sie entscheidet, ob ein archiviertes Projekt das Board nur lesbar zeigt.
+ */
+vi.mock('@/components/board', () => ({
+  Board: ({ schreibgeschuetzt }: { schreibgeschuetzt: boolean }) => (
+    <div data-testid="board">
+      {schreibgeschuetzt ? 'schreibgeschützt' : 'bearbeitbar'}
+    </div>
+  ),
+}));
+
 vi.mock('next/navigation', () => ({
   useParams: () => ({ orgId: 'org-1', projectId: 'p1' }),
   useRouter: () => ({ push }),
@@ -128,6 +146,23 @@ describe('Projektseite', () => {
     expect(
       screen.queryByRole('button', { name: 'Projekt archivieren' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('zeigt das Board eines archivierten Projekts schreibgeschuetzt', () => {
+    mitProjekt(projekt({ archivedAt: '2026-08-12T10:00:00.000Z' }));
+
+    render(<ProjektSeite />);
+
+    // Lesbar bleibt es - das Backend lehnt nur SCHREIBENDE Zugriffe ab.
+    expect(screen.getByTestId('board')).toHaveTextContent('schreibgeschützt');
+  });
+
+  it('zeigt das Board eines aktiven Projekts bearbeitbar', () => {
+    mitProjekt(projekt());
+
+    render(<ProjektSeite />);
+
+    expect(screen.getByTestId('board')).toHaveTextContent('bearbeitbar');
   });
 
   it('zeigt einem MEMBER keine Verwaltung', () => {
