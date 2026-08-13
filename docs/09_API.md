@@ -1018,6 +1018,69 @@ Konfliktbehandlung und einen ohne. Der ohne würde irgendwann benutzt.
 > Wenn zwei Felder nur gemeinsam einen gültigen Zustand ergeben, brauchen sie einen gemeinsamen
 > Endpoint – nicht zwei einzelne.
 
+### `PATCH …/tasks/:taskId/move` – der Endpoint, um den es in Sprint 3 geht
+
+```json
+{ "status": "IN_PROGRESS", "previousId": "<taskId>|null", "nextId": "<taskId>|null", "version": 3 }
+```
+
+#### Warum der Client Nachbarn schickt und keine Position
+
+Naheliegend wäre `{ "position": "1500" }` – der Client rechnet, der Server speichert. Das wäre aus
+drei Gründen falsch:
+
+1. Der Client müsste die **Rechenregel kennen**. Damit wäre sie Teil der Schnittstelle, und ein
+   späterer Wechsel (etwa auf string-basierte Ränge) bräche jeden Client.
+2. Er müsste in JavaScript rechnen – also in `float64`, das genau die Präzision nicht hat, wegen
+   der die Spalte `numeric` ist.
+3. Zwei Clients könnten dieselbe Position berechnen und einander überschreiben.
+
+Stattdessen sagt der Client, was er tatsächlich *weiß*, weil der Nutzer es getan hat: „diese Karte
+liegt jetzt zwischen jener und jener". `null` bedeutet Rand – kein Vorgänger heißt ganz oben.
+
+#### `version` ist Pflicht, nicht optional
+
+Das ist das optimistische Sperren: Der Server ändert die Karte nur, wenn ihre Version noch die ist,
+die der Client gelesen hat.
+
+Optional wäre es ein Angebot – und wer es weglässt, bekäme das Verschieben *ohne* Konfliktschutz.
+Damit gäbe es zwei Verhalten am selben Endpoint, und benutzt würde das bequemere. **Ein Schutz, den
+man weglassen kann, ist keiner.**
+
+Entscheidend ist, *wo* die Version steht: im `WHERE` des `UPDATE`, nicht in einer Prüfung davor.
+Zwischen einem `if (task.version === …)` und dem folgenden Schreiben läge eine Lücke, in der ein
+anderer schreiben kann. So entscheidet die Datenbank in einem Schritt.
+
+#### Antworten
+
+| Status | Wann |
+|---|---|
+| `200` | verschoben, die Antwort enthält die **neue** Version |
+| `409` | die Version passt nicht mehr – jemand war schneller, **nichts wurde geschrieben** |
+| `400` | Nachbar liegt nicht in der Zielspalte, Nachbarn in verkehrter Reihenfolge, Karte als eigener Nachbar, `version` fehlt |
+| `404` | Aufgabe gehört nicht zu diesem Projekt / dieser Organisation |
+
+**Warum `409` und nicht `412`:** `412 Precondition Failed` gehört zu den HTTP-Vorbedingungen über
+`If-Match`/ETag. Wir tragen die Version im Körper, nicht in einer Kopfzeile – dann ist `409` die
+ehrlichere Antwort. Der Konflikt ist fachlich, nicht protokollarisch.
+
+**Warum `400` bei einem Nachbarn aus der falschen Spalte:** Seine Position hat mit der Zielspalte
+nichts zu tun; der Mittelwert wäre eine Zahl ohne Bedeutung, und die Karte landete an zufälliger
+Stelle – ohne Fehlermeldung. Der Fall ist nicht theoretisch: Genau so sieht ein veraltetes Board
+aus. Die Antwort ist deshalb ein Fehler und kein stilles Zurechtrücken.
+
+#### Die erschöpfte Spalte
+
+Nach rund 30 Halbierungen an derselben Stelle passt die Position nicht mehr in `numeric(65,30)`.
+Der Server erkennt das **vor** dem Schreiben (`decimalPlaces() > 30`), verteilt die Spalte neu
+(1000, 2000, 3000 …), liest die Nachbarn erneut und rechnet noch einmal. Für den Client ist der
+Vorgang unsichtbar – er bekommt `200`.
+
+Die Neuverteilung schreibt N Zeilen und ist deshalb ausdrücklich **nicht** der Normalfall: Wäre das
+jede Verschiebung, hätte man die Nachteile der Integer-Nummerierung wieder eingekauft, die zu
+vermeiden der ganze Zweck von `numeric` war. Sie läuft derzeit synchron in der auslösenden Anfrage;
+eine Hintergrundvariante steht in `06_BACKLOG.md`.
+
 ### `DELETE …/tasks/:taskId`
 
 `204`. Hier wird **wirklich gelöscht**, anders als beim Projekt.

@@ -1869,3 +1869,88 @@ vorhersagbar ist – das Board zeigt bei jedem Laden dasselbe.
 Beim *Verschieben* ist die Lage anders: Dort geht es um einen Wert, den ein Nutzer bewusst gesetzt
 hat, und dort steht das optimistische Sperren. **Nicht jede Wettlaufsituation muss verhindert
 werden – man muss nur wissen, welche man in Kauf nimmt und warum.**
+
+### 113. Warum schickt euer Client beim Verschieben die Nachbarn statt der Position?
+
+Weil er die Position gar nicht berechnen *darf*.
+
+Drei Gründe. Erstens müsste er dafür die Rechenregel kennen – damit wäre sie Teil der Schnittstelle,
+und ein späterer Wechsel (etwa auf string-basierte Ränge wie LexoRank) bräche jeden Client.
+Zweitens müsste er in JavaScript rechnen, also in `float64` – genau die Genauigkeit, die wir mit
+`numeric` vermeiden. Drittens könnten zwei Clients dieselbe Position berechnen.
+
+Die Nachbarn sind außerdem das, was der Client tatsächlich *weiß*: Der Nutzer hat die Karte zwischen
+zwei anderen losgelassen. Alles Weitere ist Ableitung – und Ableitungen gehören dorthin, wo die
+Daten liegen.
+
+**Verallgemeinert:** Eine Schnittstelle sollte die Absicht übertragen, nicht das Ergebnis einer
+Rechnung über fremde Daten.
+
+### 114. Wie testet man einen Nebenläufigkeitsfehler, ohne auf Timing zu hoffen?
+
+Beim optimistischen Sperren gar nicht – und das ist der Punkt.
+
+In Sprint 2 musste der Konflikt erzwungen werden: Eine eigene Transaktion hielt die Zeilensperre
+500 ms, und gemessen wurde, ob der Endpoint wartet. Ein früherer Versuch mit `Promise.all` war
+grün geblieben, weil er keine Verschränkung *erzeugt*, sondern nur deren Möglichkeit.
+
+Beim optimistischen Sperren hängt der Konflikt nicht am Zeitverhalten, sondern an der **Version**.
+Zwei Anfragen mit derselben gelesenen Version sind genau das, was zwei gleichzeitig ladende Nutzer
+erzeugen – egal, wann sie abschicken. Der Test stellt sie also nacheinander:
+
+```
+Nutzer 1: move(version: 0)  → 200, Version steht auf 1
+Nutzer 2: move(version: 0)  → 409, nichts geschrieben
+```
+
+Der Test prüft zusätzlich, dass danach der Stand von Nutzer 1 unverändert dasteht. Ohne diese
+Zusicherung wäre „409" nur eine Fehlermeldung, kein Beweis, dass nichts geschrieben wurde.
+
+**Der Satz, den ich mir gemerkt habe:** Optimistisches Sperren macht einen Nebenläufigkeitsfehler
+deterministisch reproduzierbar. Das ist ein Testbarkeitsvorteil, der bei der Wahl des Verfahrens
+selten genannt wird.
+
+### 115. Was passiert, wenn die Positionen zwischen zwei Karten „aufgebraucht" sind?
+
+Dann verteilt der Server die Spalte neu – und der Client merkt nichts davon.
+
+Erkannt wird es *vor* dem Schreiben: `position.decimalPlaces() > 30`. Die 30 ist keine Schätzung,
+sondern steht so in der Migration (`numeric(65,30)`). Eine Stelle mehr, und PostgreSQL würde runden;
+zwei Karten hätten dieselbe Position, und die Reihenfolge wäre ab da unbestimmt – ohne Fehler, ohne
+Meldung.
+
+Die Neuverteilung setzt 1000, 2000, 3000 … , liest die Nachbarn erneut und rechnet noch einmal. Der
+zweite Durchgang kann nicht wieder anschlagen, weil danach ganze Zahlen mit großem Abstand
+dastehen.
+
+**Warum das nicht der Normalfall sein darf:** Sie schreibt N Zeilen. Wäre das jede Verschiebung,
+hätte man die Nachteile der Integer-Nummerierung wieder eingekauft, die zu vermeiden der ganze
+Zweck von `numeric` war. Sie ist der seltene Ausnahmepfad – geprüft von einem Test, der den Zustand
+direkt herstellt, statt 30-mal zu verschieben.
+
+### 116. Warum antwortet ihr mit `409` und nicht mit `412 Precondition Failed`?
+
+Weil `412` zu den HTTP-Vorbedingungen gehört – `If-Match` mit einem ETag in der Kopfzeile. Wer `412`
+schickt, sagt damit: „Ihre Vorbedingung im Protokoll ist nicht erfüllt."
+
+Wir tragen die Version im **Körper**, als fachliches Feld. Dann ist der Konflikt ein fachlicher, und
+`409 Conflict` ist die ehrlichere Antwort: „Der Zustand der Ressource verträgt sich nicht mit Ihrer
+Anfrage."
+
+Man *könnte* es mit ETags bauen, und bei einer öffentlichen API mit Zwischenspeichern wäre das
+sogar der bessere Weg – Proxies und Browser verstehen `If-Match`. Für eine interne API ohne
+Zwischenspeicher wäre es Aufwand ohne Gegenwert.
+
+### 117. Warum liegt die Sortierarithmetik in einer eigenen Datei?
+
+Weil sie der fachlich heikelste Teil des Sprints ist und zugleich der am billigsten prüfbare –
+sobald sie nichts anderes mehr braucht.
+
+`positionen.ts` kennt weder Prisma-Abfragen noch NestJS: rein Ein- und Ausgabe. Deshalb prüft
+`positionen.spec.ts` die Grenzfälle ohne Datenbank, ohne Testmodul, ohne HTTP – darunter die
+40-fache Halbierung und die Frage, ob nach einer Neuverteilung wieder Platz ist. Im Service-Test
+hätte jeder dieser Fälle eine Prisma-Attrappe gebraucht.
+
+**Die allgemeine Regel:** Was rein rechnend ist, gehört von dem getrennt, was Ein- und Ausgabe
+macht. Nicht wegen der Architekturlehre, sondern weil die Testkosten um eine Größenordnung
+auseinanderliegen.
