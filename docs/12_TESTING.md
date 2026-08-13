@@ -134,6 +134,8 @@ Sprint 3:
 |---|---|
 | `organizationId` im `where` von `ProjectsService.findeEines` | 1 Unit, 1 E2E |
 | `project: { organizationId }` im `where` von `TasksService.loesche` | 1 Unit, 1 E2E |
+| `version` im `where` des Verschiebens (optimistisches Sperren) | 1 E2E |
+| Die Neuverteilung bei erschöpfter Genauigkeit | 1 E2E |
 
 Bei der zweiten Probe wurde die Erwartung **vorher** notiert („rot werden müssen der Unit-Test
 *nimmt den Mandanten in die Löschbedingung auf* und der E2E-Test *löscht keine Aufgabe aus einem
@@ -141,6 +143,27 @@ fremden Projekt*"). Genau die beiden wurden es. Das ist der Unterschied zwischen
 einem Gefühl – und es hat sich sofort ausgezahlt: Ein Zwischenlauf zeigte wieder *alle 21* Tests
 rot, diesmal weil der Docker-Daemon nicht lief. Ohne vorher festgelegte Erwartung wäre das als
 „Schutz wirkt sehr breit" durchgegangen.
+
+## Der Nebenläufigkeitstest, der diesmal ohne Zeitspiel auskommt
+
+In Sprint 2 musste der Konflikt **erzwungen** werden: Eine eigene Transaktion hielt die Zeilensperre
+500 ms, gemessen wurde, ob der Endpoint wartet. `Promise.all` hatte dort nichts bewacht, weil es
+keine Verschränkung erzeugt, sondern nur deren Möglichkeit.
+
+Beim optimistischen Sperren entfällt dieses Problem, und zwar grundsätzlich: **Der Konflikt hängt
+nicht am Zeitverhalten, sondern an der Version.** Zwei Anfragen mit derselben gelesenen Version sind
+genau das, was zwei gleichzeitig ladende Nutzer erzeugen – unabhängig davon, wann sie abschicken.
+Der Test stellt sie deshalb nacheinander und prüft trotzdem exakt den Fall:
+
+```
+Nutzer 1: move(version: 0)  -> 200, Version steht jetzt auf 1
+Nutzer 2: move(version: 0)  -> 409, nichts geschrieben
+```
+
+Das ist kein Trick, sondern ein Vorteil des Verfahrens: **Optimistisches Sperren macht einen
+Nebenläufigkeitsfehler deterministisch reproduzierbar.** Der Test prüft zusätzlich, dass nach dem
+409 der Stand von Nutzer 1 unverändert dasteht – ohne diese Zusicherung wäre „409" nur eine
+Fehlermeldung und kein Beweis, dass nichts geschrieben wurde.
 
 **Nebenbefund aus dieser Probe:** Der erste Durchlauf ließ *alle 17* Tests der Datei fehlschlagen –
 was nach einem sehr wirksamen Schutz ausgesehen hätte. Tatsächlich war die Probe selbst kaputt:
