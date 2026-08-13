@@ -1,58 +1,29 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  Genau,
+  POSITIONS_ABSTAND,
+  berechnePosition,
+  brauchtNeuverteilung,
+  neueVerteilung,
+} from './positionen';
 import type { TaskStatus } from '../generated/prisma/enums';
 import type { CreateTaskDto } from './dto/create-task.dto';
+import type { MoveTaskDto } from './dto/move-task.dto';
 import type { UpdateTaskDto } from './dto/update-task.dto';
 
 /**
- * Der Decimal-Typ, mit dem in diesem Service gerechnet wird.
- *
- * ============================================================================
- * WARUM NICHT EINFACH `Prisma.Decimal` - DER STILLSTE FEHLER DES SPRINTS
- * ============================================================================
- * Prisma bringt `decimal.js` mit, und dessen Voreinstellung ist
- * `precision: 20` - ZWANZIG signifikante Stellen. Die Spalte in PostgreSQL
- * fasst `numeric(65,30)`, also deutlich mehr.
- *
- * Das heisst: Die Rechnung rundet, bevor die Datenbank ueberhaupt gefragt
- * wird. Ein Test hat es aufgedeckt:
- *
- *     new Prisma.Decimal('0.000000000000000000000000000001').plus(1000)
- *       -> "1000"          statt "1000.000000000000000000000000000001"
- *
- * Genau der Praezisionsverlust, wegen dem `numeric` statt `float8` gewaehlt
- * wurde - nur eine Schicht hoeher und deshalb doppelt heimtueckisch: Die
- * Datenbank haette den Wert halten koennen, aber es kam nie einer an.
- *
- * `clone()` erzeugt einen eigenen Decimal-Typ mit eigener Einstellung, statt
- * die globale zu veraendern. Ein `Prisma.Decimal.set(...)` beim Laden dieser
- * Datei wuerde auch jeden anderen Decimal im Prozess umkonfigurieren - eine
- * Fernwirkung, die niemand vermutet, der diese Datei nicht kennt.
- *
- * 80 Stellen, weil die Spalte hoechstens 65 braucht. Lieber Luft nach oben
- * als eine Grenze, die genau auf der anderen liegt.
+ * Die Sortierarithmetik steht in positionen.ts - eine eigene Datei ohne
+ * Abhaengigkeit zu Prisma-Abfragen oder NestJS. Der fachlich heikelste Teil
+ * dieses Sprints ist damit ohne Datenbank pruefbar (positionen.spec.ts).
  */
-const Genau = Prisma.Decimal.clone({ precision: 80 });
-
-/**
- * Der Abstand zwischen zwei frisch angelegten Karten.
- *
- * Nicht 1, sondern 1000: Zwischen 1000 und 2000 passen beliebig viele
- * Halbierungen, zwischen 1 und 2 auch - aber die erste Zwischenposition waere
- * dort schon 1.5 statt 1500. Ganzzahlige Positionen bleiben laenger lesbar,
- * und beim Blick in die Datenbank sieht man auf einen Blick, was angelegt und
- * was verschoben wurde.
- *
- * Fachlich ist der Wert egal - `numeric` kann zwischen zwei beliebigen Zahlen
- * teilen. Er ist eine Lesehilfe, kein Mechanismus.
- */
-const POSITIONS_ABSTAND = new Genau(1000);
 
 /** Der Zustaendige einer Aufgabe, wie ihn die API herausgibt. */
 export interface Zustaendiger {
@@ -451,6 +422,230 @@ export class TasksService {
 
     if (ergebnis.count === 0) {
       throw new NotFoundException('Aufgabe nicht gefunden');
+    }
+  }
+
+  /**
+   * Verschiebt eine Karte: neue Spalte, neue Position - in einem Schritt.
+   *
+   * ==========================================================================
+   * DER ENDPOINT, UM DEN ES IN SPRINT 3 GEHT
+   * ==========================================================================
+   * Der Client schickt nicht die Position, sondern die beiden NACHBARN, und
+   * dazu die Version, die er gelesen hat. Warum keine Position: siehe
+   * move-task.dto.ts.
+   *
+   * Der Ablauf, und jeder Schritt hat einen Grund:
+   *
+   *   1. Aufgabe laden - mit Mandantenfilter. Kein Treffer: 404.
+   *   2. Nachbarn laden - beide muessen in der ZIELSPALTE dieses Projekts
+   *      liegen. Sonst waere die berechnete Position bedeutungslos.
+   *   3. Position berechnen (Mittelwert bzw. Rand).
+   *   4. Reicht die Genauigkeit nicht mehr: Spalte neu verteilen, Nachbarn
+   *      neu lesen, erneut rechnen.
+   *   5. Schreiben - aber nur, wenn die Version noch stimmt. Sonst: 409.
+   *
+   * Alles in EINER Transaktion, weil zwischen Lesen und Schreiben entschieden
+   * wird. Ohne sie koennte die Neuverteilung halb geschrieben liegenbleiben -
+   * und eine halb neu verteilte Spalte ist schlimmer als eine erschoepfte.
+   */
+  async verschiebe(
+    organizationId: string,
+    projektId: string,
+    aufgabenId: string,
+    daten: MoveTaskDto,
+  ): Promise<Aufgabe> {
+    return this.prisma.$transaction(async (tx) => {
+      const aufgabe = await tx.task.findFirst({
+        where: {
+          id: aufgabenId,
+          projectId: projektId,
+          project: { organizationId },
+        },
+        select: { id: true },
+      });
+
+      if (!aufgabe) {
+        throw new NotFoundException('Aufgabe nicht gefunden');
+      }
+
+      // Eine Karte kann nicht ihr eigener Nachbar sein. Ohne diese Pruefung
+      // wuerde die Rechnung mit der ALTEN Position derselben Karte arbeiten -
+      // das Ergebnis waere kein Fehler, sondern eine stille Verschiebung an
+      // eine Stelle, die niemand gemeint hat.
+      if (daten.previousId === aufgabenId || daten.nextId === aufgabenId) {
+        throw new BadRequestException(
+          'Eine Aufgabe kann nicht ihr eigener Nachbar sein',
+        );
+      }
+
+      const nachbarn = () => this.ladeNachbarn(tx, projektId, daten);
+
+      let { vorgaenger, nachfolger } = await nachbarn();
+      let position = berechnePosition(vorgaenger, nachfolger);
+
+      // ======================================================================
+      // DIE ERSCHOEPFTE SPALTE
+      // ======================================================================
+      // Nach rund 30 Halbierungen an derselben Stelle passt die Position nicht
+      // mehr in numeric(65,30). PostgreSQL wuerde runden, und zwei Karten
+      // haetten dieselbe Position - die Reihenfolge waere ab da unbestimmt.
+      //
+      // Deshalb hier: Spalte neu verteilen (1000, 2000, 3000 ...), Nachbarn
+      // neu lesen, erneut rechnen. Der zweite Durchgang kann nicht wieder
+      // anschlagen, weil nach der Neuverteilung ganze Zahlen mit grossem
+      // Abstand dastehen.
+      if (brauchtNeuverteilung(position)) {
+        await this.verteileNeu(tx, projektId, daten.status);
+
+        ({ vorgaenger, nachfolger } = await nachbarn());
+        position = berechnePosition(vorgaenger, nachfolger);
+      }
+
+      // ======================================================================
+      // OPTIMISTISCHES SPERREN - DIE EIGENTLICHE ZEILE
+      // ======================================================================
+      // `version` steht im WHERE, nicht in einer Pruefung davor. Genau darin
+      // liegt der Unterschied: Zwischen einem `if (aufgabe.version === ...)`
+      // und dem folgenden UPDATE laege eine Luecke, in der ein anderer
+      // schreiben koennte. Hier entscheidet die DATENBANK in einem Schritt.
+      //
+      // `increment: 1` statt eines gelesenen Werts, damit auch der Zaehler
+      // selbst nicht aus einem veralteten Stand stammt.
+      const ergebnis = await tx.task.updateMany({
+        where: {
+          id: aufgabenId,
+          projectId: projektId,
+          project: { organizationId },
+          version: daten.version,
+        },
+        data: {
+          status: daten.status,
+          position,
+          version: { increment: 1 },
+        },
+      });
+
+      if (ergebnis.count === 0) {
+        // Die Aufgabe gibt es (Schritt 1 in derselben Transaktion), also kann
+        // nur die Version nicht mehr passen: Jemand war schneller.
+        //
+        // 409 und nicht 412 (Precondition Failed): 412 gehoert zu den
+        // HTTP-Vorbedingungen ueber `If-Match`/ETag. Wir tragen die Version im
+        // Koerper, nicht in einer Kopfzeile - dann ist 409 die ehrlichere
+        // Antwort. Der Konflikt ist fachlich, nicht protokollarisch.
+        throw new ConflictException(
+          'Die Aufgabe wurde inzwischen geändert. Bitte neu laden.',
+        );
+      }
+
+      const zeile = await tx.task.findFirstOrThrow({
+        where: { id: aufgabenId },
+        select: AUFGABE_FELDER,
+      });
+
+      return zuAufgabe(zeile);
+    });
+  }
+
+  /**
+   * Laedt die beiden angegebenen Nachbarn - und prueft dabei, dass sie
+   * ueberhaupt dort liegen, wo der Client sie vermutet.
+   *
+   * ==========================================================================
+   * WARUM DIE ZIELSPALTE IM WHERE STEHT
+   * ==========================================================================
+   * Ein Nachbar aus einer ANDEREN Spalte (oder einem anderen Projekt) hat eine
+   * Position, die mit der Zielspalte nichts zu tun hat. Der Mittelwert waere
+   * eine Zahl ohne Bedeutung, und die Karte landete an einer zufaelligen
+   * Stelle - ohne Fehlermeldung.
+   *
+   * Der Fall ist nicht theoretisch: Genau so sieht es aus, wenn das Board des
+   * Clients veraltet ist. Die Antwort darauf ist 400 und nicht etwa ein
+   * stilles Zurechtruecken - der Client soll neu laden.
+   */
+  private async ladeNachbarn(
+    tx: Prisma.TransactionClient,
+    projektId: string,
+    daten: MoveTaskDto,
+  ): Promise<{
+    vorgaenger: Prisma.Decimal | null;
+    nachfolger: Prisma.Decimal | null;
+  }> {
+    const lade = async (id: string | null) => {
+      if (!id) {
+        return null;
+      }
+
+      const nachbar = await tx.task.findFirst({
+        where: { id, projectId: projektId, status: daten.status },
+        select: { position: true },
+      });
+
+      if (!nachbar) {
+        throw new BadRequestException(
+          'Die angegebene Nachbarkarte liegt nicht in dieser Spalte',
+        );
+      }
+
+      return nachbar.position;
+    };
+
+    const vorgaenger = await lade(daten.previousId);
+    const nachfolger = await lade(daten.nextId);
+
+    // Die beiden muessen in der behaupteten Reihenfolge stehen. Sonst ist der
+    // Mittelwert kein Wert ZWISCHEN ihnen, sondern ausserhalb - die Karte
+    // landete irgendwo, und die Reihenfolge waere hinterher eine andere als
+    // die, die der Nutzer gesehen hat.
+    //
+    // Gleichheit ist ebenfalls unzulaessig: Zwischen zwei gleichen Werten gibt
+    // es keinen Platz. Dass es sie geben kann, steht im Kommentar bei
+    // `erstelle` - hier faellt es auf, statt still falsch zu werden.
+    if (vorgaenger && nachfolger && !vorgaenger.lessThan(nachfolger)) {
+      throw new BadRequestException(
+        'Die angegebenen Nachbarkarten stehen nicht in dieser Reihenfolge',
+      );
+    }
+
+    return { vorgaenger, nachfolger };
+  }
+
+  /**
+   * Verteilt die Positionen einer Spalte neu: 1000, 2000, 3000 ...
+   *
+   * Laeuft nur, wenn die Genauigkeit erschoepft ist - also selten. Dann aber
+   * schreibt sie N Zeilen, und genau deshalb ist sie NICHT der Normalfall:
+   * Waere das jede Verschiebung, haette man die Nachteile der
+   * Integer-Nummerierung wieder eingekauft, die zu vermeiden der ganze Zweck
+   * von `numeric` war.
+   *
+   * Die Reihenfolge beim Neuverteilen ist dieselbe wie beim Lesen des Boards
+   * (Position, dann `createdAt`, dann `id`) - sonst koennte die Neuverteilung
+   * die sichtbare Reihenfolge veraendern, und aus einer internen
+   * Aufraeumarbeit wuerde eine fuer den Nutzer sichtbare Umsortierung.
+   */
+  private async verteileNeu(
+    tx: Prisma.TransactionClient,
+    projektId: string,
+    status: TaskStatus,
+  ): Promise<void> {
+    const spalte = await tx.task.findMany({
+      where: { projectId: projektId, status },
+      orderBy: [{ position: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true },
+    });
+
+    const positionen = neueVerteilung(spalte.length);
+
+    // Nacheinander statt `Promise.all`: In EINER Transaktion laufen die
+    // Anweisungen ohnehin seriell ueber dieselbe Verbindung. Parallel
+    // abzuschicken brächte nichts und macht die Reihenfolge unklar.
+    for (const [index, karte] of spalte.entries()) {
+      await tx.task.update({
+        where: { id: karte.id },
+        data: { position: positionen[index] },
+      });
     }
   }
 

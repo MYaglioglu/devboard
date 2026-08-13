@@ -571,4 +571,370 @@ describe('Tasks (e2e)', () => {
       expect(zeile).not.toBeNull();
     });
   });
+
+  describe('PATCH .../tasks/:taskId/move', () => {
+    /** Die Titel in Board-Reihenfolge - so, wie das Frontend sie sähe. */
+    const reihenfolge = async (
+      token: string,
+      orgId: string,
+      projektId: string,
+    ): Promise<string[]> => {
+      const antwort = await request(app.getHttpServer())
+        .get(pfad(orgId, projektId))
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      return (antwort.body as AufgabeAntwort[]).map((a) => a.title);
+    };
+
+    /** Drei Karten in TODO: A, B, C. */
+    const dreiKarten = async (kennung: string) => {
+      const aufbau = await baueAufbau(kennung);
+      const { orgId, projektId, ownerToken } = aufbau;
+
+      // Zweizeichige Titel sind das Minimum laut create-task.dto.ts - mit
+      // 'A' schlaegt schon das Anlegen mit 400 fehl.
+      const a = await legeAufgabeAn(ownerToken, orgId, projektId, {
+        title: 'Karte A',
+      });
+      const b = await legeAufgabeAn(ownerToken, orgId, projektId, {
+        title: 'Karte B',
+      });
+      const c = await legeAufgabeAn(ownerToken, orgId, projektId, {
+        title: 'Karte C',
+      });
+
+      return { ...aufbau, a, b, c };
+    };
+
+    it('schiebt eine Karte innerhalb der Spalte nach oben', async () => {
+      const { orgId, projektId, ownerToken, a, c } =
+        await dreiKarten('schieben');
+
+      // C ganz nach oben: kein Vorgaenger, A als Nachfolger.
+      await request(app.getHttpServer())
+        .patch(`${pfad(orgId, projektId)}/${c.id}/move`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'TODO',
+          previousId: null,
+          nextId: a.id,
+          version: c.version,
+        })
+        .expect(200);
+
+      expect(await reihenfolge(ownerToken, orgId, projektId)).toEqual([
+        'Karte C',
+        'Karte A',
+        'Karte B',
+      ]);
+    });
+
+    it('schiebt eine Karte zwischen zwei andere', async () => {
+      const { orgId, projektId, ownerToken, a, b, c } =
+        await dreiKarten('dazwischen');
+
+      // C zwischen A und B.
+      await request(app.getHttpServer())
+        .patch(`${pfad(orgId, projektId)}/${c.id}/move`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'TODO',
+          previousId: a.id,
+          nextId: b.id,
+          version: c.version,
+        })
+        .expect(200);
+
+      expect(await reihenfolge(ownerToken, orgId, projektId)).toEqual([
+        'Karte A',
+        'Karte C',
+        'Karte B',
+      ]);
+    });
+
+    it('wechselt die Spalte und zaehlt die Version hoch', async () => {
+      const { orgId, projektId, ownerToken, b } = await dreiKarten('spalte');
+
+      const antwort = await request(app.getHttpServer())
+        .patch(`${pfad(orgId, projektId)}/${b.id}/move`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'IN_PROGRESS',
+          previousId: null,
+          nextId: null,
+          version: b.version,
+        })
+        .expect(200);
+
+      const verschoben = antwort.body as AufgabeAntwort;
+      expect(verschoben.status).toBe('IN_PROGRESS');
+      expect(verschoben.version).toBe(b.version + 1);
+    });
+
+    /**
+     * ========================================================================
+     * DER KONFLIKT - UND WARUM ER SICH HIER ERZWINGEN LAESST
+     * ========================================================================
+     * In Sprint 2 ist ein Nebenlaeufigkeitstest aufgefallen, der nichts
+     * bewacht hat: `Promise.all` mit zwei Anfragen erzeugt keine
+     * Verschraenkung, nur die Moeglichkeit einer. Beim optimistischen Sperren
+     * ist das anders - und zwar grundsaetzlich:
+     *
+     * Der Konflikt haengt NICHT am Zeitverhalten, sondern an der Version. Zwei
+     * Anfragen mit derselben gelesenen Version sind genau das, was zwei
+     * gleichzeitig ladende Nutzer erzeugen - unabhaengig davon, wann sie
+     * abschicken. Der Test kann sie deshalb nacheinander stellen und trotzdem
+     * exakt den Fall pruefen.
+     *
+     * Das ist kein Trick, sondern der Vorteil des Verfahrens: Optimistisches
+     * Sperren macht einen Nebenlaeufigkeitsfehler DETERMINISTISCH reproduzierbar.
+     */
+    it('weist die zweite Verschiebung mit derselben Version mit 409 ab', async () => {
+      const { orgId, projektId, ownerToken, a, b, c } =
+        await dreiKarten('konflikt');
+
+      const ziel = `${pfad(orgId, projektId)}/${c.id}/move`;
+
+      // Nutzer 1: C zwischen A und B.
+      await request(app.getHttpServer())
+        .patch(ziel)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'TODO',
+          previousId: a.id,
+          nextId: b.id,
+          version: c.version,
+        })
+        .expect(200);
+
+      // Nutzer 2 hatte dasselbe Board geladen und schiebt C nach ganz oben -
+      // mit der Version, die er beim Laden gesehen hat.
+      const antwort = await request(app.getHttpServer())
+        .patch(ziel)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'TODO',
+          previousId: null,
+          nextId: a.id,
+          version: c.version,
+        })
+        .expect(409);
+
+      expect((antwort.body as { message: string }).message).toContain(
+        'inzwischen geändert',
+      );
+
+      // Und der Stand von Nutzer 1 steht unveraendert - die abgewiesene
+      // Anfrage hat NICHTS geschrieben.
+      expect(await reihenfolge(ownerToken, orgId, projektId)).toEqual([
+        'Karte A',
+        'Karte C',
+        'Karte B',
+      ]);
+    });
+
+    it('laesst dieselbe Verschiebung mit der neuen Version zu', async () => {
+      const { orgId, projektId, ownerToken, a, c } =
+        await dreiKarten('nachladen');
+
+      const ziel = `${pfad(orgId, projektId)}/${c.id}/move`;
+
+      const erste = await request(app.getHttpServer())
+        .patch(ziel)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'TODO',
+          previousId: null,
+          nextId: a.id,
+          version: c.version,
+        })
+        .expect(200);
+
+      // Nach dem Neuladen kennt der Client die neue Version - der zweite
+      // Versuch gelingt. Genau das soll das Frontend nach einem 409 tun.
+      await request(app.getHttpServer())
+        .patch(ziel)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'DONE',
+          previousId: null,
+          nextId: null,
+          version: (erste.body as AufgabeAntwort).version,
+        })
+        .expect(200);
+    });
+
+    /**
+     * ========================================================================
+     * DIE ERSCHOEPFTE SPALTE - DER GRENZFALL DES VERFAHRENS
+     * ========================================================================
+     * Statt 30-mal zu verschieben, wird der Zustand direkt hergestellt: zwei
+     * Nachbarn, deren Abstand kleiner ist als das, was numeric(65,30) noch
+     * auflöst. Der Mittelwert braeuchte 31 Nachkommastellen.
+     *
+     * Erwartet wird KEIN Fehler, sondern eine Neuverteilung: Danach stehen
+     * wieder ganze Zahlen da, die Reihenfolge stimmt, und die verschobene
+     * Karte liegt an der gewuenschten Stelle.
+     */
+    it('verteilt die Spalte neu, wenn die Genauigkeit erschoepft ist', async () => {
+      const { orgId, projektId, ownerToken, a, b, c } =
+        await dreiKarten('neuverteilung');
+
+      // A und B ruecken so eng zusammen, dass zwischen ihnen kein
+      // darstellbarer Wert mehr liegt.
+      await prisma.task.update({
+        where: { id: a.id },
+        data: { position: '1000' },
+      });
+      await prisma.task.update({
+        where: { id: b.id },
+        data: { position: '1000.000000000000000000000000000001' },
+      });
+
+      await request(app.getHttpServer())
+        .patch(`${pfad(orgId, projektId)}/${c.id}/move`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'TODO',
+          previousId: a.id,
+          nextId: b.id,
+          version: c.version,
+        })
+        .expect(200);
+
+      expect(await reihenfolge(ownerToken, orgId, projektId)).toEqual([
+        'Karte A',
+        'Karte C',
+        'Karte B',
+      ]);
+
+      // Nach der Neuverteilung sind die Abstaende wieder gross genug, dass
+      // erneut geteilt werden kann - sonst liefe die naechste Anfrage direkt
+      // wieder hinein.
+      const positionen = await prisma.task.findMany({
+        where: { projectId: projektId, status: 'TODO' },
+        orderBy: { position: 'asc' },
+        select: { position: true },
+      });
+
+      const abstaende = positionen
+        .slice(1)
+        .map((p, i) => p.position.minus(positionen[i].position));
+
+      for (const abstand of abstaende) {
+        expect(abstand.greaterThan(1)).toBe(true);
+      }
+    });
+
+    it('lehnt einen Nachbarn aus einer anderen Spalte mit 400 ab', async () => {
+      const { orgId, projektId, ownerToken, a, c } =
+        await dreiKarten('falsche-spalte');
+
+      await request(app.getHttpServer())
+        .patch(`${pfad(orgId, projektId)}/${c.id}/move`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          // A liegt in TODO, nicht in DONE.
+          status: 'DONE',
+          previousId: a.id,
+          nextId: null,
+          version: c.version,
+        })
+        .expect(400);
+    });
+
+    it('lehnt Nachbarn in verkehrter Reihenfolge mit 400 ab', async () => {
+      const { orgId, projektId, ownerToken, a, b, c } =
+        await dreiKarten('verkehrt');
+
+      await request(app.getHttpServer())
+        .patch(`${pfad(orgId, projektId)}/${c.id}/move`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'TODO',
+          // Vertauscht: B liegt hinter A, nicht davor.
+          previousId: b.id,
+          nextId: a.id,
+          version: c.version,
+        })
+        .expect(400);
+    });
+
+    it('lehnt die Karte als ihren eigenen Nachbarn mit 400 ab', async () => {
+      const { orgId, projektId, ownerToken, c } = await dreiKarten('selbst');
+
+      await request(app.getHttpServer())
+        .patch(`${pfad(orgId, projektId)}/${c.id}/move`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'TODO',
+          previousId: c.id,
+          nextId: null,
+          version: c.version,
+        })
+        .expect(400);
+    });
+
+    it('verlangt die Version', async () => {
+      const { orgId, projektId, ownerToken, c } = await dreiKarten('ohne-ver');
+
+      await request(app.getHttpServer())
+        .patch(`${pfad(orgId, projektId)}/${c.id}/move`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ status: 'DONE', previousId: null, nextId: null })
+        .expect(400);
+    });
+
+    it('verschiebt keine Aufgabe aus einem fremden Projekt', async () => {
+      const { orgId, ownerToken } = await baueAufbau('move-quer');
+
+      const fremdToken = await meldeAn('move-quer-fremd');
+      const fremdeOrgId = await legeOrgAn(fremdToken, orgName('move-quer-f'));
+      const fremdesProjekt = await legeProjektAn(
+        fremdToken,
+        fremdeOrgId,
+        'Fremd',
+      );
+      const fremdeAufgabe = await legeAufgabeAn(
+        fremdToken,
+        fremdeOrgId,
+        fremdesProjekt,
+        { title: 'Bleibt liegen' },
+      );
+
+      await request(app.getHttpServer())
+        .patch(`${pfad(orgId, fremdesProjekt)}/${fremdeAufgabe.id}/move`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          status: 'DONE',
+          previousId: null,
+          nextId: null,
+          version: fremdeAufgabe.version,
+        })
+        .expect(404);
+
+      const zeile = await prisma.task.findUniqueOrThrow({
+        where: { id: fremdeAufgabe.id },
+        select: { status: true, version: true },
+      });
+      expect(zeile.status).toBe('TODO');
+      expect(zeile.version).toBe(0);
+    });
+
+    it('erlaubt auch einem MEMBER das Verschieben', async () => {
+      const { orgId, projektId, memberToken, c } = await dreiKarten('m-move');
+
+      await request(app.getHttpServer())
+        .patch(`${pfad(orgId, projektId)}/${c.id}/move`)
+        .set('Authorization', `Bearer ${memberToken}`)
+        .send({
+          status: 'IN_PROGRESS',
+          previousId: null,
+          nextId: null,
+          version: c.version,
+        })
+        .expect(200);
+    });
+  });
 });
