@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { App } from 'supertest/types';
 
@@ -31,7 +32,14 @@ describe('Auth (e2e)', () => {
   // Jeder Testlauf nutzt eigene Adressen. Sonst waeren die Tests von der
   // Reihenfolge und von Rueckstaenden frueherer Laeufe abhaengig - eine der
   // haeufigsten Ursachen fuer Tests, die "manchmal" fehlschlagen.
-  const lauf = Date.now();
+  // Eigene Kennung je Lauf UND je Suite.
+  //
+  // `Date.now()` allein genuegt NICHT: Die Suiten starten parallel und
+  // koennen dieselbe Millisekunde treffen. Das Aufraeumen filtert nur nach
+  // dieser Kennung - bei einem Gleichstand loescht die eine Suite die
+  // Testdaten der anderen mitten im Lauf. Genau das ist am 13.08.2026
+  // passiert, sichtbar als Fremdschluesselverletzung in einer fremden Datei.
+  const lauf = `${Date.now()}-${randomUUID().slice(0, 8)}`;
   const email = (kennung: string) => `e2e-${kennung}-${lauf}@example.com`;
 
   beforeAll(async () => {
