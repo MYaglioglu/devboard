@@ -1954,3 +1954,51 @@ hätte jeder dieser Fälle eine Prisma-Attrappe gebraucht.
 **Die allgemeine Regel:** Was rein rechnend ist, gehört von dem getrennt, was Ein- und Ausgabe
 macht. Nicht wegen der Architekturlehre, sondern weil die Testkosten um eine Größenordnung
 auseinanderliegen.
+
+### 118. Ihr blendet Schaltflächen je nach Rolle aus. Ist das eure Autorisierung?
+
+Nein – und die Unterscheidung ist mir wichtig.
+
+Ein `MEMBER` sieht das Formular „Neues Projekt" nicht. Das ist **Höflichkeit**: Die Oberfläche
+bietet nichts an, was ohnehin mit `403` scheitern würde. Wer den Endpoint direkt aufruft – mit
+`curl`, aus der Konsole, mit einem manipulierten Bundle –, bekommt trotzdem `403`, weil die
+Entscheidung im Backend sitzt.
+
+Der Satz dazu: **Das Frontend blendet aus, was ohnehin scheitern würde. Es entscheidet nicht, was
+erlaubt ist.** Jede Rollenlogik im Client ist eine Kopie – und Kopien laufen auseinander.
+
+Ein Frontend-Test hält das trotzdem fest: nicht als Sicherheitsnachweis, sondern weil eine
+Schaltfläche, die immer scheitert, ein Bedienfehler ist.
+
+### 119. Warum steht die Organisations-ID im Query-Schlüssel des Frontends?
+
+Weil TanStack Query die Daten unter diesem Schlüssel im Speicher hält.
+
+Wäre er nur `['projects']`, sähe ein Nutzer nach dem Umschalten der aktiven Organisation für einen
+Moment die Projekte der **vorigen** – aus dem Zwischenspeicher, ohne dass eine Anfrage läuft. Das
+wäre kein Sicherheitsloch (die Daten hatte er legitim), aber ein sichtbarer Fehler an genau der
+Stelle, an der Mandantentrennung wichtig ist. Und wer ihn sieht, glaubt an ein echtes Leck.
+
+Der Schlüssel ist zusätzlich mit `organisationKey(orgId)` verschachtelt. TanStack Query vergleicht
+Schlüssel von **links**, also entwertet ein `invalidateQueries` auf der Organisation auch ihre
+Projekte – dieselbe Präfix-Regel wie bei einem zusammengesetzten Datenbankindex.
+
+Der Filter „auch archivierte" steckt ebenfalls im Schlüssel, nicht nur in der URL: Sonst hielte
+TanStack Query beide Varianten für dieselbe Abfrage und lieferte nach dem Umschalten den alten
+Stand.
+
+### 120. Warum habt ihr das Frontend nach den Tests trotzdem noch von Hand durchgeklickt?
+
+Weil der teuerste Fehler des Projekts von **155 grünen Tests** nicht bemerkt wurde: die doppelte
+Token-Erneuerung aus Sprint 1. Jeder Teil war für sich korrekt und getestet; der Fehler entstand aus
+dem Zusammenspiel von React-Lebenszyklus, Netzwerk-Zeitverhalten und einer serverseitigen
+Sicherheitsfunktion. Gefunden wurde er beim Starten der Anwendung und einem Blick in die
+Netzwerkansicht.
+
+Seitdem gilt hier: gestartet wird immer. Diesmal geprüft – Organisation anlegen, Projekt anlegen,
+Detailseite, ein fremdes Projekt in der eigenen Organisation (`404` mit erklärendem Text statt
+Störungsmeldung), archivieren mit Rückfrage, Umschalter für archivierte Projekte. Dazu die
+Netzwerkansicht: Der Umschalter löst tatsächlich eine neue Anfrage aus und filtert nicht nur im
+Browser.
+
+**Eine grüne Testsuite ist kein Ersatz dafür, die Anwendung zu benutzen.**
