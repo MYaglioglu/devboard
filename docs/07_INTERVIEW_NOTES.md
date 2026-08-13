@@ -2002,3 +2002,75 @@ Netzwerkansicht: Der Umschalter löst tatsächlich eine neue Anfrage aus und fil
 Browser.
 
 **Eine grüne Testsuite ist kein Ersatz dafür, die Anwendung zu benutzen.**
+
+### 121. Erklären Sie Ihr optimistisches Update – und was passiert, wenn der Server ablehnt?
+
+Optimistisch heißt: Die Anzeige ändert sich **sofort**, die Anfrage läuft daneben. Drei Rückrufe von
+TanStack Query, jeder mit einer eigenen Aufgabe:
+
+- `onMutate` – laufende Abfragen **abbrechen**, aktuellen Stand sichern, Vorschau schreiben
+- `onError` – gesicherten Stand zurückschreiben (**Rollback**)
+- `onSettled` – **immer** entwerten, damit die echten Positionen und die neue Version kommen
+
+Das `cancelQueries` vergisst man am leichtesten: Läuft gerade eine Board-Abfrage, käme ihre Antwort
+*nach* unserer Vorschau an und überschriebe sie mit dem alten Stand. Die Karte spränge sichtbar
+zurück – und der Fehler wäre nur unter Last reproduzierbar.
+
+Lehnt der Server ab, setzt das Rollback die Anzeige zurück, und `onSettled` lädt den echten Stand
+nach. Bei `409` bekommt der Nutzer keine Fehlermeldung, sondern eine Erklärung: „Diese Karte wurde
+inzwischen von jemand anderem verschoben." Es ist ja alles richtig gelaufen – nur nicht so, wie er
+es sich gedacht hat.
+
+**Warum nicht überall optimistisch?** Es lohnt sich, wenn die Handlung *häufig*, der Fehlschlag
+*selten* und die Verzögerung *spürbar* ist. Beim Anlegen eines Projekts trifft nichts davon zu, und
+die ID vergibt ohnehin der Server.
+
+### 122. Die Vorschau erfindet keine Position. Warum nicht, und wie kann das gehen?
+
+Weil die Position der **Server** berechnet – eine ausgedachte wäre eine Behauptung über etwas, das
+der Client nicht weiß, und beim nächsten Laden stünde ein anderer Wert da.
+
+Möglich ist das, weil die Anzeige die Reihenfolge aus der **Liste** liest und nie aus dem
+Positionswert. Die Vorschau sortiert die Karte also an der richtigen Stelle *ein* und lässt
+`position` und `version` unangetastet. Genau deshalb darf `position` für das Frontend eine
+undurchsichtige Kennung sein.
+
+Ein Test hält das ausdrücklich fest – sonst hätte jemand später „hilfsweise" einen Wert eingesetzt.
+
+### 123. Wie testet man Drag & Drop?
+
+Möglichst wenig davon.
+
+Ziehbewegungen über Testereignisse nachzustellen ist aufwendig und brüchig – die Bibliothek
+dazwischen ändert ihr Verhalten von Version zu Version. Was dabei *gerechnet* wird, ist dagegen
+reine Listenarithmetik. Die steht deshalb in `board-logik.ts`, ohne React, ohne dnd-kit, ohne
+Netzwerk, und wird dort mit allen Grenzfällen geprüft: Ränder, leere Spalten, Spaltenwechsel,
+ein zu großer Zielindex.
+
+Der wichtigste dieser Tests betrifft einen Fehler, der **nur in eine Richtung kippt**: Zählt die
+bewegte Karte sich selbst mit, ist das Verschieben nach *unten* um eine Stelle daneben – nach oben
+dagegen richtig. Das übersieht man beim Ausprobieren, weil man zuerst nach oben schiebt.
+
+Dieselbe Trennung wie bei `positionen.ts` im Backend: Was rein rechnend ist, wird vom Ein- und
+Ausgabe-Teil getrennt – nicht wegen der Architekturlehre, sondern weil die Testkosten um eine
+Größenordnung auseinanderliegen.
+
+Was Tests nicht abdecken, wurde von Hand geprüft: eine Karte per Tastatur verschoben und in der
+Netzwerkansicht nachgesehen, dass `PATCH …/move` mit `200` antwortet und die neue Position
+zurückgibt.
+
+### 124. Warum ist Ihr Board mit der Tastatur bedienbar?
+
+Weil Drag & Drop sonst **nur mit der Maus** bedienbar wäre – und ein Kanban-Board, dessen einzige
+Kernfunktion eine Zeigerbewegung ist, schließt jeden aus, der keine benutzt.
+
+dnd-kit bringt dafür einen eigenen Sensor mit: Leertaste zum Aufnehmen, Pfeiltasten zum Bewegen,
+Leertaste zum Ablegen. Er meldet jeden Schritt zusätzlich über eine Live-Region, damit ein
+Screenreader ansagen kann, wo die Karte gelandet ist.
+
+Dazu kommt eine Kleinigkeit mit großer Wirkung: Der Zeiger-Sensor zieht erst nach **5 Pixeln**. Ohne
+diese Bedingung beginnt schon ein einfacher Klick eine Ziehbewegung, und der Löschen-Knopf auf der
+Karte reagiert nicht mehr zuverlässig.
+
+Aus demselben Grund sitzen die Ziehgriffe am Titel und nicht auf der ganzen Karte – sonst wäre der
+Knopf Teil der Ziehfläche.

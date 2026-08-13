@@ -103,7 +103,7 @@ mit Rollback bei Fehlern.
 - [x] 3.3 Tasks CRUD, Zuweisung nur an Mitglieder derselben Organisation (13.08.2026)
 - [x] 3.4 `PATCH …/tasks/:id/move` – Sortierlogik, 409 bei Versionskonflikt, Mutationsprobe (13.08.2026)
 - [x] 3.5 Frontend: Projektliste und Projektdetail (13.08.2026)
-- [ ] 3.6 Frontend: Board mit dnd-kit, optimistisches Update mit Rollback
+- [x] 3.6 Frontend: Board mit dnd-kit, optimistisches Update mit Rollback (13.08.2026)
 - [ ] 3.7 Politur, Interviewfragen, Handbuch
 
 **Entschieden in 3.1:**
