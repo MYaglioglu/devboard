@@ -15,10 +15,12 @@ import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { AktuelleMitgliedschaft } from '../organizations/decorators/current-membership.decorator';
 import { ORG_PARAM } from '../organizations/guards/membership.guard';
 import { createTaskSchema } from './dto/create-task.dto';
+import { moveTaskSchema } from './dto/move-task.dto';
 import { updateTaskSchema } from './dto/update-task.dto';
 import { TasksService } from './tasks.service';
 import type { AktiveMitgliedschaft } from '../organizations/guards/membership.guard';
 import type { CreateTaskDto } from './dto/create-task.dto';
+import type { MoveTaskDto } from './dto/move-task.dto';
 import type { UpdateTaskDto } from './dto/update-task.dto';
 import type { Aufgabe } from './tasks.service';
 
@@ -112,6 +114,39 @@ export class TasksController {
     @Body(new ZodValidationPipe(updateTaskSchema)) daten: UpdateTaskDto,
   ): Promise<Aufgabe> {
     return this.tasks.aendere(
+      mitgliedschaft.organizationId,
+      projektId,
+      aufgabenId,
+      daten,
+    );
+  }
+
+  /**
+   * PATCH /organizations/:orgId/projects/:projectId/tasks/:taskId/move
+   *
+   * ==========================================================================
+   * WARUM DAS VERSCHIEBEN EINEN EIGENEN ENDPOINT HAT
+   * ==========================================================================
+   * Spalte und Position ergeben nur GEMEINSAM einen gueltigen Zustand, und nur
+   * hier kann es zu einem echten Konflikt kommen: Zwei Nutzer schieben
+   * dieselbe Karte. Ein eigener Endpoint macht daraus eine fachliche Aktion
+   * ("verschieben") statt eines Feld-Updates - mit eigener Eingabe (die
+   * Nachbarn), eigener Vorbedingung (die Version) und eigener Fehlerantwort
+   * (409).
+   *
+   * In einem allgemeinen PATCH waere all das optional gewesen. Und was
+   * optional ist, wird irgendwann weggelassen.
+   */
+  @Patch(':taskId/move')
+  async verschiebe(
+    @AktuelleMitgliedschaft() mitgliedschaft: AktiveMitgliedschaft,
+    @Param('projectId', new ZodValidationPipe(projektIdSchema))
+    projektId: string,
+    @Param('taskId', new ZodValidationPipe(aufgabenIdSchema))
+    aufgabenId: string,
+    @Body(new ZodValidationPipe(moveTaskSchema)) daten: MoveTaskDto,
+  ): Promise<Aufgabe> {
+    return this.tasks.verschiebe(
       mitgliedschaft.organizationId,
       projektId,
       aufgabenId,
