@@ -39,15 +39,23 @@ Mandanten gäbe es noch nichts, worauf sich eine Rolle beziehen könnte.
 - Einladungs-Token nur als SHA-256-Hash gespeichert, an eine E-Mail-Adresse gebunden
 - Open-Redirect-Schutz beim Rückweg nach der Anmeldung
 
-## F3 – Projekte, Tasks & Kanban-Board *(Sprint 3)*
+## F3 – Projekte, Tasks & Kanban-Board *(Sprint 3 – abgeschlossen am 13.08.2026)*
 
-- [ ] CRUD für Projekte innerhalb einer Organisation
-- [ ] CRUD für Tasks mit Status, Beschreibung, Zuweisung, Fälligkeitsdatum
-- [ ] Kanban-Board mit Spalten und Drag & Drop
-- [ ] Reihenfolge und Spaltenwechsel werden persistiert
-- [ ] Gleichzeitiges Verschieben durch zwei Nutzer führt nicht zu Datenverlust
-- [ ] Optimistisches Update im Frontend mit Rollback bei Serverfehler
-- [ ] Tests für die Sortierlogik inklusive Grenzfällen
+- [x] CRUD für Projekte innerhalb einer Organisation
+- [x] CRUD für Tasks mit Status, Beschreibung, Zuweisung, Fälligkeitsdatum
+- [x] Kanban-Board mit Spalten und Drag & Drop
+- [x] Reihenfolge und Spaltenwechsel werden persistiert
+- [x] Gleichzeitiges Verschieben durch zwei Nutzer führt nicht zu Datenverlust
+- [x] Optimistisches Update im Frontend mit Rollback bei Serverfehler
+- [x] Tests für die Sortierlogik inklusive Grenzfällen
+
+**Über den Umfang hinaus umgesetzt**, weil ohne diese Punkte die Regeln lückenhaft geblieben wären:
+
+- Zuweisung nur an Mitglieder **derselben** Organisation – erzwungen durch den Nachschlag der
+  Mitgliedschaft, nicht durch eine zusätzliche Prüfung
+- Archivierte Projekte bleiben lesbar, nehmen aber keine neuen Aufgaben mehr auf
+- Neuverteilung der Sortierpositionen, wenn die Genauigkeit von `numeric(65,30)` erschöpft ist
+- Das Board ist mit der Tastatur bedienbar, nicht nur mit der Maus
 
 ## F4 – Dashboard & Aktivitäts-Feed *(Sprint 4)*
 

@@ -276,3 +276,99 @@ die Anfrage. Die Rolle wird dabei **aus der Datenbank** gelesen, nicht aus dem T
   Frische – abgesichert durch den Index auf `memberships`.
 - **Nicht dasselbe wie Authentifizierung:** Der `AccessTokenGuard` beantwortet weiterhin „wer bist
   du?" (401). Der neue Guard beantwortet „darfst du hier hinein?" (403/404).
+
+---
+
+## ADR-009: Fractional Indexing auf `numeric(65,30)` für die Board-Sortierung
+
+**Status:** Angenommen (12.08.2026)
+
+### Kontext
+Ein Kanban-Board braucht eine persistierte Reihenfolge innerhalb jeder Spalte. Zwei Nutzer können
+gleichzeitig umsortieren. Die Entscheidung prägt das Datenmodell, den Verschiebe-Endpoint und die
+Form der API – sie lässt sich später nur mit einer Migration **und** einer brechenden
+Schnittstellenänderung korrigieren.
+
+### Entscheidung
+Jede Aufgabe trägt eine `position` vom Typ `numeric(65,30)`. Beim Verschieben bekommt sie den
+**Mittelwert ihrer beiden künftigen Nachbarn**. Der Client schickt die IDs der Nachbarn, nicht die
+Position – gerechnet wird ausschließlich serverseitig.
+
+Erreicht die Zahl mehr als 30 Nachkommastellen, verteilt der Server die betroffene Spalte neu
+(1000, 2000, 3000 …) und rechnet erneut.
+
+### Alternativen
+| Option | Schreibzugriffe je Verschiebung | Bewertung |
+|---|---|---|
+| Ganzzahlen 1, 2, 3 neu vergeben | **N** (ganze Spalte) | Einfach zu verstehen, aber zwei gleichzeitige Verschiebungen überschreiben sich gegenseitig – genau der Datenverlust, den F3 ausschließt |
+| Ganzzahlen mit Lücken (100, 200) | 1 | Die Lücken gehen aus; irgendwann doch Neuvergabe – also dieselbe Mechanik, nur später |
+| `float8` + Mittelwert | 1 | **Abgelehnt:** Die Grenze ist unsichtbar. Nach ~50 Halbierungen an derselben Stelle sind die Bits verbraucht, zwei Karten bekommen denselben Wert, die Sortierung wird stillschweigend zufällig |
+| String-Ränge (LexoRank, Base62) | 1 | Bewährt (Jira), aber eigene Arithmetik ohne Datenbankunterstützung; `ORDER BY` wäre eine Zeichenkettensortierung |
+| **`numeric` + Mittelwert** | **1** | **Gewählt** |
+
+### Konsequenzen
+- **Positiv:** Eine Verschiebung schreibt **eine** Zeile. Der Index `(projectId, status, position)`
+  liefert die Board-Abfrage sortiert, ohne Sortierschritt.
+- **Positiv:** Die Grenze ist **bekannt und nachrechenbar** – die *n*-te Halbierung an derselben
+  Stelle braucht *n* Nachkommastellen. Damit ist sie testbar und behandelbar. Das ist der
+  entscheidende Unterschied zu `float8`: Beide Varianten haben eine Grenze, aber nur eine davon
+  kann man sehen.
+- **Negativ:** Die Neuverteilung schreibt N Zeilen. Sie läuft synchron in der auslösenden Anfrage;
+  eine Hintergrundvariante steht im Backlog.
+- **Negativ, und teuer gelernt:** Die Entscheidung in der Datenbank gilt nicht automatisch im Code.
+  `decimal.js` rechnet voreingestellt mit 20 signifikanten Stellen und hätte gerundet, bevor die
+  Datenbank überhaupt gefragt war (siehe `17_MISTAKES_AND_LESSONS.md`, 13.08.2026). Wer Genauigkeit
+  wählt, muss die **ganze Kette** prüfen: Spalte, Treiber, Rechenbibliothek, Serialisierung.
+- **Folge für die API:** `position` geht als **Zeichenkette** nach außen. JSON kennt nur `float64`;
+  eine Zahl wäre derselbe Präzisionsverlust auf dem Transportweg.
+
+---
+
+## ADR-010: Optimistisches Sperren beim Verschieben, pessimistisch bei der Eigentümerregel
+
+**Status:** Angenommen (13.08.2026)
+
+### Kontext
+Sprint 2 löste den Wettlauf um die letzte `OWNER`-Mitgliedschaft mit einer Zeilensperre
+(`SELECT … FOR UPDATE`). Beim Board stellt sich dieselbe Frage neu: Zwei Nutzer verschieben
+dieselbe Karte. Es wäre bequem, das gleiche Verfahren zu wiederholen – und falsch.
+
+### Entscheidung
+Beim Verschieben wird **optimistisch** gesperrt. `tasks.version` steht im `WHERE` des `UPDATE`:
+
+```sql
+UPDATE tasks SET status = ?, position = ?, version = version + 1
+WHERE id = ? AND version = ?
+```
+
+Ändert die Anweisung 0 Zeilen, war jemand schneller ⇒ **409 Conflict**, nichts wurde geschrieben.
+Die Versionsangabe ist **Pflichtfeld** im Request-Körper, nicht optional.
+
+Die Zeilensperre aus Sprint 2 bleibt, wo sie ist.
+
+### Das Unterscheidungsmerkmal
+**Ob der Konflikt heilbar ist.**
+
+- Letzter Eigentümer: Treten zwei gleichzeitig aus, bleibt die Organisation ohne Eigentümer zurück.
+  Durch Neuladen nicht reparierbar – der Zustand ist bereits kaputt. Die zweite Anfrage **muss**
+  warten.
+- Board: Die Karte liegt woanders als gedacht. Ärgerlich, nicht kaputt, und selten – zwei Menschen
+  fassen selten dieselbe Karte in derselben Sekunde an. Sperren würde jeden Normalfall
+  verlangsamen, um einen harmlosen Ausnahmefall zu vermeiden.
+
+> **Faustregel:** Pessimistisch sperren, wenn ein Konflikt Daten zerstört. Optimistisch, wenn er
+> nur eine Wiederholung kostet.
+
+### Konsequenzen
+- **Positiv:** Kein Warten im Normalfall, keine Sperren über HTTP-Anfragen hinweg.
+- **Positiv, und selten genannt:** Der Nebenläufigkeitsfehler wird **deterministisch
+  reproduzierbar**. Zwei Anfragen mit derselben gelesenen Version sind genau das, was zwei
+  gleichzeitig ladende Nutzer erzeugen – unabhängig vom Absendezeitpunkt. Der Test braucht kein
+  Zeitspiel, anders als der Sperrtest aus Sprint 2.
+- **Negativ:** Der Client muss den Konflikt behandeln. Im Frontend heißt das: Rollback des
+  optimistischen Updates, Neuladen, und eine Erklärung statt einer Fehlermeldung – ein `409` ist
+  keine Störung.
+- **Warum die Version im `WHERE` und nicht in einem `if` davor:** Zwischen Prüfung und Schreiben
+  läge eine Lücke. So entscheidet die Datenbank in einem Schritt.
+- **Warum `409` und nicht `412`:** `412 Precondition Failed` gehört zu `If-Match`/ETag in der
+  Kopfzeile. Wir tragen die Version im Körper – der Konflikt ist fachlich, nicht protokollarisch.
