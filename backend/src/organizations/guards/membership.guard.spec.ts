@@ -150,6 +150,11 @@ describe('MitgliedschaftsGuard', () => {
       expect(anfrage.mitgliedschaft).toEqual({
         organizationId: ORG_ID,
         role: Role.ADMIN,
+        // Seit Sprint 4 dabei: Der Akteur des Aktivitaets-Feeds kommt aus
+        // DIESEM Objekt und nicht aus dem Request. Wer Organisation und
+        // Akteur aus derselben, geprueften Quelle nimmt, kann die beiden
+        // nicht versehentlich mischen.
+        userId: NUTZER_ID,
       });
     });
 

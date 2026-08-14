@@ -27,6 +27,18 @@ export const ORG_PARAM = 'orgId';
 export interface AktiveMitgliedschaft {
   organizationId: string;
   role: Role;
+  /**
+   * Wer anfragt. Ab Sprint 4 ist das der Akteur im Aktivitaets-Feed.
+   *
+   * Der Wert steht schon im Request (`anfrage.nutzer.id`), und ein Controller
+   * koennte ihn sich mit einem zweiten Decorator selbst holen. Er steht
+   * trotzdem hier, aus demselben Grund, aus dem `organizationId` hier steht:
+   * Dieses Objekt ist das ERGEBNIS der Pruefung. Wer Organisation und Akteur
+   * aus derselben Quelle nimmt, kann die beiden nicht versehentlich aus
+   * verschiedenen Anfragen mischen - und im Feed steht garantiert der Nutzer,
+   * dessen Mitgliedschaft tatsaechlich geprueft wurde.
+   */
+  userId: string;
 }
 
 /** Erweiterung des Request um die gepruefte Mitgliedschaft. */
@@ -160,6 +172,7 @@ export class MitgliedschaftsGuard implements CanActivate {
     anfrage.mitgliedschaft = {
       organizationId: mitgliedschaft.organizationId,
       role: mitgliedschaft.role,
+      userId: nutzer.id,
     };
 
     return true;
