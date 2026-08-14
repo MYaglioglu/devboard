@@ -134,6 +134,17 @@ mit Rollback bei Fehlern.
 
 Aggregierte Kennzahlen pro Organisation, chronologischer Aktivitäts-Feed.
 
+**Abgeschlossen am 14.08.2026** – in sieben Scheiben. **494 Tests** (156 Backend-Unit,
+176 Backend-E2E, 162 Frontend), CI grün.
+
+Zwei ADRs entstanden: **ADR-011** (eigene Tabelle statt Ableitung, ausdrücklich *kein* Event
+Sourcing) und **ADR-012** (Protokoll in der Transaktion statt im Event-Listener).
+
+Der Sprint hat vor allem **Nachweise** hinterlassen statt Behauptungen: die N+1-Messung
+(202 ⇒ 4 Abfragen bei 100 Projekten), die Ausführungspläne beider Feed-Pfade mit Gegenprobe, und
+zwei Mutationsproben – von denen eine **gar nichts rot machte** und damit einen Test überführte,
+der nur wie eine Prüfung aussah.
+
 **Kernthemen:** N+1-Queries erkennen und beheben · Indizes · `EXPLAIN ANALYZE` lesen ·
 Paginierung (Offset vs. Cursor) · Domain Events.
 

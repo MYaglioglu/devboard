@@ -8,6 +8,48 @@ Format angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 ## [Unreleased]
 
 ### Hinzugefügt
+- **Sprint 4 abgeschlossen** – Dashboard und Aktivitäts-Feed, 494 Tests. Ab hier gilt das Projekt
+  laut Roadmap als vorzeigbar.
+- **Sprint 4, Scheibe 4.5/4.6:** Dashboard mit Kennzahlen-Kacheln und Aktivitäts-Feed samt
+  „Mehr laden"; die Seite zeigte bis dahin die Antwort von `GET /auth/me`
+- **Sprint 4, Scheibe 4.4:** `GET …/dashboard/stats` mit `groupBy` und `REPEATABLE READ`;
+  Messskripte `messung:dashboard` und `erklaere:feed`
+- **Sprint 4, Scheibe 4.3:** `GET …/activity` mit Cursor-Paginierung und optionalem Projektfilter
+- **Sprint 4, Scheibe 4.2:** Projekte und Aufgaben protokollieren ihre Änderungen in derselben
+  Transaktion (ADR-012); `AktiveMitgliedschaft` trägt jetzt `userId`
+- **Sprint 4, Scheibe 4.1:** Tabelle `activities` mit zwei Indizes (ADR-011)
+
+### Geändert
+- Die Lint-Skripte des Backends erfassen jetzt auch `scripts/` – die Messskripte liefen bis dahin
+  ungeprüft
+- Idempotenz beim Archivieren gilt jetzt auch für den Feed: Das zweite `DELETE` schreibt keinen
+  zweiten Eintrag
+- `TasksService.loesche` läuft in einer Transaktion, weil der Titel vor dem `DELETE` gelesen werden
+  muss
+
+### Belegt statt behauptet
+- **N+1:** 202 ⇒ 4 Abfragen bei 100 Projekten (`npm run messung:dashboard`)
+- **Indizes:** `Index Scan Backward` für den Feed, `Rows Removed by Filter: 931` in der Gegenprobe
+  ohne den zweiten Index (`npm run erklaere:feed`)
+- **Mutationsproben:** eine überführte den eigenen Paginierungstest, der den Grenzfall nie erreichte
+
+---
+
+## Sprint 3 (13.08.2026) – nachgetragen
+
+Dieser Eintrag fehlte; der Changelog endete bei Sprint 2.
+
+- **Sprint 3 abgeschlossen** – Projekte, Aufgaben und Kanban-Board, 429 Tests
+- Sortierung per fractional indexing auf `numeric(65,30)` (ADR-009)
+- Optimistisches Sperren beim Verschieben mit `409` (ADR-010)
+- Board mit dnd-kit, optimistisches Update mit Rollback, Tastaturbedienung
+- Behoben: `decimal.js` rundete bei 20 Stellen, obwohl die Spalte 30 fasst
+
+---
+
+## [Vorher]
+
+### Hinzugefügt
 - **Sprint 2 abgeschlossen** – Organisationen, Rollen und Mandantentrennung von der Datenbank bis
   zur UI, 284 Tests
 - **Sprint 2, Scheibe 10:** Organisation umbenennen; Umlaute in nutzersichtbaren Fehlermeldungen
