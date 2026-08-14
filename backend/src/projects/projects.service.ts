@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
+import { ActivitiesService } from '../activities/activities.service';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateProjectDto } from './dto/create-project.dto';
@@ -56,25 +57,53 @@ const istZeileNichtGefunden = (fehler: unknown): boolean =>
 
 @Injectable()
 export class ProjectsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly activities: ActivitiesService,
+  ) {}
 
   /**
    * Legt ein Projekt in einer Organisation an.
    *
    * Die `organizationId` stammt aus der vom Guard geprueften Mitgliedschaft,
-   * nicht aus dem Request-Koerper - siehe create-project.dto.ts.
+   * nicht aus dem Request-Koerper - siehe create-project.dto.ts. Dasselbe gilt
+   * ab Sprint 4 fuer `akteurId`: Wer protokolliert wird, ist der Nutzer, dessen
+   * Mitgliedschaft geprueft wurde, nicht irgendeine ID aus der Anfrage.
+   *
+   * ==========================================================================
+   * WARUM AUS EINEM `create` EINE TRANSAKTION WIRD
+   * ==========================================================================
+   * Vorher war das ein einzelner Schreibvorgang und brauchte keine. Jetzt sind
+   * es zwei - das Projekt und sein Feed-Eintrag - und die duerfen nicht
+   * einzeln gelten.
+   *
+   * Der teure Fall ist nicht der offensichtliche. Dass ein Projekt ohne
+   * Feed-Eintrag entsteht, waere aergerlich. Dass ein Feed-Eintrag ohne
+   * Projekt entsteht, waere schlimmer: Der Feed behauptete dann etwas, das nie
+   * passiert ist, und die Fachdaten koennten ihm nicht widersprechen.
    */
   async erstelle(
     organizationId: string,
+    akteurId: string,
     daten: CreateProjectDto,
   ): Promise<Projekt> {
-    return this.prisma.project.create({
-      data: {
-        organizationId,
-        name: daten.name,
-        description: daten.description,
-      },
-      select: PROJEKT_FELDER,
+    return this.prisma.$transaction(async (tx) => {
+      const projekt = await tx.project.create({
+        data: {
+          organizationId,
+          name: daten.name,
+          description: daten.description,
+        },
+        select: PROJEKT_FELDER,
+      });
+
+      await this.activities.protokolliere(tx, organizationId, akteurId, {
+        typ: 'PROJEKT_ANGELEGT',
+        projektId: projekt.id,
+        name: projekt.name,
+      });
+
+      return projekt;
     });
   }
 
@@ -173,14 +202,34 @@ export class ProjectsService {
    */
   async aendere(
     organizationId: string,
+    akteurId: string,
     projektId: string,
     daten: UpdateProjectDto,
   ): Promise<Projekt> {
     try {
-      return await this.prisma.project.update({
-        where: { id: projektId, organizationId },
-        data: daten,
-        select: PROJEKT_FELDER,
+      return await this.prisma.$transaction(async (tx) => {
+        const projekt = await tx.project.update({
+          where: { id: projektId, organizationId },
+          data: daten,
+          select: PROJEKT_FELDER,
+        });
+
+        await this.activities.protokolliere(tx, organizationId, akteurId, {
+          typ: 'PROJEKT_GEAENDERT',
+          projektId: projekt.id,
+          // Der NEUE Name. Ein Feed-Eintrag beschreibt den Stand nach dem
+          // Ereignis - "Murat hat 'Relaunch' geaendert" meint das Projekt, das
+          // seitdem so heisst.
+          name: projekt.name,
+          // `Object.keys` und nicht eine Liste von Hand: Die DTO enthaelt nur
+          // die Felder, die der Client GESCHICKT hat - Zod entfernt unbekannte
+          // Schluessel, und nicht gesendete Felder fehlen ganz. Eine
+          // handgepflegte Liste hier waere beim naechsten neuen Feld sofort
+          // veraltet, ohne dass etwas rot wird.
+          geaenderteFelder: Object.keys(daten),
+        });
+
+        return projekt;
       });
     } catch (fehler) {
       if (istZeileNichtGefunden(fehler)) {
@@ -209,24 +258,66 @@ export class ProjectsService {
    *
    * Deshalb die zweite Abfrage: Sie unterscheidet "gibt es nicht" von "war
    * schon". Sie laeuft nur im Ausnahmefall, nicht im Normalbetrieb.
+   *
+   * ==========================================================================
+   * SEIT SPRINT 4: IDEMPOTENZ HEISST AUCH "KEIN ZWEITER FEED-EINTRAG"
+   * ==========================================================================
+   * Ein zweites DELETE hinterlaesst denselben Zustand - das galt bisher fuer
+   * `archivedAt`, und es muss jetzt auch fuer den Feed gelten. Zweimal
+   * "Projekt archiviert" untereinander waere ein sichtbarer Widerspruch zu der
+   * Zusage, die dieser Endpoint gibt.
+   *
+   * Entscheidend ist deshalb, WORAN der Eintrag haengt: an `ergebnis.count`,
+   * nicht an einem vorher gelesenen `archivedAt`. Wuerde erst gelesen und dann
+   * entschieden, koennten zwei gleichzeitige Anfragen beide `null` sehen -
+   * eine schriebe die Spalte, aber BEIDE schrieben ihren Feed-Eintrag. Der
+   * `updateMany` mit `archivedAt: null` im WHERE ist die Stelle, an der die
+   * Datenbank in einem Schritt entscheidet; genau einer der beiden bekommt
+   * `count = 1`.
+   *
+   * Dasselbe Prinzip wie beim optimistischen Sperren in Sprint 3: Die
+   * Bedingung gehoert ins WHERE, nicht in ein `if` davor.
    */
-  async archiviere(organizationId: string, projektId: string): Promise<void> {
-    const ergebnis = await this.prisma.project.updateMany({
-      where: { id: projektId, organizationId, archivedAt: null },
-      data: { archivedAt: new Date() },
+  async archiviere(
+    organizationId: string,
+    akteurId: string,
+    projektId: string,
+  ): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const ergebnis = await tx.project.updateMany({
+        where: { id: projektId, organizationId, archivedAt: null },
+        data: { archivedAt: new Date() },
+      });
+
+      if (ergebnis.count === 0) {
+        const existiert = await tx.project.findFirst({
+          where: { id: projektId, organizationId },
+          select: { id: true },
+        });
+
+        if (!existiert) {
+          throw new NotFoundException('Projekt nicht gefunden');
+        }
+
+        // War bereits archiviert: nichts geschehen, also nichts zu
+        // protokollieren.
+        return;
+      }
+
+      // Der Name wird NACH dem Schreiben gelesen, innerhalb derselben
+      // Transaktion. Ihn vorher zu laden waere eine Abfrage mehr im
+      // Normalfall - und der Wert waere derselbe, weil das Archivieren den
+      // Namen nicht anfasst.
+      const projekt = await tx.project.findFirstOrThrow({
+        where: { id: projektId, organizationId },
+        select: { name: true },
+      });
+
+      await this.activities.protokolliere(tx, organizationId, akteurId, {
+        typ: 'PROJEKT_ARCHIVIERT',
+        projektId,
+        name: projekt.name,
+      });
     });
-
-    if (ergebnis.count > 0) {
-      return;
-    }
-
-    const existiert = await this.prisma.project.findFirst({
-      where: { id: projektId, organizationId },
-      select: { id: true },
-    });
-
-    if (!existiert) {
-      throw new NotFoundException('Projekt nicht gefunden');
-    }
   }
 }

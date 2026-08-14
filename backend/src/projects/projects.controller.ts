@@ -102,7 +102,11 @@ export class ProjectsController {
   ): Promise<Projekt> {
     // `mitgliedschaft.organizationId`, NICHT @Param(ORG_PARAM). Beide tragen
     // denselben Wert - aber nur der eine ist durch die Pruefung gegangen.
-    return this.projects.erstelle(mitgliedschaft.organizationId, daten);
+    return this.projects.erstelle(
+      mitgliedschaft.organizationId,
+      mitgliedschaft.userId,
+      daten,
+    );
   }
 
   /** GET /organizations/:orgId/projects - fuer jedes Mitglied lesbar. */
@@ -139,6 +143,7 @@ export class ProjectsController {
   ): Promise<Projekt> {
     return this.projects.aendere(
       mitgliedschaft.organizationId,
+      mitgliedschaft.userId,
       projektId,
       daten,
     );
@@ -172,6 +177,10 @@ export class ProjectsController {
     @Param('projectId', new ZodValidationPipe(projektIdSchema))
     projektId: string,
   ): Promise<void> {
-    return this.projects.archiviere(mitgliedschaft.organizationId, projektId);
+    return this.projects.archiviere(
+      mitgliedschaft.organizationId,
+      mitgliedschaft.userId,
+      projektId,
+    );
   }
 }
