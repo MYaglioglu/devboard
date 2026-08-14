@@ -121,3 +121,23 @@ verbraucht die Nachkommastellen; danach muss die Spalte neu verteilt werden. In 
 das **synchron** in der Anfrage, die die Grenze erreicht – ein seltener, dafür langsamer Aufruf.
 Sauberer wäre eine Hintergrundaufgabe, die betroffene Spalten außerhalb des Anfragepfades
 neu verteilt. Braucht einen Job-Runner, den das Projekt bislang nicht hat.
+
+### Aufbewahrungsfrist oder Partitionierung für `activities` *(Sprint 4, 14.08.2026)*
+`activities` ist die erste Tabelle im Schema, die **unbegrenzt** wächst – alle anderen sind durch
+die Zahl der Nutzer, Projekte oder Aufgaben begrenzt. Die Antwort darauf ist eine Aufbewahrungsfrist
+(„älter als 12 Monate löschen") oder Partitionierung nach Monat, sodass alte Partitionen abgetrennt
+werden können, ohne die Feed-Abfrage anzufassen.
+
+Nicht in Sprint 4, weil ohne echten Verkehr niemand die richtige Frist kennt – und eine erfundene
+Frist wäre eine Entscheidung, die sich später nur mit Datenverlust korrigieren lässt. Vermerkt in
+ADR-011 als bekannte Konsequenz.
+
+### Namen des Akteurs im Feed als Kopie mitschreiben *(Sprint 4, 14.08.2026)*
+`activities.actorId` zeigt mit `ON DELETE SET NULL` auf `users`. Nach einer Kontolöschung steht im
+Feed „Ein entferntes Mitglied" statt eines Namens. Echte Audit-Systeme schreiben deshalb den
+Anzeigenamen als **Kopie** in den Eintrag – dann bleibt er lesbar, der Feed braucht keine Verbindung
+zu `users`, und eine Namensänderung gilt nicht rückwirkend (was für ein Protokoll sogar richtig ist).
+
+Nicht in Sprint 4, weil DevBoard keine nachweispflichtige Historie zeigt, sondern einen Feed. Der
+zweite Grund ist didaktisch: Ohne die Verbindung zu `users` gäbe es in Scheibe 4.3 keinen Anlass,
+über Prismas `include` und die Zahl der abgesetzten Abfragen zu sprechen.

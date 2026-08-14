@@ -137,6 +137,37 @@ Aggregierte Kennzahlen pro Organisation, chronologischer Aktivitäts-Feed.
 **Kernthemen:** N+1-Queries erkennen und beheben · Indizes · `EXPLAIN ANALYZE` lesen ·
 Paginierung (Offset vs. Cursor) · Domain Events.
 
+Kein großer Feature-Sprint, sondern ein **Datenmodell- und Performance-Sprint in
+Feature-Verkleidung**. Genau darüber wird im Gespräch am liebsten gesprochen, weil „keine
+N+1-Queries" fast jeder behauptet und fast niemand belegen kann.
+
+**Entschieden vor 4.1** (ADR-011, ADR-012):
+
+- Der Feed hat eine **eigene Tabelle** `activities`, er wird nicht aus `updatedAt` abgeleitet.
+  Ein überschriebener Zeitstempel weiß nicht, *was* sich geändert hat und *wer* es getan hat.
+- Einträge entstehen **inline in derselben Transaktion** wie die Änderung, nicht über
+  `EventEmitter2`. Ein Feed, der Dinge behauptet, die zurückgerollt wurden, ist kaputt – und
+  diese Garantie gibt es nur innerhalb der Transaktion. Der Preis ist Kopplung, und er wird in
+  ADR-012 ausdrücklich bezahlt statt versteckt.
+- Der Feed ist **zusätzlich nach Projekt filterbar**. Das kostet einen zweiten Index, einen
+  zweiten Abfragepfad und einen eigenen negativen Test (fremdes Projekt *innerhalb* der eigenen
+  Organisation ⇒ 404).
+
+**Definition of Done** – die Scheiben, jede einzeln mergebar:
+
+- [ ] 4.1 Datenmodell `activities`, Migration, zwei Indizes, ADR-011
+- [ ] 4.2 Aktivitäten schreiben: Projekte und Tasks protokollieren in ihrer Transaktion, ADR-012
+- [ ] 4.3 `GET …/activity` mit Cursor-Paginierung, negative Tests, Cursor gegen Manipulation
+- [ ] 4.4 `GET …/dashboard/stats` – zuerst naiv, N+1 im Query-Log belegt, dann `groupBy`
+- [ ] 4.5 Frontend: Kennzahlen auf dem Dashboard
+- [ ] 4.6 Frontend: Feed mit „Mehr laden"
+- [ ] 4.7 `EXPLAIN ANALYZE` für beide Feed-Pfade protokolliert, Politur, Interviewfragen, Handbuch
+
+**Der Nachweis, nicht die Behauptung.** In 4.4 wird die Kennzahlen-Abfrage **absichtlich zuerst
+mit der N+1-Schleife** gebaut, das Prisma-Query-Log eingeschaltet und die Anzahl der Abfragen
+notiert. Erst danach wird umgebaut. Beide Zahlen kommen in `12_TESTING.md` – „vorher 47 Abfragen,
+nachher 2" ist belastbar, die Behauptung allein nicht.
+
 > **Ab hier ist das Projekt vorzeigbar.** Alles danach steigert die Qualität, ist aber
 > keine Voraussetzung mehr für ein Bewerbungsgespräch.
 

@@ -319,6 +319,115 @@ wie bei `memberships` – **ein zusammengesetzter Index hilft nur von links gele
 Der zweite Index auf `assigneeId` dient „meine Aufgaben" und dem `SET NULL` beim Entfernen eines
 Mitglieds; ohne ihn läse PostgreSQL dafür jedes Mal die ganze Tabelle.
 
+### `activities`
+
+Ein Eintrag pro Ereignis. **Unveränderlich** – deshalb gibt es bewusst kein `updatedAt`: Ein
+Protokolleintrag, der sich ändern lässt, ist als Protokoll wertlos.
+
+| Spalte | Typ | Anmerkung |
+|---|---|---|
+| `id` | `uuid` | |
+| `organizationId` | `uuid NOT NULL` | `ON DELETE CASCADE` |
+| `type` | `activity_type` | Enum, Vergangenheitsform |
+| `actorId` | `uuid NULL` | → `users`, `ON DELETE SET NULL` |
+| `projectId` | `uuid NULL` | → `projects`, `ON DELETE SET NULL` |
+| `taskId` | `uuid NULL` | → `tasks`, `ON DELETE SET NULL` |
+| `payload` | `jsonb NOT NULL` | Einzelheiten je Ereignistyp |
+| `createdAt` | `timestamp(3)` | Sortierkriterium und Cursor |
+
+#### Warum `organizationId` hier steht, obwohl `tasks` sie bewusst nicht hat
+
+Bei `tasks` steht als Begründung: keine zweite Wahrheit, der Mandant wird über
+`project.organizationId` geerbt. Das gilt dort weiterhin. Hier wäre dieselbe Lösung falsch:
+
+1. **Nicht jedes Ereignis hat ein Projekt.** In Sprint 5 kommen GitHub-Ereignisse in denselben
+   Feed, eine Einladung hängt an der Organisation. Der Mandant ließe sich also gar nicht
+   durchgängig erben – für manche Zeilen wäre er über `projects` erreichbar, für andere überhaupt
+   nicht.
+2. **Der Index braucht die Spalte.** PostgreSQL kann keinen Index über Spalten *zweier* Tabellen
+   anlegen. Ohne eigene Spalte müsste jede Feed-Seite erst verbinden und danach sortieren – bei
+   der einzigen Tabelle im Schema, die unbegrenzt wächst.
+
+Der Preis heißt Redundanz und ist echt. Vertretbar macht ihn die **Unveränderlichkeit**: Redundanz
+ist dann gefährlich, wenn zwei Kopien *auseinanderlaufen* können. Hier kann keine der beiden sich
+noch bewegen.
+
+#### Der Akteur zeigt auf `users`, nicht auf `memberships`
+
+Anders als `tasks.assigneeId`. Eine Zuweisung fragt „wer arbeitet in dieser Organisation daran" –
+das ist eine Mitgliedschaft. Ein Protokoll fragt „**wer** hat das getan" – das ist ein Mensch, und
+er bleibt derselbe, wenn er die Organisation verlässt. Hinge der Akteur an der Mitgliedschaft,
+löschte das `SET NULL` beim Austritt eines Kollegen rückwirkend die gesamte Urheberschaft seiner
+Einträge.
+
+#### `payload` als `jsonb`
+
+Jeder Ereignistyp braucht andere Angaben (beim Verschieben Spalte vorher/nachher, beim Anlegen nur
+den Titel). Als echte Spalten wären das ein Dutzend meist leerer Felder, und jeder neue
+Ereignistyp bräuchte eine Migration.
+
+Der Preis, klar benannt: **Die Datenbank prüft den Inhalt nicht.** Kein Constraint erzwingt, dass
+bei `TASK_MOVED` auch `fromStatus` darin steht. Diese Garantie gibt der Code – `payload` wird
+ausschließlich über typisierte Erzeuger geschrieben, nie als freies Objekt.
+
+`jsonb` und nicht `json`: `json` speichert den Text unverändert und zerlegt ihn bei jedem Zugriff
+neu; `jsonb` legt ihn zerlegt ab – langsamer beim Schreiben, schneller beim Lesen, und nur darauf
+sind Indizes möglich. Bei einer Tabelle, die einmal geschrieben und oft gelesen wird, ist das
+nicht knapp.
+
+Der Aufgabentitel wird als **Kopie** mitgeschrieben, obwohl er in `tasks` steht. Aufgaben werden
+wirklich gelöscht – ein Eintrag „Aufgabe gelöscht" zeigt unmittelbar nach seiner Entstehung auf
+nichts mehr. Und ein Feed, der nach einer Umbenennung rückwirkend den neuen Titel anzeigt,
+behauptet etwas Falsches über die Vergangenheit.
+
+#### Zwei Indizes, weil es zwei Abfragen gibt
+
+```sql
+CREATE INDEX "activities_organizationId_createdAt_id_idx"
+    ON "activities"("organizationId", "createdAt", "id");
+CREATE INDEX "activities_projectId_createdAt_id_idx"
+    ON "activities"("projectId", "createdAt", "id");
+```
+
+Der erste bedient den organisationsweiten Feed in einem Durchgang: Mandant vorne (Gleichheit),
+Sortierkriterien dahinter – derselbe Gedanke wie beim Board-Index.
+
+Der zweite ist **nicht** redundant. Der erste ist nach `organizationId`, dann `createdAt` sortiert
+– die Zeilen *eines* Projekts liegen darin über den gesamten Zeitraum verstreut. Für den
+projektgefilterten Feed müsste PostgreSQL alle Aktivitäten des Mandanten lesen, die fremden
+Projekte wegwerfen und hoffen, früh genug 20 Treffer zu haben; bei einem Projekt, in dem seit
+Monaten nichts passiert ist, liest es die halbe Tabelle. Zum zweiten Mal derselbe Merksatz: **ein
+zusammengesetzter Index hilft nur von links gelesen.** Was gefiltert wird, gehört nach vorne; was
+sortiert wird, dahinter.
+
+`organizationId` steht im zweiten Index nicht – bleibt aber im `WHERE` der Abfrage. **Der Index
+wählt Zeilen vor, der Mandantenfilter entscheidet über Sichtbarkeit.** Beides zu verwechseln wäre
+genau der Fehler aus Sprint 2.
+
+#### Warum kein `sort: Desc` im Index
+
+Prisma kann `@@index([createdAt(sort: Desc)])`, und es wäre hier nutzlos. Ein B-Baum ist in **beide
+Richtungen** lesbar – PostgreSQL bedient `ORDER BY … DESC` mit einem aufsteigenden Index, indem es
+ihn rückwärts durchläuft (im Plan als `Index Scan Backward` sichtbar), ohne Zusatzkosten.
+
+Eine Richtungsangabe zahlt sich erst bei **gemischter** Sortierung aus, etwa `createdAt DESC, id
+ASC`: Rückwärtslesen dreht dann beide Spalten, und der Index passt zu keiner der beiden
+Reihenfolgen. Solange alle Kriterien in dieselbe Richtung zeigen, ist die Angabe Ballast, den ein
+späterer Leser für bedeutsam hält.
+
+#### `id` im Index ist Voraussetzung, nicht Zierde
+
+Prisma bildet `DateTime` auf **`timestamp(3)`** ab – Millisekunden. PostgreSQL könnte
+Mikrosekunden, aber JavaScript-`Date` kann sie nicht darstellen. Zwei Ereignisse aus **einer**
+Transaktion bekommen damit regelmäßig denselben Zeitstempel.
+
+Nach `createdAt` allein ist die Ordnung dann nicht total. Ein Cursor, der nur „alles älter als
+dieser Zeitstempel" bedeutet, zeigt einen Eintrag doppelt oder überspringt einen – je nachdem, in
+welcher Reihenfolge PostgreSQL die gleichzeitigen Zeilen liefert. Mit `id` als zweitem Kriterium
+bezeichnet der Cursor eine **eindeutige** Stelle. Dieselbe Falle wie bei gleichen
+`position`-Werten auf dem Board, und dieselbe Lehre wie aus dem `Date.now()`-Fehler in Sprint 3:
+**Sortierung und Testisolierung dürfen nicht auf der Auflösung einer Uhr beruhen.**
+
 ---
 
 ## Arbeiten mit Migrationen
@@ -357,7 +466,7 @@ Umgebungen auseinander – dieselbe Logik wie bei Git-Commits nach dem Push.
 | `Invitation` | 2 | Einladungen per Token |
 | ~~`Project`~~ | 3 | Projekte innerhalb einer Organisation – **umgesetzt** |
 | ~~`Task`~~ | 3 | Aufgaben mit Status und Sortierposition – **umgesetzt** |
-| `ActivityEvent` | 4 | Aktivitäts-Feed |
+| ~~`Activity`~~ | 4 | Aktivitäts-Feed – **umgesetzt** (hieß in der Planung `ActivityEvent`; das `Event` ist entfallen, weil die Tabelle ein Protokoll ist und kein Event Sourcing – ADR-011) |
 
 Zu jedem Modell wird hier festgehalten: Felder, Constraints, Indizes – und **warum** ein Index
 gesetzt wurde.
