@@ -1205,6 +1205,57 @@ Projekt, nach der Regel aus Sprint 2.
 
 ---
 
+## Dashboard
+
+### `GET /organizations/:orgId/dashboard/stats` · alle Mitglieder
+
+Kein `@Rollen()`: Die Zahlen enthalten nichts, was ein `MEMBER` nicht ohnehin sehen darf – wer die
+Projektliste und das Board öffnen kann, zählt sie von Hand ab. Eine Rollenprüfung wäre hier
+Sicherheitstheater.
+
+```json
+{
+  "projects": { "active": 3, "archived": 1 },
+  "tasks": { "todo": 12, "inProgress": 4, "done": 20, "open": 16 }
+}
+```
+
+**Flach und ohne Prozentwerte.** Ein Anteil „60 % offen" lässt sich aus zwei Zahlen jederzeit
+ausrechnen; aus einem gerundeten Prozentwert bekommt man die Zahlen nie zurück. Was der Server
+herausgibt, sollte die kleinste Form sein, aus der sich alles andere ableiten lässt.
+
+`open` ist abgeleitet (`todo + inProgress`) und wird trotzdem mitgeliefert – es ist die Zahl, die
+groß auf dem Dashboard steht. Sie im Frontend zu addieren wäre dieselbe Rechnung an einer zweiten
+Stelle, und die zweite Stelle vergisst man, wenn ein vierter Status dazukommt.
+
+**Archivierte Projekte zählen bei den Aufgaben nicht mit.** Das ist eine fachliche Festlegung, keine
+technische: Die Kennzahlen beschreiben die *laufende* Arbeit. Sonst bliebe die Zahl offener Aufgaben
+dauerhaft aufgebläht, obwohl niemand mehr daran arbeitet. Bei den Projekten selbst werden sie
+getrennt ausgewiesen.
+
+**Der Pfad hat einen zweiten Abschnitt**, obwohl es nur eine Ressource gibt. `/dashboard` allein
+wäre kürzer – und müsste beim nächsten Bestandteil (etwa einer Verlaufskurve) entweder aufgebrochen
+oder mit einem immer größeren Objekt beantwortet werden. Ein Endpoint, der alles liefert, was die
+Oberfläche gerade braucht, ist der Anfang einer Schnittstelle, die sich nach dem Frontend richtet
+statt nach den Daten.
+
+### Drei Abfragen in einer Transaktion – mit `REPEATABLE READ`
+
+Gemessen in `12_TESTING.md`: 4 statt 202 Abfragen bei 100 Projekten. Der Punkt ist nicht die
+kleinere Zahl, sondern dass sie **nicht mit den Daten wächst**.
+
+Die Isolationsstufe ist dabei kein Beiwerk. Eine Transaktion allein macht die drei Zahlen **nicht**
+konsistent: Bei der Voreinstellung `READ COMMITTED` bekommt jede Anweisung ihren eigenen
+Schnappschuss. Wird zwischen der zweiten und der dritten eine Aufgabe angelegt, beschreiben sie
+verschiedene Stände – das Dashboard zeigte Zahlen, die zusammen nie gegolten haben.
+`REPEATABLE READ` friert den Schnappschuss beim ersten Lesen ein.
+
+Der Preis ist hier gering, weil nur gelesen wird – es gibt keine Schreibkonflikte, die einen
+Serialisierungsfehler auslösen könnten. Bei einer schreibenden Transaktion wäre das eine andere
+Abwägung: Dort müsste der Aufrufer mit Wiederholungen rechnen.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |
@@ -1212,5 +1263,5 @@ Projekt, nach der Regel aus Sprint 2.
 | 1 | `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` |
 | 2 | `GET/POST /organizations`, `POST /organizations/:id/invitations`, `GET /organizations/:id/members` |
 | 3 | `GET/POST/PATCH/DELETE /projects`, `/tasks`, `PATCH /tasks/:id/position` |
-| 4 | ~~`GET /organizations/:orgId/activity`~~ – **umgesetzt** · `GET …/dashboard/stats` |
+| 4 | ~~`GET …/activity`~~, ~~`GET …/dashboard/stats`~~ – **beide umgesetzt** |
 | 5 | `POST /webhooks/github` |

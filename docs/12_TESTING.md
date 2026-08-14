@@ -246,6 +246,61 @@ Sperre 500 ms, gemessen wird, ob der Endpoint wartet. Siehe `17_MISTAKES_AND_LES
 
 ---
 
+## Messungen – die Zahl statt der Behauptung
+
+„Keine N+1-Queries" steht in fast jedem Lebenslauf und wird fast nie belegt. Für Sprint 4 gibt es
+zwei Skripte, die nachzählen statt zu behaupten.
+
+### `npm run messung:dashboard`
+
+Legt Testdaten an, lässt **beide** Fassungen der Kennzahlen-Abfrage laufen und zählt die SQL-
+Anweisungen, die Prisma tatsächlich absetzt (`log: [{ emit: 'event', level: 'query' }]`).
+
+| Projekte | naiv (Schleife) | gruppiert (`groupBy`) |
+|---|---|---|
+| 20 | **42** Abfragen · 68 ms | **4** Abfragen · 17 ms |
+| 100 | **202** Abfragen · 276 ms | **4** Abfragen · 16 ms |
+
+Die Aussage ist **nicht** „4 ist weniger als 202". Sie ist: Die eine Zahl wächst mit den Daten
+(`2N + 2`), die andere nicht. Genau das macht N+1 so teuer – mit drei Testprojekten sind es acht
+Abfragen, und niemand bemerkt etwas. Der Kunde mit zweihundert Projekten bemerkt es.
+
+Das Skript prüft am Ende ausdrücklich, dass **beide Fassungen dasselbe liefern**. Eine schnellere
+Abfrage, die etwas anderes zählt, ist keine Verbesserung, sondern ein Fehler.
+
+**Warum ein Skript und kein Test:** Ein Test soll bei jedem Lauf dasselbe sagen. Eine Messung soll
+eine *Zahl* liefern, und die hängt von der Datenmenge ab – das ist ihre Aussage. Beides zu
+vermischen ergäbe einen Test, der nichts prüft, und eine Messung, die nichts misst.
+
+Die naive Fassung steht **nur** in diesem Skript. Sie ist nicht der Code, der läuft – sie ist der
+Vergleichswert, ohne den die andere Zahl bedeutungslos wäre.
+
+### `npm run erklaere:feed`
+
+Legt 40.000 Aktivitäten an und liest die Ausführungspläne beider Feed-Pfade, inklusive einer
+Gegenprobe ohne den zweiten Index (in einer zurückgerollten Transaktion). Ergebnis und Pläne in
+`08_DATABASE.md`. Kurz:
+
+- Der organisationsweite Feed nutzt `Index Scan **Backward**` – der Beleg dafür, dass `sort: Desc`
+  im Index tatsächlich überflüssig gewesen wäre.
+- Der projektgefilterte Feed nutzt den zweiten Index; `organizationId` erscheint als `Filter`, nicht
+  als `Index Cond`. Genau die dokumentierte Arbeitsteilung: **Der Index wählt vor, der
+  Mandantenfilter entscheidet.**
+- Ohne den zweiten Index: `Rows Removed by Filter: 931` – 951 gelesene Zeilen für 20 gelieferte.
+
+**Zwei Fallstricke, die beide zu falschen Schlüssen führen:**
+
+1. **Ohne `ANALYZE` nach dem Massen-`INSERT`** plant PostgreSQL auf dem Stand „Tabelle ist leer" und
+   wählt einen Seq Scan. „Der Index wird ignoriert" ist dann die falsche Schlussfolgerung – die
+   Statistiken fehlen, nicht der Index.
+2. **Bei zu wenigen Zeilen** ist der Seq Scan zu Recht schneller. Ein `EXPLAIN` auf Testdaten
+   beweist regelmäßig das Gegenteil dessen, was gemeint war.
+
+Und die ehrliche Einschränkung: Die absoluten Zeiten (0,235 ms gegen 0,082 ms) sagen bei 40.000
+Zeilen im Arbeitsspeicher **nichts**. Belastbar ist, wie viele Zeilen gelesen werden mussten.
+
+---
+
 ## Was Tests nicht finden können
 
 Der teuerste Fehler in Sprint 2 stammte aus Sprint 1 und wurde von **155 grünen Tests** nicht
