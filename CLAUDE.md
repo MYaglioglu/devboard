@@ -108,30 +108,54 @@ neu laden.
 
 ## Stand
 
-**Sprint 0 bis 3 abgeschlossen** (Stand 13.08.2026). **429 Tests** (136 Backend-Unit,
-155 Backend-E2E, 138 Frontend), CI grün, `main` geschützt.
+**Sprint 0 bis 4 abgeschlossen** (Stand 14.08.2026). **494 Tests** (156 Backend-Unit,
+176 Backend-E2E, 162 Frontend), CI grün, `main` geschützt.
 
 - **Auth** vollständig: Registrierung, Login, Refresh-Rotation mit Wiederverwendungs-Erkennung,
   globaler Guard, Rate Limiting.
 - **Mandantentrennung** vollständig: Organisationen, Rollen (`OWNER`/`ADMIN`/`MEMBER`),
-  Einladungen per gehashtem Token, Frontend mit umschaltbarer aktiver Organisation.
-  Autorisierung auf **Datenebene** – der Mandant steht in der `WHERE`-Bedingung, nicht in einer
-  Prüfung danach. Siehe Kapitel *Mandantentrennung* in `02_ARCHITECTURE.md`.
+  Einladungen per gehashtem Token. Autorisierung auf **Datenebene** – der Mandant steht in der
+  `WHERE`-Bedingung, nicht in einer Prüfung danach.
+- **Projekte, Tasks und Kanban-Board** vollständig: **fractional indexing** auf `numeric(65,30)`
+  (ADR-009), **optimistisches Sperren** beim Verschieben mit 409 (ADR-010), Board mit dnd-kit und
+  Tastaturbedienung.
+- **Dashboard und Aktivitäts-Feed** vollständig: eigene Tabelle `activities` (ADR-011), Einträge
+  entstehen **in der Transaktion** der Änderung (ADR-012), **Cursor-Paginierung** auf
+  `(createdAt, id)`, Kennzahlen per `groupBy` unter `REPEATABLE READ`.
 
-- **Projekte, Tasks und Kanban-Board** vollständig: Sortierung per **fractional indexing** auf
-  `numeric(65,30)` (ADR-009), **optimistisches Sperren** beim Verschieben mit 409 (ADR-010),
-  optimistisches Update im Frontend mit Rollback, Board mit dnd-kit und Tastaturbedienung.
+**Das Projekt ist ab jetzt vorzeigbar.** Alles Weitere steigert die Qualität, ist aber keine
+Voraussetzung mehr für ein Bewerbungsgespräch.
 
-**Als Nächstes: Sprint 4 – Dashboard und Aktivitäts-Feed.** Neu darin: N+1-Queries erkennen und
-beheben, `EXPLAIN ANALYZE` lesen, Cursor-Paginierung, Domain Events. Ab dem Ende von Sprint 4 gilt
-das Projekt als vorzeigbar.
+**Als Nächstes: Sprint 5 – GitHub-Integration.** Neu darin: Webhook-Signaturprüfung (HMAC),
+Idempotenz bei mehrfach zugestellten Events, asynchrone Verarbeitung. Dort stellt sich die Frage aus
+ADR-012 **neu**: Für die Zustellung an ein fremdes System ist das Transactional Outbox Pattern der
+richtige Ort, nicht der Inline-Schreiber.
 
-Das Projekt liegt weiterhin **rund zwei Wochen vor Plan** (Roadmap sah Sprint 3 für den
-02.09.–15.09. vor).
+Das Projekt liegt weiterhin **rund zwei Wochen vor Plan** (Roadmap sah Sprint 4 für den
+16.09.–22.09. vor).
 
-**Offen daneben:** GitHub-Profil (Bio ist formuliert, muss noch gesetzt werden; Bootcamp-Repos
-entpinnen) und LinkedIn. Seit Woche 2 überfällig – mit 429 Tests, zehn ADRs, Fehlerprotokoll und
-Handbuch gibt es reichlich zu verlinken.
+**Offen daneben – und ab jetzt ohne Ausrede:** GitHub-Profil (Bio ist formuliert, muss noch gesetzt
+werden; Bootcamp-Repos entpinnen) und LinkedIn. Seit Woche 2 überfällig. Mit 494 Tests, zwölf ADRs,
+Fehlerprotokoll, zwei Messskripten und Handbuch gibt es reichlich zu verlinken.
+
+## Was aus Sprint 4 weitergilt
+
+- **Ein Test, der einen Grenzfall nur *wahrscheinlich* erreicht, prüft ihn nicht.** Hängt die
+  Bedingung von einer Uhr, einer Reihenfolge oder einem Scheduler ab, muss der Test sie
+  **herstellen**, nicht abwarten. Zum dritten Mal dieselbe Lehre – `Promise.all` (S2), `Date.now()`
+  (S3), die Seitengrenze ohne Gleichstand (S4).
+- **Konsistenz gehört in die Transaktion, Seiteneffekte gehören in Events.** Ein Protokolleintrag
+  ist kein Seiteneffekt, sondern Teil der Änderung.
+- **Eine Transaktion allein macht Zahlen nicht konsistent.** Bei `READ COMMITTED` bekommt jede
+  Anweisung ihren eigenen Schnappschuss; für einen gemeinsamen Stand braucht es `REPEATABLE READ`.
+- **Messen statt behaupten.** „Keine N+1" ist erst dann eine Aussage, wenn die naive Fassung daneben
+  steht und beide Zahlen notiert sind – und wenn geprüft ist, dass beide **dasselbe** liefern.
+- **Bei einem `EXPLAIN` zuerst die Voraussetzungen prüfen:** `ANALYZE` nach Massen-Inserts, und
+  genug Zeilen, damit ein Index sich überhaupt lohnt. Sonst beweist der Plan das Gegenteil.
+- **Was nicht da ist, kann man nicht versehentlich benutzen.** Der Schreiber hat keinen eigenen
+  `PrismaService` – deshalb gibt es für das Lesen eine zweite Klasse.
+- **Beim Erzeugen mit `never` auf Vollständigkeit prüfen, beim Empfangen nicht.** Ein Frontend, das
+  unbekannte Werte nicht erträgt, ist während jedes Deployments kaputt.
 
 ## Was aus Sprint 3 weitergilt
 

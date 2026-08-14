@@ -59,11 +59,11 @@ Mandanten gäbe es noch nichts, worauf sich eine Rolle beziehen könnte.
 
 ## F4 – Dashboard & Aktivitäts-Feed *(Sprint 4)*
 
-- [ ] Kennzahlen pro Organisation: Projekte, offene und erledigte Tasks
-- [ ] Chronologischer Aktivitäts-Feed über relevante Ereignisse
-- [ ] Feed paginiert (Cursor-basiert)
-- [ ] Keine N+1-Queries – nachgewiesen per Query-Log
-- [ ] Passende Indizes gesetzt und in `08_DATABASE.md` begründet
+- [x] Kennzahlen pro Organisation: Projekte, offene und erledigte Tasks
+- [x] Chronologischer Aktivitäts-Feed über relevante Ereignisse
+- [x] Feed paginiert (Cursor-basiert), zusätzlich nach Projekt filterbar
+- [x] Keine N+1-Queries – nachgewiesen per Query-Log (`npm run messung:dashboard`: 202 ⇒ 4 Abfragen bei 100 Projekten)
+- [x] Passende Indizes gesetzt und in `08_DATABASE.md` begründet – mit `EXPLAIN ANALYZE` und Gegenprobe ohne Index
 
 ## F5 – GitHub-Integration *(Sprint 5)*
 

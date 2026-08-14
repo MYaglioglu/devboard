@@ -2293,3 +2293,260 @@ Genau einer der beiden bekommt `count = 1`. Dasselbe Prinzip wie beim optimistis
 Sprint 3: **Die Bedingung gehört ins `WHERE`, nicht in ein `if` davor.** Dass diese Regel hier zum
 dritten Mal trägt – Mandantenfilter, Versionsprüfung, jetzt Idempotenz – ist der Grund, warum ich
 sie mir gemerkt habe.
+
+### 135. Warum Cursor-Paginierung und nicht `?page=3`?
+
+Weil der Feed sich unter dem Nutzer bewegt.
+
+Offset hat zwei Probleme, und das bekanntere ist das kleinere: `OFFSET 10000` liest zehntausend
+Zeilen und wirft sie weg – die Kosten steigen mit der Seitenzahl, obwohl das Ergebnis gleich groß
+bleibt.
+
+Der schlimmere ist die **Korrektheit**: Kommt zwischen zwei Seitenaufrufen ein Eintrag *oben* dazu,
+verschiebt sich alles um eins nach hinten, und Seite 2 beginnt mit dem letzten Eintrag von Seite 1.
+Bei einem Feed, in den ständig geschrieben wird, ist das der Normalfall, nicht der Ausnahmefall.
+
+Ein Cursor bezeichnet stattdessen eine **Stelle**: „weiter nach genau diesem Eintrag". Neue Einträge
+oben liegen außerhalb dessen, was noch gelesen wird.
+
+Der Preis, den ich dazusage: **kein Springen zu Seite 7 und keine Gesamtzahl.** Für einen
+chronologischen Feed ist beides bedeutungslos – für eine Tabelle mit Seitenzahlen wäre Offset die
+richtige Wahl. Die Frage lautet nicht „was ist besser", sondern **„springt der Nutzer, oder blättert
+er weiter"**.
+
+### 136. Ihr Cursor ist base64 – ist das nicht Sicherheit durch Verschleierung?
+
+Nein, weil er gar nichts zu schützen hat. Das ist der Punkt.
+
+Base64 ist keine Verschlüsselung; jeder kann den Inhalt lesen und ändern. Undurchsichtig ist er aus
+einem ganz anderen Grund: Wäre der Aufbau sichtbar, würden Clients anfangen, ihn selbst zu bauen –
+und der Tag, an dem der Feed ein drittes Sortierkriterium bekommt, bräche jeden dieser Clients. Es
+geht um Kopplung, nicht um Geheimhaltung.
+
+Dass Manipulation unbedenklich ist, liegt an dem, was **nicht** drinsteht:
+
+> **Der Cursor trägt den Mandanten nicht.** Er sagt, *wo* weitergelesen wird, nicht *worin*.
+
+Die Organisation kommt ausschließlich aus der vom Guard geprüften Mitgliedschaft und steht in der
+`WHERE`-Bedingung. Ein manipulierter Cursor verschiebt die Stelle innerhalb der eigenen Daten – in
+fremde Daten kann er nicht zeigen, dort sucht die Abfrage gar nicht erst.
+
+Deshalb braucht er auch **keine Signatur**. Ein signierter Cursor wäre die Antwort auf ein Problem,
+das erst entstünde, wenn man den Mandanten hineinschriebe – und *das* wäre der eigentliche Fehler:
+Ein Wert aus dem Browser darf nie darüber entscheiden, wessen Daten man sieht.
+
+Ein Detail noch: `base64url`, nicht `base64`. Der Wert steht in einem Query-Parameter, und dort
+bedeutet `+` ein Leerzeichen. Der Cursor käme je nach Client beschädigt an – ein Fehler, der nur bei
+bestimmten Zufallswerten auftritt und damit teurer ist als einer, der immer auftritt.
+
+### 137. Ihre Keyset-Bedingung hat zwei Zweige. Wozu der zweite?
+
+Für die Einträge mit **genau demselben** Zeitstempel – und das ist der Zweig, den man weglässt, wenn
+man es eilig hat.
+
+Gemeint ist ein Vergleich von Wertepaaren:
+
+```sql
+WHERE ("createdAt", "id") < ($1, $2)
+```
+
+PostgreSQL kann das direkt, Prisma nicht – dort vergleicht `where` immer einzelne Spalten.
+Ausgeschrieben:
+
+```sql
+WHERE "createdAt" < $1 OR ("createdAt" = $1 AND "id" < $2)
+```
+
+Ohne den zweiten Zweig werden an einer Seitengrenze genau die Einträge übersprungen, die
+**gemeinsam in einer Transaktion** entstanden sind. Der Fehler tritt also bevorzugt dort auf, wo
+mehrere Dinge auf einmal passiert sind – und `timestamp(3)` macht das häufig, weil Prisma nur
+Millisekunden speichert.
+
+`lt` und nicht `lte`, weil der Cursor auf den *letzten gelieferten* Eintrag zeigt. Der gehört zur
+vorigen Seite.
+
+### 138. Sie sagen „keine N+1-Queries". Können Sie das belegen?
+
+Ja, mit zwei Zahlen und einem Skript, das sie erzeugt.
+
+`messung-dashboard.ts` enthält **beide** Fassungen der Kennzahlen-Abfrage und zählt über
+`log: [{ emit: 'event', level: 'query' }]` mit, was Prisma tatsächlich absetzt:
+
+| Projekte | naiv (Schleife) | `groupBy` |
+|---|---|---|
+| 20 | 42 Abfragen, 68 ms | 4 Abfragen, 17 ms |
+| 100 | 202 Abfragen, 276 ms | 4 Abfragen, 16 ms |
+
+Die Aussage ist **nicht** „4 ist weniger als 202". Sie ist: Die eine Zahl wächst mit den Daten
+(`2N + 2`), die andere nicht. Genau das macht N+1 so teuer – mit drei Testprojekten sind es acht
+Abfragen, und niemand bemerkt etwas. Der Kunde mit zweihundert Projekten bemerkt es.
+
+Zwei Dinge, die zu dem Nachweis gehören:
+
+- Das Skript prüft am Ende, dass **beide Fassungen dasselbe liefern**. Eine schnellere Abfrage, die
+  etwas anderes zählt, ist keine Verbesserung, sondern ein Fehler.
+- Die naive Fassung steht **nur** im Messskript. Sie ist nicht der Code, der läuft – sie ist der
+  Vergleichswert, ohne den die andere Zahl bedeutungslos wäre.
+
+Und die Erklärung dahinter: Die Arbeit verschwindet nicht, sie **wandert**. Statt der Anwendung
+zählt die Datenbank, dort wo die Daten liegen – ein Durchgang durch den Index statt N Umläufe über
+das Netzwerk. Der teure Teil an N+1 sind selten die Rechenzeiten, sondern die Wartezeiten.
+
+### 139. Sie laden im Feed die Namen der Akteure. Ist das nicht auch N+1?
+
+Nein, aber nicht aus dem Grund, den die meisten nennen – und der Unterschied ist genau die Frage
+hinter der Frage.
+
+Prismas verschachteltes `select` erzeugt **keinen JOIN**. Es setzt eine **zweite** Abfrage der Form
+`WHERE id IN (...)` ab und fügt die Ergebnisse im Speicher zusammen. Also zwei Abfragen, nicht eine.
+
+Das ist kein Mangel. Ein JOIN würde die Nutzerspalten für *jeden* Eintrag wiederholen – bei zwanzig
+Einträgen desselben Akteurs käme derselbe Name zwanzigmal über die Leitung. Entscheidend ist nicht,
+dass es *eine* Abfrage ist, sondern dass die Zahl **nicht mit der Seitengröße wächst**.
+
+Wer es doch als JOIN will, kann Prisma seit Version 5 mit `relationLoadStrategy: 'join'` dazu
+bringen. Das ist eine Messfrage, keine Glaubensfrage.
+
+### 140. Ihre Kennzahlen laufen in einer Transaktion. Wozu, es wird doch nur gelesen?
+
+Damit die drei Zahlen **denselben Augenblick** beschreiben – und eine Transaktion allein genügt
+dafür nicht.
+
+Bei der Voreinstellung `READ COMMITTED` bekommt **jede Anweisung** ihren eigenen Schnappschuss. Wird
+zwischen der zweiten und der dritten eine Aufgabe angelegt, zählen sie verschiedene Stände. Das
+Dashboard zeigte dann Zahlen, die zusammen nie gegolten haben – und niemand bemerkt es, weil jede
+für sich plausibel aussieht.
+
+Deshalb `REPEATABLE READ`: Der Schnappschuss wird beim ersten Lesen eingefroren.
+
+Der Preis ist hier gering, weil nur gelesen wird – es gibt keine Schreibkonflikte, die einen
+Serialisierungsfehler auslösen könnten. Bei einer schreibenden Transaktion wäre das eine andere
+Abwägung: Dort müsste der Aufrufer mit Wiederholungen rechnen.
+
+### 141. Was hat Ihnen `EXPLAIN ANALYZE` gezeigt, das Sie vorher nicht wussten?
+
+Drei Dinge, und eines davon hat eine Behauptung von mir bestätigt, die ich sonst nicht hätte belegen
+können.
+
+**Erstens** – `Index Scan Backward`. Ich hatte begründet, dass `sort: Desc` im Index überflüssig
+ist, weil PostgreSQL einen B-Baum rückwärts lesen kann. Im Plan steht es wörtlich.
+
+**Zweitens** – beim projektgefilterten Feed:
+
+```
+Index Cond: ("projectId" = …)
+Filter:     ("organizationId" = …)
+```
+
+Genau die Arbeitsteilung, die ich dokumentiert hatte: **Der Index wählt vor, der Mandantenfilter
+entscheidet.** Dass die Organisation nicht im Index steht, macht sie nicht weniger wirksam.
+
+**Drittens** – die Gegenprobe. Ich habe den zweiten Index in einer zurückgerollten Transaktion
+entfernt:
+
+```
+Rows Removed by Filter: 931
+```
+
+951 gelesene Zeilen für 20 gelieferte. Und das bei **gleichmäßig** verteilten Testdaten – bei einem
+Projekt, in dem seit Monaten nichts passiert ist, läuft derselbe Plan durch die halbe Tabelle.
+
+Dazu zwei Fallstricke, die ich beide getroffen hätte:
+
+- **Ohne `ANALYZE`** nach dem Massen-`INSERT` plant PostgreSQL auf dem Stand „Tabelle ist leer" und
+  wählt einen Seq Scan. „Der Index wird ignoriert" ist dann die falsche Schlussfolgerung – die
+  Statistiken fehlen, nicht der Index.
+- **Bei zu wenigen Zeilen** ist der Seq Scan zu Recht schneller. Ein `EXPLAIN` auf Testdaten beweist
+  regelmäßig das Gegenteil dessen, was gemeint war.
+
+Und was ich dazusage, weil es der ehrliche Teil ist: Die absoluten Zeiten – 0,235 ms gegen 0,082 ms –
+sagen bei 40.000 Zeilen im Arbeitsspeicher **nichts**. Belastbar ist, wie viele Zeilen gelesen
+werden mussten.
+
+### 142. Warum zeigt Ihr Dashboard beim Laden einen Strich und keine Null?
+
+Weil `0 offene Aufgaben` eine **Aussage** ist, und während des Ladens ist sie unwahr.
+
+Der Nutzer könnte sie nicht von der echten Null unterscheiden – er sähe „alles erledigt", wo in
+Wahrheit „noch nicht bekannt" gilt. Ein Strich sagt genau das.
+
+Es ist derselbe Unterschied wie zwischen `nextCursor: null` und `undefined` im Backend: „es gibt
+nichts mehr" und „ich weiß es nicht" sind zwei verschiedene Auskünfte, und beide Male ist die
+Verwechslung teuer.
+
+Der Test dazu prüft **beide** Richtungen – Striche beim Laden, echte Nullen, sobald die Daten da
+sind. Nur die erste Hälfte wäre auch dann grün, wenn nie eine Null erschiene.
+
+### 143. Ihr Feed lädt auf Knopfdruck nach. Warum kein Infinite Scroll?
+
+Weil ein Feed ohne Ende alles unerreichbar macht, was unter ihm steht.
+
+Mit `useInfiniteQuery` wäre der `IntersectionObserver` genauso wenig Code – die Entscheidung ist
+also keine Bequemlichkeit. Drei Gründe:
+
+1. **Der Seitenfuß wird nie erreicht.** Alles unterhalb des Feeds existiert praktisch nicht mehr.
+2. **Tastatur und Screenreader.** Der Fokus springt beim Nachladen, und dass etwas dazugekommen ist,
+   wird nicht angesagt.
+3. **Nachladen soll eine Entscheidung sein.** Beim Scrollen lädt der Nutzer Daten, die er nie sehen
+   wollte – auf einer Mobilverbindung sein Datenvolumen.
+
+Wer es doch will, kann den Knopf später mit einem Beobachter kombinieren. Umgekehrt ist es schwerer.
+
+Was mir dabei wichtig ist: Der Knopf hängt an `hasNextPage`, und das folgt daraus, dass das Backend
+`nextCursor: null` geliefert hat. Die Komponente zählt nichts und kennt keine Gesamtzahl – genau
+deshalb kommt die Cursor-Paginierung ohne ein teures `COUNT` aus.
+
+### 144. Im Backend prüfen Sie Vollständigkeit mit `never`. Im Frontend nicht. Ist das inkonsequent?
+
+Nein – es ist der Unterschied zwischen **Erzeugen** und **Empfangen**.
+
+Im Backend erzeuge ich die Ereignisse selbst. Kommt ein Typ dazu und ich vergesse ihn in der
+Abbildung, will ich einen Kompilierfehler – sonst fehlt später ein Feed-Eintrag, und **man sieht
+nicht, was nicht da ist**.
+
+Im Frontend empfange ich sie. Ein unbekannter Ereignistyp ist dort kein Programmierfehler, sondern
+der **Normalzustand während jedes Deployments**: Das Backend ist schon neu, der Browser hält noch
+die alte Fassung. Ein Frontend, das das nicht erträgt, ist bei jeder Auslieferung für ein paar
+Minuten kaputt. Also: allgemeinerer Satz statt Absturz.
+
+Dasselbe gilt für `payload`. Es ist im Backend `jsonb` und von der Datenbank nicht geprüft – im
+Frontend ist es deshalb `unknown` und wird an **einer** Stelle vorsichtig gelesen. Der Grund ist
+nicht Vorsicht um ihrer selbst willen: Der Feed ist ein **Protokoll**, seine Einträge sind
+unveränderlich und überdauern jede Formatänderung. Ein Frontend, das den heutigen Aufbau
+voraussetzt, bricht genau dann, wenn der Feed seinen Zweck erfüllt.
+
+### 145. Sie haben 494 Tests. Woher wissen Sie, dass die etwas bewachen?
+
+Weil ich es zweimal überprüft habe – und einmal war die Antwort *nein*.
+
+Bei einer **Mutationsprobe** entferne ich einen Schutz, lasse die Tests laufen und baue ihn zurück.
+Die Erwartung wird **vorher** aufgeschrieben, sonst deutet man das Ergebnis passend.
+
+In diesem Sprint gab es zwei Proben mit unerwartetem Ausgang:
+
+**Der Aktivitäts-Schreiber** – ich habe ihn auf eine eigene Verbindung gelegt, also genau das
+getan, was ein `EventEmitter2`-Listener tut. Erwartet hatte ich, dass die Anlege-Tests rot werden.
+Rot wurden **alle sechs**. Nach meiner eigenen Regel – *ein zu breites Rot ist genauso verdächtig
+wie ein ausbleibendes* – habe ich nachgelesen statt es als Bestätigung zu nehmen:
+`Foreign key constraint violated`. Die fremde Verbindung sieht die noch nicht committete Zeile
+nicht. Das Ergebnis war stärker als geplant: Außerhalb der Transaktion geht es nicht *schlecht*,
+sondern **gar nicht**.
+
+**Die Keyset-Bedingung** – zweiten Zweig entfernt: **16 von 16 grün.** Mein Paginierungstest
+bewachte ihn nicht. Seine fünf Einträge stammten aus fünf HTTP-Anfragen und lagen Millisekunden
+auseinander; der Gleichstand trat nie ein. Ich habe einen Test ergänzt, der ihn **erzwingt** – fünf
+Einträge direkt über Prisma mit identischem `createdAt`. Die Gegenprobe machte dann genau einen Test
+rot, mit sprechender Zahl: 3 statt 6 Einträgen.
+
+Das ist zum dritten Mal dasselbe Muster in diesem Projekt: `Promise.all` ohne Verschränkung
+(Sprint 2), `Date.now()` als Testisolierung (Sprint 3), jetzt eine Seitengrenze, die den Gleichstand
+nie trifft. Jedes Mal war die Uhr stillschweigend Teil der Testbedingung.
+
+> **Ein Test, der einen Grenzfall nur *wahrscheinlich* erreicht, prüft ihn nicht.** Hängt die
+> Bedingung von einer Uhr, einer Reihenfolge oder einem Scheduler ab, muss der Test sie herstellen –
+> nicht abwarten.
+
+Und der unbequeme Teil, der genauso in `12_TESTING.md` steht: Mein 409-Test bewacht die
+**Reihenfolge**, nicht die Atomarität. Der Schutz gegen einen Fehler *zwischen* Änderung und
+Protokolleintrag ist real, aber ohne wachenden Test. Das habe ich hingeschrieben, damit niemand –
+ich eingeschlossen – den grünen Haken für mehr hält, als er ist.

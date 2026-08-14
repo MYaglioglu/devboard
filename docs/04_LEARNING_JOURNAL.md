@@ -635,3 +635,76 @@ Nr. 96–124 in `07_INTERVIEW_NOTES.md`. Die stärksten: **96** (warum `numeric`
 **99** (optimistisch vs. pessimistisch), **106** (die gerundete Rechenbibliothek), **114** (wie man
 einen Nebenläufigkeitsfehler ohne Timing testet), **121** (optimistisches Update mit Rollback),
 **123** (wie man Drag & Drop testet).
+
+---
+
+## Sprint 4 – Dashboard & Aktivitäts-Feed (14.08.2026)
+
+### Gelernt
+
+**Ein Protokoll ist kein Event Sourcing – und der Unterschied ist die Frage, wo die Wahrheit
+liegt.** Bei mir steht sie in `tasks`; `activities` ist ein Protokoll daneben, das ich löschen
+könnte, ohne dass die Anwendung falsch würde. Bei Event Sourcing wären die Ereignisse die einzige
+Wahrheit und `tasks` eine daraus berechnete Ansicht. Das löst „wie sah es letzten Dienstag aus" –
+eine Frage, die ich nicht habe. Deshalb heißt das Modell `Activity` und nicht `ActivityEvent`: Der
+Name hätte eine Architektur behauptet, die nicht dahintersteht.
+
+**Konsistenz gehört in die Transaktion, Seiteneffekte gehören in Events.** Der Lehrbuchweg für
+NestJS wäre `EventEmitter2` mit `@OnEvent`-Listenern. Ein Listener läuft aber außerhalb der
+Transaktion des Auslösers und kann deshalb nicht zusichern, dass ein zurückgerollter Vorgang auch
+keinen Feed-Eintrag hinterlässt. Ich zahle dafür mit Kopplung – und schreibe sie in ADR-012 auf,
+statt sie zu verstecken.
+
+**Eine Transaktion allein macht Zahlen nicht konsistent.** Das war neu für mich: Bei
+`READ COMMITTED` bekommt *jede Anweisung* ihren eigenen Schnappschuss. Drei Zählabfragen in einer
+Transaktion können also drei verschiedene Stände beschreiben. Erst `REPEATABLE READ` friert den
+Schnappschuss beim ersten Lesen ein.
+
+**Prismas `include` ist kein JOIN.** Es setzt eine zweite Abfrage mit `WHERE id IN (...)` ab. Das
+ist kein Mangel – ein JOIN würde die Nutzerspalten für jeden Eintrag wiederholen. Entscheidend ist
+nicht, ob es *eine* Abfrage ist, sondern dass die Zahl nicht mit der Seitengröße wächst.
+
+**Ein `EXPLAIN` auf Testdaten beweist regelmäßig das Gegenteil.** Zwei Fallstricke auf einmal: Ohne
+`ANALYZE` nach einem Massen-`INSERT` plant PostgreSQL auf dem Stand „Tabelle ist leer", und bei zu
+wenigen Zeilen ist ein Seq Scan zu Recht schneller. Beides erzeugt den falschen Schluss „der Index
+wird ignoriert".
+
+### Schwierig
+
+**Die Mutationsprobe, die gar nichts rot machte.** Ich hatte einen Paginierungstest, der fünf
+Einträge über drei Seiten liest und prüft, dass jeder genau einmal vorkommt. Er sah aus wie die
+vollständige Prüfung. Ich habe den zweiten Zweig der Keyset-Bedingung entfernt – die Behandlung
+gleicher Zeitstempel – und **16 von 16 Tests blieben grün**.
+
+Der Grund war die Uhr: Fünf Einträge aus fünf HTTP-Anfragen liegen Millisekunden auseinander. Der
+Gleichstand trat nie ein. Das ist zum **dritten Mal** dasselbe Muster in diesem Projekt –
+`Promise.all` ohne Verschränkung in Sprint 2, `Date.now()` als Testisolierung in Sprint 3, jetzt
+eine Seitengrenze, die den kritischen Fall nie trifft. Jedes Mal war Zeit stillschweigend Teil der
+Testbedingung.
+
+**Die andere Probe war zu breit rot** – alle sechs Tests statt der erwarteten Anlege-Tests. Nach
+meiner eigenen Regel habe ich nachgelesen statt es als Bestätigung zu nehmen: ein
+Fremdschlüsselfehler im Testaufbau. Das Ergebnis war am Ende *stärker* als geplant (ein Schreiber
+außerhalb der Transaktion funktioniert nicht schlecht, sondern gar nicht) – aber ich hätte es
+beinahe aus dem falschen Grund geglaubt.
+
+**Ein Widerspruch zu meinem eigenen Kommentar.** Ich wollte den Feed-Endpoint in den bestehenden
+`ActivitiesService` legen – und wäre damit in den Satz gelaufen, der dort steht: *„Warum diese
+Klasse keinen `PrismaService` hat."* Lesen braucht einen. Deshalb jetzt zwei Klassen: Was nicht da
+ist, kann man nicht versehentlich benutzen.
+
+### Offen
+
+- **GitHub-Profil und LinkedIn** – seit Woche 2 überfällig. Ab jetzt gibt es keine Ausrede mehr:
+  Das Projekt ist ab dem Ende dieses Sprints laut Roadmap **vorzeigbar**.
+- Erzeugte Typen statt handgeschriebener Kopien im Frontend (Backlog, Entscheidung nach Sprint 5)
+- Aufbewahrungsfrist für `activities` – die erste unbegrenzt wachsende Tabelle im Schema
+- Die Typprüfung erfasst Testdateien nicht: `tsc --noEmit` meldet Fehler, die weder `npm test` noch
+  `npm run build` bemerken. Eigene Aufgabe.
+
+### Interviewfragen dazu
+
+Nr. 125–145 in `07_INTERVIEW_NOTES.md`. Die stärksten: **125** (widerspricht sich die
+Mandanten-Regel?), **126** (ist das Event Sourcing?), **130** (warum kein `EventEmitter2`),
+**136** (ist base64 nicht Verschleierung?), **138** (können Sie N+1 belegen?), **140**
+(`REPEATABLE READ`), **145** (woher wissen Sie, dass Ihre Tests etwas bewachen?).
