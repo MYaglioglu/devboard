@@ -144,6 +144,47 @@ einem Gefühl – und es hat sich sofort ausgezahlt: Ein Zwischenlauf zeigte wie
 rot, diesmal weil der Docker-Daemon nicht lief. Ohne vorher festgelegte Erwartung wäre das als
 „Schutz wirkt sehr breit" durchgegangen.
 
+Sprint 4:
+
+| Entfernt | Rot geworden |
+|---|---|
+| `tx` im `ActivitiesService` – Eintrag über eigene Verbindung statt über die Transaktion des Aufrufers | 6 von 6 E2E |
+
+### Die Probe, die etwas anderes bewies als geplant
+
+Die Erwartung war **vorher** notiert:
+
+> Die Anlege-Tests werden rot, weil die fremde Verbindung die noch nicht committete Zeile nicht
+> sieht und der Fremdschlüssel scheitert. Der 409-Test bleibt **grün** – dort wird ohnehin erst
+> nach dem Erfolg protokolliert.
+
+Rot wurden **alle sechs**. Nach der Regel oben ist das zunächst verdächtig, also wurde die Ursache
+nachgelesen statt das Rot als Bestätigung zu nehmen:
+
+```
+Foreign key constraint violated on the constraint: `activities_projectId_fkey`
+```
+
+Der Grund ist mechanisch und nicht inhaltlich: Jeder der sechs Tests legt im Aufbau ein Projekt an.
+Schon dieser erste Schreibvorgang scheitert, und damit fällt die ganze Suite – die eigentlichen
+Behauptungen der Tests werden nie erreicht.
+
+**Was die Probe damit beweist**, ist stärker als geplant: Ein Schreiber außerhalb der Transaktion
+funktioniert hier nicht *schlecht*, sondern **gar nicht**. Die fremde Verbindung kann die
+referenzierte Zeile nicht sehen, weil sie noch nicht committet ist – die Datenbank lehnt den
+Eintrag ab. Ein `EventEmitter2`-Listener hätte dieselbe Grenze. Das ist das mechanische Argument
+für ADR-012, und es ist besser als jedes rhetorische.
+
+**Was die Probe nicht beweist**, und das ist der ehrlichere Teil: Der Test *schreibt nach einem 409
+keinen Verschiebe-Eintrag* bewacht **nicht** die Atomarität. Er bewacht die **Reihenfolge** – dass
+protokolliert wird, nachdem das `UPDATE` erfolgreich war. Wäre die Reihenfolge umgedreht, würde ihn
+erst die Transaktion retten; so, wie der Code steht, käme er auch ohne sie nie an die Stelle.
+
+Die Transaktion schützt hier also gegen etwas, das kein vorhandener Test auslöst: einen Fehler
+*zwischen* fachlicher Änderung und Protokolleintrag – ein Verbindungsabbruch, ein Constraint, oder
+eine Anweisung, die ein späterer Entwickler dahinter setzt. Das ist ein realer Schutz, aber einer
+ohne wachenden Test. Er steht hier, damit niemand den grünen Haken für mehr hält, als er ist.
+
 ## Der Nebenläufigkeitstest, der diesmal ohne Zeitspiel auskommt
 
 In Sprint 2 musste der Konflikt **erzwungen** werden: Eine eigene Transaktion hielt die Zeilensperre
