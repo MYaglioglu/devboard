@@ -2181,3 +2181,115 @@ verlangten Reihenfolgen – dafür bräuchte es einen Index, der die Richtungen 
 
 Solange alle Sortierkriterien in dieselbe Richtung zeigen, ist `DESC` im Index Ballast, den ein
 späterer Leser für bedeutsam hält und erst nachschlagen muss.
+
+### 130. Warum schreiben Sie den Feed-Eintrag inline und nicht über Domain Events?
+
+Weil Entkopplung hier eine Garantie kostet, die den ganzen Zweck der Tabelle trägt.
+
+`EventEmitter2` mit `@OnEvent`-Listenern ist das Lehrbuch-Muster für NestJS, und ich habe es
+bewusst nicht genommen: **Ein Listener läuft außerhalb der Transaktion des Auslösers.** Wird die
+fachliche Änderung zurückgerollt – ein `409` beim Verschieben, ein Constraint, ein
+Verbindungsabbruch – steht der Feed-Eintrag trotzdem da. Der Feed behauptet dann ein Ereignis, das
+die Fachdaten nicht kennen, und der Widerspruch ist von außen nicht auflösbar, weil beide Seiten
+für sich stimmig sind.
+
+Stattdessen bekommt `ActivitiesService.protokolliere` den `TransactionClient` des Aufrufers
+hereingereicht. Die Klasse hat **keinen** eigenen `PrismaService` – das ist die wichtigste Zeile
+der Datei, nämlich die, die fehlt.
+
+Der Preis ist Kopplung: Die Services kennen den Feed. Meine Antwort darauf ist nicht „Kopplung ist
+schlecht", sondern die Trennlinie:
+
+> **Konsistenz gehört in die Transaktion, Seiteneffekte gehören in Events.** Ein Protokolleintrag
+> ist kein Seiteneffekt, sondern Teil der Änderung.
+
+Für echte Seiteneffekte – E-Mail, Webhooks – bleibt `EventEmitter2` richtig. Die dürfen scheitern,
+ohne dass die Änderung falsch wird. Und das Muster, das beides hätte, kenne ich: die
+**Transactional Outbox**, bei der das Ereignis in derselben Transaktion in eine Outbox-Tabelle
+geht und ein separater Prozess zustellt. Sie löst ein Problem, das ich hier nicht habe –
+Zustellung an ein *fremdes* System. In Sprint 5 stellt sich die Frage neu.
+
+### 131. Können Sie belegen, dass das nötig war – oder ist das eine Vermutung?
+
+Belegen. Ich habe den Schreiber testweise auf eine eigene Verbindung gelegt, also genau das getan,
+was ein Listener tut, und die Tests laufen lassen. Ergebnis:
+
+```
+Foreign key constraint violated on the constraint: `activities_projectId_fkey`
+```
+
+Die fremde Verbindung sieht das gerade angelegte Projekt **nicht**, weil dessen Transaktion noch
+nicht committet ist. Ein Listener könnte den Eintrag also nicht nur unzuverlässig schreiben – im
+Anlege-Fall kann er ihn **gar nicht** schreiben, solange der Fremdschlüssel steht. Das ist ein
+mechanisches Argument, kein rhetorisches.
+
+Interessanter ist aber, was dabei schiefging. Meine Erwartung stand vorher fest: die Anlege-Tests
+rot, der 409-Test grün. Rot wurden **alle sechs**. Nach meiner eigenen Regel – *ein zu breites Rot
+ist genauso verdächtig wie ein ausbleibendes* – habe ich die Ursache nachgelesen statt das Rot als
+Bestätigung zu nehmen: Jeder Test legt im Aufbau ein Projekt an, schon der erste Schreibvorgang
+scheitert, und die eigentlichen Behauptungen werden nie erreicht.
+
+### 132. Was bewacht Ihr 409-Test dann eigentlich?
+
+Die **Reihenfolge**, nicht die Atomarität – und das ist der Teil, den ich in `12_TESTING.md`
+ausdrücklich hingeschrieben habe, weil er unbequem ist.
+
+Der Test prüft: Nach einem abgewiesenen Verschiebeversuch steht kein Eintrag im Feed. Das gilt in
+meinem Code aber schon deshalb, weil protokolliert wird, *nachdem* das `UPDATE` erfolgreich war –
+der `409` verlässt die Methode vorher. Wäre die Reihenfolge umgedreht, würde ihn erst die
+Transaktion retten; so, wie der Code steht, kommt er nie an die Stelle.
+
+Die Transaktion schützt hier also gegen etwas, das **kein vorhandener Test auslöst**: einen Fehler
+*zwischen* fachlicher Änderung und Protokolleintrag – ein Verbindungsabbruch, ein Constraint, oder
+eine Anweisung, die ein späterer Entwickler dahintersetzt. Realer Schutz, aber ohne wachenden Test.
+
+Das steht so im Testkapitel, damit niemand – ich eingeschlossen – den grünen Haken für mehr hält,
+als er ist. Ein Test, der etwas anderes bewacht, als man glaubt, ist gefährlicher als gar keiner,
+weil er spätere Änderungen absegnet.
+
+### 133. Ihr `payload` ist `jsonb`. Wie stellen Sie sicher, dass da nicht Unsinn drinsteht?
+
+Gar nicht – die Datenbank kann es nicht. Es gibt kein Constraint, das erzwingt, dass bei
+`TASK_MOVED` auch `fromStatus` im `payload` steht. `jsonb` nimmt jedes Objekt an.
+
+Das ist der bewusste Tausch aus ADR-011: Ich gebe die Prüfung der Datenbank auf, um nicht bei jedem
+neuen Ereignistyp eine Migration zu brauchen – und hole sie mir im **Typsystem** zurück.
+
+`payload` wird nirgends als freies Objekt geschrieben. Der einzige Weg zu einem Eintrag führt über
+eine **unterscheidbare Union** (`discriminated union`): Der Compiler weiß, dass zu
+`'AUFGABE_VERSCHOBEN'` zwingend `vonStatus` und `nachStatus` gehören, und lehnt einen halb
+gefüllten Eintrag ab, bevor er entsteht. Der `switch` über das Unterscheidungsfeld engt den Typ in
+jedem Zweig ein, und am Ende steht eine Vollständigkeitsprüfung:
+
+```ts
+const niemals: never = ereignis;
+```
+
+Sind alle Fälle behandelt, hat `ereignis` hier den Typ `never` und die Zuweisung ist gültig. Fehlt
+ein Fall, ist es der vergessene Typ – und es schlägt fehl. Der Fehler erscheint beim Kompilieren
+statt zur Laufzeit als fehlender Feed-Eintrag, den niemand vermisst: **Man sieht nicht, was nicht
+da ist.**
+
+Dazu kommt eine eigene Spec ohne Datenbank, die genau den `payload` festnagelt. Sie ist die einzige
+Stelle, an der die Zusicherung überhaupt belegt ist.
+
+### 134. Ihr `DELETE` ist idempotent. Gilt das auch für den Feed?
+
+Ja, und das war eine echte Änderung an dieser Stelle.
+
+Idempotenz hieß bisher: Das zweite `DELETE` hinterlässt denselben Zustand in `archivedAt`. Seit dem
+Feed gehört er dazu – zweimal „Projekt archiviert" untereinander wäre ein sichtbarer Widerspruch zu
+der Zusage, die der Endpoint gibt.
+
+Entscheidend ist, **woran** der Eintrag hängt: an `ergebnis.count` des `updateMany`, nicht an einem
+vorher gelesenen `archivedAt`. Würde erst gelesen und dann entschieden, könnten zwei gleichzeitige
+Anfragen beide `null` sehen – eine schriebe die Spalte, aber **beide** schrieben ihren Eintrag.
+
+```sql
+UPDATE projects SET "archivedAt" = ? WHERE id = ? AND "organizationId" = ? AND "archivedAt" IS NULL
+```
+
+Genau einer der beiden bekommt `count = 1`. Dasselbe Prinzip wie beim optimistischen Sperren aus
+Sprint 3: **Die Bedingung gehört ins `WHERE`, nicht in ein `if` davor.** Dass diese Regel hier zum
+dritten Mal trägt – Mandantenfilter, Versionsprüfung, jetzt Idempotenz – ist der Grund, warum ich
+sie mir gemerkt habe.
