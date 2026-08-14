@@ -2074,3 +2074,110 @@ Karte reagiert nicht mehr zuverlässig.
 
 Aus demselben Grund sitzen die Ziehgriffe am Titel und nicht auf der ganzen Karte – sonst wäre der
 Knopf Teil der Ziehfläche.
+
+## Sprint 4 – Dashboard und Aktivitäts-Feed
+
+### 125. Ihr `tasks`-Modell speichert bewusst keine `organizationId`, `activities` schon. Widersprechen Sie sich?
+
+Nein – die Regel hatte von Anfang an eine Bedingung, und die ist hier nicht erfüllt.
+
+Bei `tasks` lautet sie: Der Mandant wird über `project.organizationId` **geerbt**, weil ein Projekt
+seine Organisation nie wechselt. Die Spalte zu duplizieren wäre eine zweite Wahrheit ohne Gegenwert.
+
+Bei `activities` fällt beides weg:
+
+- **Es gibt nichts zu erben.** Nicht jedes Ereignis hat ein Projekt. Sprint 5 speist
+  GitHub-Webhooks in denselben Feed, eine Einladung hängt an der Organisation. Der Mandant wäre für
+  manche Zeilen über `projects` erreichbar und für andere überhaupt nicht – der Filter hätte je
+  nach Ereignistyp eine andere Form.
+- **Es gibt einen Gegenwert.** PostgreSQL kann keinen Index über Spalten *zweier* Tabellen anlegen.
+  Ohne eigene Spalte müsste jede Feed-Seite erst verbinden und danach sortieren, bei der einzigen
+  Tabelle im Schema, die unbegrenzt wächst.
+
+Der Preis heißt trotzdem Redundanz, und ich würde ihn nicht überall zahlen. Was ihn hier vertretbar
+macht, ist die **Unveränderlichkeit**: Redundanz ist dann gefährlich, wenn zwei Kopien
+*auseinanderlaufen* können. Ein Eintrag wird einmal geschrieben und danach nie angefasst – keine
+der beiden Angaben kann sich noch bewegen.
+
+> Die eigentliche Antwort auf diese Frage ist nicht die Ausnahme, sondern dass „keine zweite
+> Wahrheit" nie die vollständige Regel war. Sie lautet: *nicht duplizieren, solange sich der Wert
+> ändern kann und die Duplikation nichts einbringt.*
+
+### 126. Sie haben eine Tabelle für Ereignisse. Ist das Event Sourcing?
+
+Nein, und der Unterschied ist keine Wortklauberei – es ist die Frage, wo die Wahrheit liegt.
+
+Bei mir ist `activities` ein **Protokoll neben** den Fachdaten. Die Wahrheit über eine Aufgabe steht
+in `tasks`; ich könnte die Aktivitätstabelle löschen und die Anwendung liefe weiter, nur ohne Feed.
+
+Bei Event Sourcing wären die Ereignisse die **einzige** Wahrheit, und `tasks` wäre eine daraus
+berechnete Ansicht, die man jederzeit verwerfen und neu aufbauen kann. Jede Leseabfrage kostet dann
+entweder eine Wiedergabe der Ereignisse oder eine zweite, nachgeführte Datenhaltung, die konsistent
+bleiben muss.
+
+Was Event Sourcing dafür löst: „Wie sah der Zustand letzten Dienstag aus" und „wie kam es dazu".
+Das kann mein Entwurf nicht – ich weiß, *dass* eine Karte verschoben wurde, aber ich kann den
+Gesamtzustand von vorletzter Woche nicht rekonstruieren.
+
+Ich habe keine dieser beiden Fragen. Ich will einen Feed anzeigen. Den Aufwand zu tragen, ohne den
+Nutzen zu brauchen, wäre die teuerste Art, ein Schlagwort zu belegen – deshalb heißt das Modell
+`Activity` und nicht `ActivityEvent`, wie ursprünglich geplant. Der Name hätte eine Architektur
+behauptet, die nicht dahintersteht.
+
+### 127. Warum steht `id` in einem Index, der nach `createdAt` sortiert? Der Zeitstempel ist doch praktisch eindeutig.
+
+Er ist es gerade nicht, und das ist messbar statt geschätzt.
+
+Prisma bildet `DateTime` auf **`timestamp(3)`** ab – Millisekunden. PostgreSQL könnte Mikrosekunden
+(`timestamp(6)`), aber JavaScript-`Date` kann sie nicht darstellen, also rundet der Treiber ab. Zwei
+Ereignisse, die in **einer** Transaktion entstehen, bekommen damit regelmäßig denselben Zeitstempel
+– das ist kein Ausnahmefall, sondern der Normalfall.
+
+Nach `createdAt` allein ist die Ordnung dann nicht **total**: Zwischen zwei gleichen Werten
+entscheidet PostgreSQL, in welcher Reihenfolge es liefert, und das darf sich von Abfrage zu Abfrage
+unterscheiden. Genau daran zerbricht die Cursor-Paginierung. Ein Cursor bedeutet „zeig mir alles
+nach dieser Stelle". Ist die Stelle nur ein Zeitstempel, ist sie keine Stelle, sondern eine Gruppe –
+je nach Ausgang zeigt Seite 2 einen Eintrag doppelt oder überspringt einen.
+
+Mit `id` als zweitem Kriterium ist die Ordnung total, und der Cursor bezeichnet **einen** Eintrag.
+
+Das ist dieselbe Falle wie bei zwei gleichen `position`-Werten auf dem Board – und dieselbe Lehre
+wie aus dem `Date.now()`-Fehler in Sprint 3: **Sortierung und Testisolierung dürfen nicht auf der
+Auflösung einer Uhr beruhen.**
+
+### 128. Sie haben zwei Indizes, beide enden auf `createdAt, id`. Warum bedient der erste nicht auch den zweiten Fall?
+
+Weil ein Index sortiert abgelegt ist und **nur von links gelesen** hilft.
+
+```sql
+CREATE INDEX … ON activities("organizationId", "createdAt", "id");  -- Feed der Organisation
+CREATE INDEX … ON activities("projectId",      "createdAt", "id");  -- Feed eines Projekts
+```
+
+Der erste ist nach `organizationId` sortiert, **dann** nach `createdAt`. Die Zeilen *eines*
+Projekts liegen darin über den gesamten Zeitraum verstreut – `projectId` kommt im Index gar nicht
+vor. PostgreSQL müsste also alle Aktivitäten des Mandanten der Reihe nach lesen, die fremden
+Projekte wegwerfen und hoffen, früh genug 20 Treffer beisammen zu haben. Bei einem Projekt, in dem
+seit Monaten nichts passiert ist, liest es die halbe Tabelle für eine Seite.
+
+Die Faustregel dahinter: **Was mit Gleichheit gefiltert wird, gehört nach vorne; was sortiert wird,
+dahinter.** Ein Index kann nur dann ohne Sortierschritt liefern, wenn der Filter am Anfang alle
+verbleibenden Zeilen in der gewünschten Reihenfolge stehen lässt.
+
+Eine Kleinigkeit, die schnell übersehen wird: `organizationId` steht im **zweiten** Index nicht –
+bleibt aber im `WHERE` der Abfrage. Der Index wählt Zeilen *vor*, der Mandantenfilter entscheidet
+über *Sichtbarkeit*. Beides zu verwechseln wäre genau der Fehler aus Sprint 2: Ein Projekt gehört
+nicht automatisch zu der Organisation im Pfad, nur weil seine ID im Pfad steht.
+
+### 129. Ihr Feed sortiert absteigend. Warum steht dann kein `DESC` in Ihren Indizes?
+
+Weil es nichts brächte. Ein B-Baum ist in **beide Richtungen** lesbar: PostgreSQL bedient
+`ORDER BY createdAt DESC, id DESC` mit einem aufsteigenden Index, indem es ihn rückwärts durchläuft.
+Im Ausführungsplan steht dann `Index Scan Backward` – ohne Zusatzkosten gegenüber vorwärts.
+
+Eine Richtungsangabe zahlt sich erst bei **gemischter** Sortierung aus, etwa `createdAt DESC, id
+ASC`. Rückwärtslesen dreht dann beide Spalten auf einmal, und der Index passt zu keiner der beiden
+verlangten Reihenfolgen – dafür bräuchte es einen Index, der die Richtungen schon gespeichert hat.
+
+Solange alle Sortierkriterien in dieselbe Richtung zeigen, ist `DESC` im Index Ballast, den ein
+späterer Leser für bedeutsam hält und erst nachschlagen muss.
