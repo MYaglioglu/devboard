@@ -434,3 +434,78 @@ Name hätte eine Architektur behauptet, die nicht dahintersteht.
   Sprint 4, weil ohne echten Verkehr niemand die richtige Frist kennt.
 - **Negativ, bewusst in Kauf genommen:** `payload` ist von der Datenbank nicht geprüft. Die
   Struktur garantiert allein der Code.
+
+---
+
+## ADR-012: Aktivitäten entstehen in der Transaktion, nicht in einem Event-Listener
+
+**Status:** Angenommen (14.08.2026)
+
+### Kontext
+ADR-011 legt die Tabelle fest. Offen bleibt, **wie** die Einträge entstehen. Das Lehrbuch-Muster
+für NestJS heißt „Domain Events": Der Fachcode gibt ein Ereignis bekannt, ein `@OnEvent`-Listener
+schreibt es weg. Das entkoppelt – der `TasksService` müsste den Feed nicht kennen – und es ist
+genau der Begriff, der in Stellenausschreibungen steht.
+
+### Entscheidung
+Der Eintrag wird **inline in derselben Transaktion** geschrieben. `ActivitiesService.protokolliere`
+bekommt den `Prisma.TransactionClient` des Aufrufers hereingereicht und hat selbst **keinen**
+`PrismaService`.
+
+```ts
+return this.prisma.$transaction(async (tx) => {
+  const zeile = await tx.task.updateMany({ … });   // fachliche Änderung
+  await this.activities.protokolliere(tx, …);      // Protokoll – derselbe tx
+});
+```
+
+### Warum nicht `EventEmitter2`
+**Ein Listener läuft außerhalb der Transaktion des Auslösers.** Damit gilt seine Zusage nicht mehr:
+Wird die fachliche Änderung zurückgerollt – ein `409` beim Verschieben, ein Constraint, ein
+Verbindungsabbruch – steht der Feed-Eintrag trotzdem da. Der Feed behauptete dann ein Ereignis, das
+die Fachdaten nicht kennen, und der Widerspruch wäre von außen nicht auflösbar.
+
+Das ist keine theoretische Sorge. Die Mutationsprobe (`12_TESTING.md`) hat den Schreiber testweise
+auf eine eigene Verbindung gelegt – also genau das getan, was ein Listener tut. Ergebnis:
+
+```
+Foreign key constraint violated on the constraint: `activities_projectId_fkey`
+```
+
+Die fremde Verbindung sieht das gerade angelegte Projekt **nicht**, weil dessen Transaktion noch
+nicht committet ist. Ein Listener kann den Eintrag also nicht nur unzuverlässig schreiben – er kann
+ihn im Anlege-Fall **gar nicht** schreiben, solange der Fremdschlüssel steht.
+
+Das saubere Muster, das beides hätte, ist das **Transactional Outbox Pattern**: Das Ereignis wird
+in derselben Transaktion in eine Outbox-Tabelle geschrieben, ein separater Prozess liest sie und
+stellt zu. Es löst ein Problem, das wir hier nicht haben – Zustellung an ein *fremdes* System.
+Sprint 5 (GitHub-Webhooks) ist der Ort, an dem sich die Frage neu stellt.
+
+### Der Preis, ausdrücklich bezahlt
+**Kopplung.** `ProjectsModule` und `TasksModule` importieren `ActivitiesModule`; die Services kennen
+den Feed. Ein Interviewer wird darauf zeigen, und die Antwort ist nicht „Kopplung ist schlecht",
+sondern:
+
+> Entkopplung ist ein Mittel, kein Ziel. Sie kostet hier eine Garantie, die den ganzen Zweck der
+> Tabelle trägt. **Konsistenz gehört in die Transaktion, Seiteneffekte gehören in Events** – ein
+> Protokolleintrag ist kein Seiteneffekt, sondern Teil der Änderung.
+
+Für echte Seiteneffekte (E-Mail, Webhooks) bleibt `EventEmitter2` die richtige Wahl. Sie dürfen
+scheitern, ohne dass die Änderung falsch wird.
+
+### Konsequenzen
+- **Positiv:** Fachdaten und Feed können nicht auseinanderlaufen. Nach einem `409` steht nichts im
+  Feed – durch einen E2E-Test festgehalten.
+- **Positiv:** Idempotenz gilt auch für den Feed. Das zweite `DELETE` auf dasselbe Projekt schreibt
+  keinen zweiten Eintrag, weil der Eintrag an `ergebnis.count` hängt und nicht an einem vorher
+  gelesenen Wert – dieselbe Regel wie beim optimistischen Sperren: **die Bedingung gehört ins
+  `WHERE`, nicht in ein `if` davor.**
+- **Negativ:** Die Transaktionen werden länger. Aus `create` wurde `$transaction` – zwei Anweisungen
+  statt einer, und die Sperren des ersten Schreibvorgangs werden einen Moment länger gehalten. Bei
+  diesem Verkehrsaufkommen belanglos, bei hoher Schreiblast der erste Punkt, den man messen würde.
+- **Negativ:** Jede schreibende Signatur bekam einen Parameter `akteurId`. Das ist Rauschen im Diff
+  und hat einen Vorteil, der ihn aufwiegt: Der Akteur kommt aus der **geprüften** Mitgliedschaft
+  (`AktiveMitgliedschaft.userId`), nicht aus dem Request – Organisation und Akteur stammen damit
+  garantiert aus derselben Quelle.
+- **Negativ, offen benannt:** Der Schutz vor einem Fehler *zwischen* Änderung und Protokolleintrag
+  hat keinen wachenden Test (siehe `12_TESTING.md`). Er ist real, aber unbelegt.
