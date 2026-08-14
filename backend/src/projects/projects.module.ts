@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { ActivitiesModule } from '../activities/activities.module';
 import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
 
@@ -20,7 +21,14 @@ import { ProjectsService } from './projects.service';
  * Task-Abfrage selbst, entscheidet sich dort - vorsorglich exportiert wird
  * nichts.
  */
+/**
+ * ActivitiesModule steht ausdruecklich in den `imports` - anders als
+ * PrismaModule, das global ist. Ein Dienst, der in die Transaktion des
+ * Aufrufers hineinschreibt, soll an der Modulgrenze sichtbar sein: Wer hier
+ * liest, sieht, dass Projekte protokollieren.
+ */
 @Module({
+  imports: [ActivitiesModule],
   controllers: [ProjectsController],
   providers: [ProjectsService],
 })
