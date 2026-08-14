@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 
+import { ActivitiesService } from '../activities/activities.service';
 import { Prisma } from '../generated/prisma/client';
 import { TaskStatus } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
@@ -22,6 +23,7 @@ describe('TasksService', () => {
   const AUFGABEN_ID = 'b3f1c2d4-0000-4000-8000-000000000022';
   const NUTZER_ID = 'b3f1c2d4-0000-4000-8000-000000000033';
   const MITGLIEDSCHAFT_ID = 'b3f1c2d4-0000-4000-8000-000000000044';
+  const AKTEUR_ID = 'b3f1c2d4-0000-4000-8000-000000000055';
 
   interface TaskWhere {
     id?: string;
@@ -67,6 +69,20 @@ describe('TasksService', () => {
   >();
   const membershipFindUnique = jest.fn<Promise<unknown>, [unknown]>();
 
+  /** Der Aktivitaets-Eintrag. `payload` bleibt `unknown` - kein `any`, auch hier nicht. */
+  interface AktivitaetsArgumente {
+    data: {
+      organizationId: string;
+      actorId: string;
+      type: string;
+      projectId: string;
+      taskId: string | null;
+      payload: unknown;
+    };
+  }
+
+  const activityCreate = jest.fn<Promise<unknown>, [AktivitaetsArgumente]>();
+
   /**
    * Eine Zeile, wie Prisma sie mit AUFGABE_FELDER liefert. `position` ist
    * ausdruecklich ein Decimal-Objekt und keine Zahl - waere es eine Zahl,
@@ -93,6 +109,7 @@ describe('TasksService', () => {
     taskFindMany.mockReset();
     taskDeleteMany.mockReset();
     membershipFindUnique.mockReset();
+    activityCreate.mockReset();
 
     const prismaAttrappe = {
       project: { findFirst: projectFindFirst },
@@ -103,6 +120,7 @@ describe('TasksService', () => {
         deleteMany: taskDeleteMany,
       },
       membership: { findUnique: membershipFindUnique },
+      activity: { create: activityCreate },
       // `$transaction` bekommt hier den Attrappen-Client selbst gereicht.
       // Damit laeuft der Code unveraendert; getestet wird die Logik, nicht
       // das Transaktionsverhalten von PostgreSQL - das gehoert in die
@@ -114,6 +132,11 @@ describe('TasksService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         TasksService,
+        // Der echte ActivitiesService - er schreibt ueber den `tx`, den er
+        // hereingereicht bekommt. Waere er eine Attrappe, koennte dieser Test
+        // nicht mehr zeigen, dass der Eintrag ueber DENSELBEN Klienten laeuft
+        // wie die fachliche Aenderung.
+        ActivitiesService,
         { provide: PrismaService, useValue: prismaAttrappe },
       ],
     }).compile();
@@ -127,7 +150,7 @@ describe('TasksService', () => {
       taskFindFirst.mockResolvedValue(null);
       taskCreate.mockResolvedValue(zeile('1000'));
 
-      await service.erstelle(ORG_ID, PROJEKT_ID, {
+      await service.erstelle(ORG_ID, AKTEUR_ID, PROJEKT_ID, {
         title: 'Erste',
         status: TaskStatus.TODO,
       });
@@ -141,7 +164,7 @@ describe('TasksService', () => {
       taskFindFirst.mockResolvedValue({ position: new Prisma.Decimal('3000') });
       taskCreate.mockResolvedValue(zeile('4000'));
 
-      await service.erstelle(ORG_ID, PROJEKT_ID, {
+      await service.erstelle(ORG_ID, AKTEUR_ID, PROJEKT_ID, {
         title: 'Zweite',
         status: TaskStatus.TODO,
       });
@@ -164,7 +187,7 @@ describe('TasksService', () => {
       });
       taskCreate.mockResolvedValue(zeile('1000'));
 
-      await service.erstelle(ORG_ID, PROJEKT_ID, {
+      await service.erstelle(ORG_ID, AKTEUR_ID, PROJEKT_ID, {
         title: 'Genau',
         status: TaskStatus.TODO,
       });
@@ -180,7 +203,7 @@ describe('TasksService', () => {
       taskFindFirst.mockResolvedValue(null);
       taskCreate.mockResolvedValue(zeile('1000'));
 
-      await service.erstelle(ORG_ID, PROJEKT_ID, {
+      await service.erstelle(ORG_ID, AKTEUR_ID, PROJEKT_ID, {
         title: 'In Arbeit',
         status: TaskStatus.IN_PROGRESS,
       });
@@ -194,7 +217,7 @@ describe('TasksService', () => {
       projectFindFirst.mockResolvedValue(null);
 
       await expect(
-        service.erstelle(ORG_ID, PROJEKT_ID, {
+        service.erstelle(ORG_ID, AKTEUR_ID, PROJEKT_ID, {
           title: 'Fremd',
           status: TaskStatus.TODO,
         }),
@@ -208,7 +231,7 @@ describe('TasksService', () => {
       taskFindFirst.mockResolvedValue(null);
       taskCreate.mockResolvedValue(zeile('1000'));
 
-      await service.erstelle(ORG_ID, PROJEKT_ID, {
+      await service.erstelle(ORG_ID, AKTEUR_ID, PROJEKT_ID, {
         title: 'Egal',
         status: TaskStatus.TODO,
       });
@@ -231,7 +254,7 @@ describe('TasksService', () => {
       taskFindFirst.mockResolvedValue(null);
       taskCreate.mockResolvedValue(zeile('1000'));
 
-      await service.erstelle(ORG_ID, PROJEKT_ID, {
+      await service.erstelle(ORG_ID, AKTEUR_ID, PROJEKT_ID, {
         title: 'Zugewiesen',
         status: TaskStatus.TODO,
         assigneeId: NUTZER_ID,
@@ -255,7 +278,7 @@ describe('TasksService', () => {
       membershipFindUnique.mockResolvedValue(null);
 
       await expect(
-        service.erstelle(ORG_ID, PROJEKT_ID, {
+        service.erstelle(ORG_ID, AKTEUR_ID, PROJEKT_ID, {
           title: 'Fremdzuweisung',
           status: TaskStatus.TODO,
           assigneeId: NUTZER_ID,
@@ -304,9 +327,10 @@ describe('TasksService', () => {
 
   describe('loesche', () => {
     it('nimmt den Mandanten in die Loeschbedingung auf', async () => {
+      taskFindFirst.mockResolvedValue({ title: 'Aufgabe' });
       taskDeleteMany.mockResolvedValue({ count: 1 });
 
-      await service.loesche(ORG_ID, PROJEKT_ID, AUFGABEN_ID);
+      await service.loesche(ORG_ID, AKTEUR_ID, PROJEKT_ID, AUFGABEN_ID);
 
       const { where } = taskDeleteMany.mock.calls[0][0];
       expect(where).toEqual({
@@ -316,12 +340,60 @@ describe('TasksService', () => {
       });
     });
 
-    it('meldet 404, wenn nichts geloescht wurde', async () => {
+    it('meldet 404, wenn es die Aufgabe in dieser Organisation nicht gibt', async () => {
+      // `null` ausdruecklich, nicht "Attrappe nicht eingerichtet": Sonst waere
+      // der Test auch dann gruen, wenn der Service aus einem ganz anderen
+      // Grund scheitert - und man sieht dem gruenen Haken nicht an, welche
+      // Zeile er bewacht.
+      taskFindFirst.mockResolvedValue(null);
+
+      await expect(
+        service.loesche(ORG_ID, AKTEUR_ID, PROJEKT_ID, AUFGABEN_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      // Nicht gefunden heisst: gar nicht erst loeschen.
+      expect(taskDeleteMany).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Der Fall zwischen den beiden Abfragen.
+     *
+     * Die Aufgabe war beim Lesen des Titels noch da, ist beim DELETE aber
+     * weg - zwei gleichzeitige Loeschanfragen, oder ein Doppelklick. Wichtig
+     * ist beides: 404 als Antwort, und KEIN Feed-Eintrag. Sonst stuende bei
+     * jedem Doppelklick zweimal "Aufgabe geloescht" untereinander.
+     */
+    it('protokolliert nichts, wenn das DELETE nichts trifft', async () => {
+      taskFindFirst.mockResolvedValue({ title: 'Aufgabe' });
       taskDeleteMany.mockResolvedValue({ count: 0 });
 
       await expect(
-        service.loesche(ORG_ID, PROJEKT_ID, AUFGABEN_ID),
+        service.loesche(ORG_ID, AKTEUR_ID, PROJEKT_ID, AUFGABEN_ID),
       ).rejects.toBeInstanceOf(NotFoundException);
+
+      expect(activityCreate).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Der Titel steht im `payload`, nicht hinter `taskId`.
+     *
+     * `taskId` ist hier ausdruecklich `null`: Die Zeile ist im selben Moment
+     * verschwunden, ein Fremdschluessel darauf waere durch `ON DELETE SET
+     * NULL` sofort wieder leer. Ohne den Titel im `payload` bliebe im Feed nur
+     * "irgendetwas wurde geloescht" uebrig.
+     */
+    it('protokolliert den Titel der geloeschten Aufgabe', async () => {
+      taskFindFirst.mockResolvedValue({ title: 'Login-Bug' });
+      taskDeleteMany.mockResolvedValue({ count: 1 });
+
+      await service.loesche(ORG_ID, AKTEUR_ID, PROJEKT_ID, AUFGABEN_ID);
+
+      expect(activityCreate).toHaveBeenCalledTimes(1);
+      const { data } = activityCreate.mock.calls[0][0];
+      expect(data.type).toBe('TASK_DELETED');
+      expect(data.actorId).toBe(AKTEUR_ID);
+      expect(data.taskId).toBeNull();
+      expect(data.payload).toEqual({ title: 'Login-Bug' });
     });
   });
 });

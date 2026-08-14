@@ -69,7 +69,12 @@ export class TasksController {
     projektId: string,
     @Body(new ZodValidationPipe(createTaskSchema)) daten: CreateTaskDto,
   ): Promise<Aufgabe> {
-    return this.tasks.erstelle(mitgliedschaft.organizationId, projektId, daten);
+    return this.tasks.erstelle(
+      mitgliedschaft.organizationId,
+      mitgliedschaft.userId,
+      projektId,
+      daten,
+    );
   }
 
   /** GET /organizations/:orgId/projects/:projectId/tasks - die Board-Abfrage. */
@@ -115,6 +120,7 @@ export class TasksController {
   ): Promise<Aufgabe> {
     return this.tasks.aendere(
       mitgliedschaft.organizationId,
+      mitgliedschaft.userId,
       projektId,
       aufgabenId,
       daten,
@@ -148,6 +154,7 @@ export class TasksController {
   ): Promise<Aufgabe> {
     return this.tasks.verschiebe(
       mitgliedschaft.organizationId,
+      mitgliedschaft.userId,
       projektId,
       aufgabenId,
       daten,
@@ -166,6 +173,7 @@ export class TasksController {
   ): Promise<void> {
     return this.tasks.loesche(
       mitgliedschaft.organizationId,
+      mitgliedschaft.userId,
       projektId,
       aufgabenId,
     );
