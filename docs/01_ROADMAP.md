@@ -157,7 +157,7 @@ N+1-Queries" fast jeder behauptet und fast niemand belegen kann.
 
 - [x] 4.1 Datenmodell `activities`, Migration, zwei Indizes, ADR-011 (14.08.2026)
 - [x] 4.2 Aktivitäten schreiben: Projekte und Tasks protokollieren in ihrer Transaktion, ADR-012 (14.08.2026)
-- [ ] 4.3 `GET …/activity` mit Cursor-Paginierung, negative Tests, Cursor gegen Manipulation
+- [x] 4.3 `GET …/activity` mit Cursor-Paginierung, negative Tests, Cursor gegen Manipulation (14.08.2026)
 - [ ] 4.4 `GET …/dashboard/stats` – zuerst naiv, N+1 im Query-Log belegt, dann `groupBy`
 - [ ] 4.5 Frontend: Kennzahlen auf dem Dashboard
 - [ ] 4.6 Frontend: Feed mit „Mehr laden"
