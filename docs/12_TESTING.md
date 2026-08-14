@@ -149,6 +149,8 @@ Sprint 4:
 | Entfernt | Rot geworden |
 |---|---|
 | `tx` im `ActivitiesService` – Eintrag über eigene Verbindung statt über die Transaktion des Aufrufers | 6 von 6 E2E |
+| Zweiter Zweig der Keyset-Bedingung (Gleichstand über die `id`) | **0** – siehe unten |
+| Derselbe Zweig, nach Ergänzung eines erzwingenden Tests | 1 E2E, punktgenau |
 
 ### Die Probe, die etwas anderes bewies als geplant
 
@@ -184,6 +186,25 @@ Die Transaktion schützt hier also gegen etwas, das kein vorhandener Test auslö
 *zwischen* fachlicher Änderung und Protokolleintrag – ein Verbindungsabbruch, ein Constraint, oder
 eine Anweisung, die ein späterer Entwickler dahinter setzt. Das ist ein realer Schutz, aber einer
 ohne wachenden Test. Er steht hier, damit niemand den grünen Haken für mehr hält, als er ist.
+
+### Die Probe, die gar nichts rot machte – und was daraus folgte
+
+Der zweite Zweig der Keyset-Bedingung behandelt Einträge mit **identischem** Zeitstempel. Er wurde
+entfernt: **16 von 16 Tests blieben grün.**
+
+Der Paginierungstest liest fünf Einträge über drei Seiten und prüft, dass jeder genau einmal
+vorkommt – er *sah* aus wie die vollständige Prüfung. Seine fünf Einträge entstanden aber aus fünf
+getrennten HTTP-Anfragen und lagen Millisekunden auseinander. Der Gleichstand trat nie ein.
+
+Ergänzt wurde deshalb ein Test, der ihn **erzwingt**: fünf Einträge direkt über Prisma, alle mit
+exakt demselben `createdAt`. Die Gegenprobe machte dann **genau einen** Test rot, mit sprechender
+Zahl – 3 statt 6 Einträgen, weil die drei gleichzeitigen übersprungen wurden.
+
+Ausführlich in `17_MISTAKES_AND_LESSONS.md`. Die Lehre in einem Satz:
+
+> **Ein Test, der einen Grenzfall nur *wahrscheinlich* erreicht, prüft ihn nicht.** Hängt die
+> Bedingung von einer Uhr, einer Reihenfolge oder einem Scheduler ab, muss der Test sie
+> herstellen – nicht abwarten.
 
 ## Der Nebenläufigkeitstest, der diesmal ohne Zeitspiel auskommt
 

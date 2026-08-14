@@ -674,3 +674,57 @@ voraus.
 4. **Der Zufallsfehler kam während einer Mutationsprobe** und hat sich fast als „Schutz wirkt breit"
    getarnt. Die vorher notierte Erwartung („genau diese zwei Tests werden rot") hat ihn als das
    entlarvt, was er war.
+
+---
+
+## 2026-08-14 – Der Paginierungstest, der den Gleichstand nie erreicht hat
+
+**Was passiert ist**
+
+Der Feed paginiert per Cursor über `(createdAt, id)`. Die Keyset-Bedingung hat zwei Zweige:
+
+```ts
+{ createdAt: { lt: stelle.createdAt } },                    // älter
+{ createdAt: stelle.createdAt, id: { lt: stelle.id } },     // gleiche Millisekunde
+```
+
+Der zweite Zweig ist der ganze Grund, warum `id` überhaupt im Index und im Cursor steht. Dazu gab
+es einen E2E-Test, der fünf Einträge über drei Seiten liest und prüft, dass jeder **genau einmal**
+vorkommt – dem Anschein nach die vollständige Prüfung.
+
+Die Mutationsprobe hat den zweiten Zweig entfernt. Ergebnis: **16 von 16 Tests grün.**
+
+**Warum**
+
+Die fünf Einträge entstanden aus fünf getrennten HTTP-Anfragen und lagen deshalb Millisekunden
+auseinander. Der Gleichstand, gegen den der zweite Zweig schützt, **trat schlicht nie ein**. Der
+Test prüfte die Paginierung – aber nur in dem Fall, in dem sie ohnehin funktioniert.
+
+Das ist exakt dasselbe Muster wie beim ersten Nebenläufigkeitstest in Sprint 2: `Promise.all`
+erzeugte keine Verschränkung, nur die *Möglichkeit* einer. Beide Male sah der Test aus, als decke
+er den kritischen Fall ab, weil er die richtigen Zutaten enthielt – ohne sie je zusammenzubringen.
+
+**Was geändert wurde**
+
+Ein Test, der den Fall **erzwingt**, statt auf ihn zu hoffen: Fünf Einträge werden direkt über
+Prisma geschrieben, alle mit exakt demselben `createdAt`. Damit entscheidet ausschließlich die `id`
+über die Reihenfolge, und die Seitengrenze fällt garantiert mitten in die Gruppe.
+
+Die Gegenprobe: Schutz noch einmal entfernt, **genau ein** Test rot – und die Zahl war sprechend.
+Statt 6 Einträgen kamen 3 an: die erste Seite plus der Eintrag aus dem Aufbau, die drei übrigen
+gleichzeitigen wurden übersprungen.
+
+**Die Lehre**
+
+> **Ein Test, der einen Grenzfall nur *wahrscheinlich* erreicht, prüft ihn nicht.** Wenn die
+> Bedingung von einer Uhr, einer Reihenfolge oder einem Scheduler abhängt, muss der Test sie
+> herstellen – nicht abwarten.
+
+Das ist die dritte Ausprägung derselben Sache in diesem Projekt: `Promise.all` ohne Verschränkung
+(Sprint 2), `Date.now()` als Testisolierung (Sprint 3), und jetzt eine Seitengrenze, die den
+Gleichstand nie trifft. Jedes Mal war die Uhr oder der Zufall stillschweigend Teil der
+Testbedingung.
+
+Und die zweite, unbequemere Hälfte: **Ohne die Mutationsprobe wäre das nicht aufgefallen.** Der
+Test war grün, sah gründlich aus und hätte jede spätere Änderung an der Keyset-Bedingung
+abgesegnet – gefährlicher als gar kein Test.

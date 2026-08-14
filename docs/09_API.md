@@ -1101,6 +1101,110 @@ dasselbe, und der Aufrufer glaubte, etwas bewirkt zu haben.
 
 ---
 
+## Aktivitäts-Feed
+
+Nur lesbar. Es gibt **kein** `POST /activity`, und das ist keine Lücke: Ein Ereignis entsteht
+dadurch, dass etwas *geschieht* – nicht dadurch, dass jemand es behauptet. Wäre der Feed von außen
+beschreibbar, könnte jedes Mitglied einen Verlauf erfinden, und die Zusage aus ADR-012 wäre
+aushebelbar. Aus demselben Grund gibt es kein `PATCH` und kein `DELETE`: Ein Protokoll, das sich
+ändern lässt, ist als Protokoll wertlos.
+
+Lesen darf **jedes Mitglied**, auch ein `MEMBER`. Der Feed zeigt, was im eigenen Team passiert ist;
+ihn Verwaltern vorzubehalten wäre die Umkehrung seines Zwecks.
+
+Der Pfad heißt `activity` im Singular – gemeint ist „die Aktivität dieser Organisation" als
+Sammelbegriff, nicht eine Liste einzeln adressierbarer Ressourcen. Ein `GET …/activity/:id` gibt es
+bewusst nicht: Ein Eintrag ist ohne seinen Verlauf sinnlos.
+
+### `GET /organizations/:orgId/activity` · alle Mitglieder
+
+| Parameter | Vorgabe | Anmerkung |
+|---|---|---|
+| `limit` | 20 | 1–100. Ohne Obergrenze wäre `?limit=1000000` ein Weg, den Server mit *einer* Anfrage beliebig zu belasten |
+| `cursor` | – | Undurchsichtige Zeichenkette aus einer vorigen Antwort |
+| `projectId` | – | Filter innerhalb des Mandanten. Fremdes Projekt ⇒ **404**, nicht leere Liste |
+
+```json
+{
+  "items": [
+    {
+      "id": "…",
+      "type": "TASK_MOVED",
+      "actor": { "userId": "…", "name": "Murat", "email": "murat@example.com" },
+      "projectId": "…",
+      "taskId": "…",
+      "payload": { "title": "Login-Bug", "fromStatus": "TODO", "toStatus": "DONE" },
+      "createdAt": "2026-08-14T10:03:22.150Z"
+    }
+  ],
+  "nextCursor": "MjAyNi0wOC0xNFQxMDowMzoyMi4xNTBafGIzZjFjMmQ0…"
+}
+```
+
+`actor: null` ist kein Fehler, sondern der Normalfall nach einer Kontolöschung – `ON DELETE SET
+NULL` lässt das Ereignis stehen und nimmt ihm nur die Zuordnung. Das Frontend zeigt dann „Ein
+entferntes Mitglied".
+
+`nextCursor: null` heißt ausdrücklich **keine weitere Seite** und nicht „unbekannt". Diesen
+Unterschied gibt es nur, weil eine Zeile mehr gelesen wird, als ausgeliefert wird – so ist die
+Frage „gibt es noch mehr" ohne ein zweites `COUNT` beantwortet, das die gesamte Treffermenge zählen
+müsste.
+
+### Warum Cursor und nicht `?page=3`
+
+Offset-Paginierung hat zwei Probleme, und das Geschwindigkeitsproblem ist das kleinere:
+
+1. `OFFSET 10000` liest zehntausend Zeilen und wirft sie weg. Die Kosten steigen mit der
+   Seitenzahl, obwohl das Ergebnis gleich groß bleibt.
+2. Der schlimmere: Kommt zwischen zwei Seitenaufrufen ein Eintrag **oben** dazu, verschiebt sich
+   alles um eins – der Nutzer sieht auf Seite 2 einen Eintrag, den er auf Seite 1 schon gelesen hat.
+   Bei einem Feed, in den ständig geschrieben wird, ist das der Normalfall.
+
+Ein Cursor bezeichnet stattdessen eine **Stelle**: „weiter nach genau diesem Eintrag". Neue
+Einträge oben liegen außerhalb dessen, was noch gelesen wird.
+
+Der Preis, ehrlich benannt: **Es gibt kein Springen zu Seite 7 und keine Gesamtzahl.** Für einen
+chronologischen Feed ist beides bedeutungslos – für eine Tabelle mit Seitenzahlen wäre Offset die
+richtige Wahl. Die Frage lautet nicht „was ist besser", sondern „springt der Nutzer, oder blättert
+er weiter".
+
+### Was im Cursor steht – und was ausdrücklich nicht
+
+`base64url` von `<ISO-Zeitstempel>|<UUID>`. Base64 ist **keine** Verschlüsselung; der Inhalt ist für
+jeden lesbar und veränderbar. Undurchsichtig ist er aus einem anderen Grund: Wäre der Aufbau
+sichtbar, würden Clients anfangen, ihn selbst zu bauen – und der Tag, an dem der Feed ein drittes
+Sortierkriterium bekommt, bräche jeden dieser Clients.
+
+**Der Cursor trägt den Mandanten nicht.** Er sagt, *wo* weitergelesen wird, nicht *worin*. Die
+Organisation kommt ausschließlich aus der geprüften Mitgliedschaft und steht in der
+`WHERE`-Bedingung. Ein manipulierter Cursor verschiebt die Stelle innerhalb der eigenen Daten – in
+fremde Daten kann er nicht zeigen, dort sucht die Abfrage gar nicht erst.
+
+Deshalb braucht er auch **keine Signatur**. Ein signierter Cursor wäre die Antwort auf ein Problem,
+das erst entstünde, wenn man den Mandanten hineinschriebe – und das wäre der eigentliche Fehler:
+Ein Wert aus dem Browser darf nie darüber entscheiden, wessen Daten man sieht.
+
+`base64url` statt `base64`, weil der Wert in einem Query-Parameter steht: Normales Base64 verwendet
+`+`, und `+` bedeutet in einer Query ein Leerzeichen. Der Cursor käme je nach Client beschädigt an –
+ein Fehler, der nur bei bestimmten Zufallswerten auftritt und damit teurer ist als einer, der immer
+auftritt.
+
+Ein mitgeschickter, aber unlesbarer Cursor ergibt **400**. Ihn still zu ignorieren und von vorne zu
+beginnen wäre die freundlichere und die schlechtere Variante: Der Client bekäme dieselben Einträge
+noch einmal, ohne Hinweis – eine Endlosschleife, die wie normales Verhalten aussieht.
+
+### Der Projektfilter ist eine Prüfung, kein Filter
+
+`?projectId=` einfach in die `WHERE`-Bedingung zu hängen wäre **sicher** – der Mandant steht ohnehin
+daneben, ein fremdes Projekt ergäbe eine leere Liste statt fremder Daten. Es wäre trotzdem falsch,
+weil „leere Liste" und „gibt es nicht" für den Client dasselbe wären: Ein Client mit veralteter
+Projekt-ID sähe einen leeren Feed und glaubte, es sei nichts passiert.
+
+Deshalb erst nachschlagen, dann filtern – mit **404** für ein fremdes wie für ein nicht existierendes
+Projekt, nach der Regel aus Sprint 2.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |
@@ -1108,5 +1212,5 @@ dasselbe, und der Aufrufer glaubte, etwas bewirkt zu haben.
 | 1 | `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` |
 | 2 | `GET/POST /organizations`, `POST /organizations/:id/invitations`, `GET /organizations/:id/members` |
 | 3 | `GET/POST/PATCH/DELETE /projects`, `/tasks`, `PATCH /tasks/:id/position` |
-| 4 | `GET /dashboard/stats`, `GET /activity` |
+| 4 | ~~`GET /organizations/:orgId/activity`~~ – **umgesetzt** · `GET …/dashboard/stats` |
 | 5 | `POST /webhooks/github` |
