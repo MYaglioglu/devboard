@@ -415,6 +415,69 @@ ASC`: Rückwärtslesen dreht dann beide Spalten, und der Index passt zu keiner d
 Reihenfolgen. Solange alle Kriterien in dieselbe Richtung zeigen, ist die Angabe Ballast, den ein
 späterer Leser für bedeutsam hält.
 
+#### Der Nachweis: `EXPLAIN ANALYZE` auf 40.000 Zeilen
+
+Alles oben Behauptete ist nachgemessen – `npm run erklaere:feed` legt 40.000 Aktivitäten auf 50
+Projekte an und liest die Pläne aus.
+
+**Erst `ANALYZE`, sonst ist die Messung wertlos.** PostgreSQL plant anhand von Statistiken, die der
+Autovacuum-Prozess pflegt – der läuft aber nicht sofort nach einem Massen-`INSERT`. Ohne ein
+ausdrückliches `ANALYZE activities` plant der Optimierer auf dem Stand „Tabelle ist leer" und wählt
+einen Seq Scan. Das ist die häufigste Ursache für „der Index wird ignoriert" nach einem Import –
+und es ist kein Fehler im Index.
+
+**Feed der Organisation:**
+
+```
+Limit  (cost=0.41..2.69 rows=20) (actual time=0.034..0.043 rows=20 loops=1)
+  Buffers: shared hit=5
+  ->  Index Scan Backward using "activities_organizationId_createdAt_id_idx" on activities
+        Index Cond: ("organizationId" = '…'::uuid)
+Execution Time: 0.175 ms
+```
+
+Zwei Behauptungen auf einmal belegt: Der Index greift, und `Index Scan **Backward**` ist der Beweis
+für den Abschnitt oben – ein aufsteigender Index bedient `ORDER BY … DESC`, indem PostgreSQL ihn
+rückwärts liest. Das `sort: Desc` wäre tatsächlich Ballast gewesen. **5 Buffer** für 20 Zeilen.
+
+**Feed eines Projekts – mit dem zweiten Index:**
+
+```
+  ->  Index Scan Backward using "activities_projectId_createdAt_id_idx" on activities
+        Index Cond: ("projectId" = '…'::uuid)
+        Filter: ("organizationId" = '…'::uuid)
+        Buffers: shared hit=23
+Execution Time: 0.082 ms
+```
+
+Genau die Arbeitsteilung, die oben beschrieben ist: **Der Index wählt vor** (`Index Cond` auf
+`projectId`), **der Mandantenfilter entscheidet** (`Filter` auf `organizationId`). Dass die
+Organisation nicht im Index steht, macht sie nicht weniger wirksam – sie ist nur nicht das, was die
+Zeilen vorsortiert.
+
+**Gegenprobe – derselbe Pfad, nachdem der zweite Index in einer zurückgerollten Transaktion
+entfernt wurde:**
+
+```
+  ->  Index Scan Backward using "activities_organizationId_createdAt_id_idx" on activities
+        Index Cond: ("organizationId" = '…'::uuid)
+        Filter: ("projectId" = '…'::uuid)
+        Rows Removed by Filter: 931
+        Buffers: shared hit=34
+Execution Time: 0.235 ms
+```
+
+**`Rows Removed by Filter: 931`** ist die Zeile, auf die es ankommt. PostgreSQL liest 951 Zeilen,
+um 20 zurückzugeben – es läuft den organisationsweiten Index rückwärts ab und wirft alles weg, was
+zu anderen Projekten gehört. Genau das steht oben als Begründung für den zweiten Index, und hier
+steht die Zahl dazu.
+
+Ehrlich bleibt: **Die absoluten Zeiten sagen hier nichts.** 0,235 ms gegen 0,082 ms ist kein
+Argument – bei 40.000 Zeilen liegt alles im Arbeitsspeicher. Die belastbare Größe ist, wie viele
+Zeilen gelesen werden mussten, und wie sich das entwickelt: Die Testdaten sind **gleichmäßig**
+verteilt (1/50 der Zeilen je Projekt). Bei einem Projekt, in dem seit Monaten nichts passiert ist,
+läuft derselbe Plan durch die halbe Tabelle.
+
 #### `id` im Index ist Voraussetzung, nicht Zierde
 
 Prisma bildet `DateTime` auf **`timestamp(3)`** ab – Millisekunden. PostgreSQL könnte
