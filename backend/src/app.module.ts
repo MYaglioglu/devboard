@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 
 import { ActivitiesModule } from './activities/activities.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { AuthModule } from './auth/auth.module';
 import { AccessTokenGuard } from './auth/guards/access-token.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -89,6 +90,7 @@ import type { Env } from './config/env.schema';
     // beim Suchen nach dem Feed-Endpoint erst herausfinden, ueber welchen
     // Umweg er ueberhaupt registriert ist.
     ActivitiesModule,
+    DashboardModule,
   ],
   providers: [
     // ========================================================================
