@@ -44,6 +44,10 @@ model User {
   /// gerichteten. Letztere haengen an einer E-Mail-Adresse, nicht an einem
   /// Konto, weil es das Konto beim Einladen noch nicht geben muss.
   sentInvitations Invitation[]
+  /// Ereignisse, die dieser Nutzer AUSGELOEST hat. Beim Loeschen des Kontos
+  /// werden sie nicht mitgeloescht, sondern auf `actorId = NULL` gesetzt -
+  /// siehe Kommentar bei Activity.actor.
+  activities      Activity[]
 
   @@map("users")
 }
@@ -85,6 +89,7 @@ model Organization {
   memberships Membership[]
   invitations Invitation[]
   projects    Project[]
+  activities  Activity[]
 
   @@map("organizations")
 }
@@ -116,7 +121,8 @@ model Project {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tasks Task[]
+  tasks      Task[]
+  activities Activity[]
 
   /// Fuer "alle Projekte dieser Organisation" - die haeufigste Abfrage
   /// ueberhaupt, weil sie auf jedem Seitenaufruf im Projektbereich laeuft.
@@ -232,6 +238,11 @@ model Task {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// Ereignisse zu dieser Aufgabe. Wird die Aufgabe geloescht, bleiben die
+  /// Eintraege und verlieren nur ihre Verbindung (SetNull) - der Titel steht
+  /// als Kopie in `Activity.payload`.
+  activities Activity[]
+
   /// ==========================================================================
   /// DER INDEX IST EXAKT DIE BOARD-ABFRAGE
   /// ==========================================================================
@@ -249,6 +260,230 @@ model Task {
   /// Mitglied die gesamte Task-Tabelle lesen, um SetNull anzuwenden.
   @@index([assigneeId])
   @@map("tasks")
+}
+
+/// Die Art eines Ereignisses im Aktivitaets-Feed.
+///
+/// Warum ein Enum und nicht Text: dieselbe Abwaegung wie bei `Role`. Die Liste
+/// waechst langsam und nur durch Code-Aenderungen - ein neuer Ereignistyp ohne
+/// zugehoerigen Code, der ihn ausloest, ist sinnlos. Die Datenbank erzwingt
+/// damit, dass im Feed keine Typen stehen, die das Frontend nicht anzeigen kann.
+///
+/// Die Namen sind VERGANGENHEITSFORM: Ein Ereignis ist etwas, das PASSIERT IST.
+/// `TASK_MOVE` waere ein Befehl, `TASK_MOVED` ist ein Protokolleintrag. Der
+/// Unterschied klingt nach Wortklauberei, ist aber der Kern: Ein Befehl kann
+/// scheitern, ein Ereignis nicht mehr.
+enum ActivityType {
+  PROJECT_CREATED
+  PROJECT_UPDATED
+  PROJECT_ARCHIVED
+  TASK_CREATED
+  TASK_UPDATED
+  TASK_MOVED
+  TASK_DELETED
+
+  @@map("activity_type")
+}
+
+/// Ein Eintrag im Aktivitaets-Feed - ein Ereignis, das passiert ist.
+///
+/// ============================================================================
+/// WAS DIESE TABELLE IST UND WAS SIE AUSDRUECKLICH NICHT IST
+/// ============================================================================
+/// Sie ist ein PROTOKOLL neben den Fachdaten. Die Wahrheit ueber eine Aufgabe
+/// steht weiterhin in `tasks`; diese Tabelle sagt nur, was mit ihr geschehen
+/// ist.
+///
+/// Sie ist KEIN Event Sourcing. Bei Event Sourcing waeren die Ereignisse die
+/// einzige Wahrheit, und `tasks` waere eine daraus berechnete Ansicht, die man
+/// jederzeit verwerfen und neu aufbauen kann. Das ist ein voellig anderer
+/// Entwurf: Er erlaubt es, den Zustand zu jedem vergangenen Zeitpunkt
+/// wiederherzustellen, kostet dafuer aber bei JEDER Leseabfrage entweder eine
+/// Wiedergabe der Ereignisse oder eine zweite, nachgefuehrte Datenhaltung.
+///
+/// Wir wollen hier nur einen Feed anzeigen. Diesen Unterschied benennen zu
+/// koennen ist mehr wert, als das Schlagwort zu verwenden - ADR-011.
+///
+/// Eintraege werden NIE geaendert. Es gibt deshalb bewusst kein `updatedAt`:
+/// Ein Protokolleintrag, der sich aendern laesst, ist als Protokoll wertlos.
+model Activity {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// ==========================================================================
+  /// WARUM HIER organizationId STEHT, OBWOHL `tasks` SIE BEWUSST NICHT HAT
+  /// ==========================================================================
+  /// Bei `Task` steht als Begruendung: keine zweite Wahrheit, der Mandant wird
+  /// ueber `project.organizationId` geerbt. Das gilt dort weiterhin. Hier waere
+  /// dieselbe Loesung falsch, aus zwei Gruenden:
+  ///
+  /// 1. NICHT JEDES EREIGNIS HAT EIN PROJEKT. Schon in Sprint 5 kommen
+  ///    GitHub-Ereignisse in denselben Feed, und eine Mitglieder-Einladung
+  ///    haengt an der Organisation, nicht an einem Projekt. Der Mandant liesse
+  ///    sich also gar nicht durchgaengig erben - er waere fuer manche Zeilen
+  ///    ueber `project` erreichbar und fuer andere ueberhaupt nicht.
+  ///
+  /// 2. DER INDEX BRAEUCHTE DIE SPALTE. Die Hauptabfrage ist "die letzten 20
+  ///    Ereignisse DIESER Organisation, chronologisch". PostgreSQL kann keinen
+  ///    Index ueber Spalten ZWEIER Tabellen anlegen. Ohne eigene Spalte muesste
+  ///    jede Feed-Seite erst alle Aktivitaeten mit ihren Projekten verbinden
+  ///    und das Ergebnis danach sortieren - bei einer Tabelle, die als einzige
+  ///    hier unbegrenzt waechst.
+  ///
+  /// Der Preis ist echt und heisst Redundanz: Steht in einer Zeile eine andere
+  /// Organisation als in ihrem Projekt, widersprechen sich zwei Angaben. Was
+  /// das vertretbar macht, ist die Unveraenderlichkeit - eine Zeile wird EINMAL
+  /// geschrieben und danach nie angefasst. Redundanz ist dann gefaehrlich, wenn
+  /// zwei Kopien sich AUSEINANDER ENTWICKELN koennen; hier kann keine der
+  /// beiden sich noch bewegen.
+  organizationId String       @db.Uuid
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  type ActivityType
+
+  /// ==========================================================================
+  /// DER AKTEUR - UND WARUM ER AUF `users` ZEIGT, NICHT AUF `memberships`
+  /// ==========================================================================
+  /// Bei `Task.assignee` haengt die Zuweisung an der Mitgliedschaft, weil
+  /// zugewiesen wird, wer in DIESER Organisation mitarbeitet. Ein Protokoll
+  /// beantwortet eine andere Frage: WER hat das getan. Das ist ein Mensch, und
+  /// er bleibt derselbe Mensch, auch wenn er die Organisation spaeter verlaesst.
+  ///
+  /// Haengte der Akteur an der Mitgliedschaft, wuerde SetNull beim Austritt
+  /// eines Kollegen die gesamte Urheberschaft seiner Eintraege loeschen - der
+  /// Feed wuesste hinterher nicht mehr, wer die Karten verschoben hat.
+  ///
+  /// SetNull statt Cascade auch hier: Wird ein KONTO geloescht, soll der
+  /// Verlauf des Teams nicht mitverschwinden. Was passiert ist, ist passiert;
+  /// nur die Zuordnung zu einer Person entfaellt. Das Frontend zeigt dann
+  /// "Ein entferntes Mitglied" an.
+  ///
+  /// Was hier NICHT gemacht wird, obwohl echte Audit-Systeme es tun: den Namen
+  /// des Akteurs als Kopie mitschreiben. Damit blieben Eintraege auch nach einer
+  /// Kontoloeschung lesbar, und der Feed braeuchte keine Verbindung zu `users`.
+  /// Der Preis waere, dass eine Namensaenderung nicht rueckwirkend gilt - was
+  /// fuer ein Protokoll sogar RICHTIG ist. Fuer DevBoard ist es dennoch nicht
+  /// noetig: Wir zeigen keine gesetzlich nachweispflichtige Historie, sondern
+  /// einen Feed. Vermerkt in 06_BACKLOG.md.
+  actorId String? @db.Uuid
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  /// Das betroffene Projekt, falls es eines gibt. Optional, weil kuenftige
+  /// Ereignistypen (Einladungen, GitHub) an der Organisation haengen.
+  ///
+  /// SetNull statt Cascade: Projekte werden archiviert, nicht geloescht - der
+  /// Fall tritt also selten ein. Stuende hier Cascade, wuerde ein spaeter doch
+  /// eingefuehrtes echtes Loeschen den halben Feed mitnehmen.
+  projectId String?  @db.Uuid
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  /// Die betroffene Aufgabe, falls es eine gibt.
+  ///
+  /// Hier ist SetNull nicht Vorsorge, sondern der ERWARTETE Fall: Aufgaben
+  /// werden wirklich geloescht (siehe TasksService.loesche). Ein Eintrag
+  /// "Aufgabe geloescht" zeigt also unmittelbar nach seiner Entstehung auf
+  /// nichts mehr - genau deshalb steht der Titel in `payload` und nicht nur
+  /// hinter dieser Verbindung.
+  taskId String? @db.Uuid
+  task   Task?   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  /// ==========================================================================
+  /// WARUM DIE EINZELHEITEN ALS JSONB UND NICHT ALS SPALTEN
+  /// ==========================================================================
+  /// Jeder Ereignistyp braucht andere Angaben: Beim Verschieben die Spalte
+  /// vorher und nachher, beim Anlegen nur den Titel, bei GitHub in Sprint 5
+  /// etwas ganz anderes. Als echte Spalten waeren das ein Dutzend Felder, von
+  /// denen bei jeder Zeile die meisten NULL sind - und jeder neue Ereignistyp
+  /// braeuchte eine Migration.
+  ///
+  /// Der Preis ist deutlich und muss benannt werden: Die Datenbank prueft den
+  /// Inhalt NICHT. Es gibt kein Constraint, das erzwingt, dass bei
+  /// `TASK_MOVED` auch `fromStatus` darin steht. Diese Garantie muss der Code
+  /// geben - deshalb wird `payload` in Scheibe 4.2 ausschliesslich ueber
+  /// typisierte Erzeuger geschrieben, nie als freies Objekt.
+  ///
+  /// Der Titel wird als KOPIE mitgeschrieben, obwohl er auch in `tasks` steht.
+  /// Das ist Absicht: Wird die Aufgabe geloescht oder umbenannt, soll der
+  /// Eintrag weiterhin sagen, was damals passiert ist. Ein Feed, der
+  /// rueckwirkend den neuen Titel anzeigt, behauptet etwas Falsches ueber die
+  /// Vergangenheit.
+  ///
+  /// `@db.JsonB` und nicht `Json`: `json` speichert den Text unveraendert und
+  /// muss ihn bei jedem Zugriff neu zerlegen. `jsonb` legt ihn zerlegt ab -
+  /// etwas langsamer beim Schreiben, deutlich schneller beim Lesen, und nur
+  /// darauf lassen sich ueberhaupt Indizes anlegen. Bei einer Tabelle, die
+  /// einmal geschrieben und oft gelesen wird, ist das nicht knapp.
+  payload Json @db.JsonB
+
+  /// Der Zeitpunkt des Ereignisses - und zugleich das Sortierkriterium des
+  /// Feeds und die erste Haelfte des Cursors.
+  createdAt DateTime @default(now())
+
+  /// ==========================================================================
+  /// DER FEED-INDEX - UND WARUM `id` MIT DRIN STEHT
+  /// ==========================================================================
+  /// Die Abfrage ist: WHERE organizationId = ? ORDER BY createdAt DESC, id DESC
+  /// LIMIT 20. Der Index bedient beides in einem Durchgang: Er findet den
+  /// Mandanten am Anfang und liefert die Zeilen bereits sortiert - derselbe
+  /// Gedanke wie beim Board-Index auf `tasks`.
+  ///
+  /// `id` ist nicht Zierde, sondern Voraussetzung fuer die Cursor-Paginierung.
+  ///
+  /// Und der Gleichstand ist hier nicht theoretisch: Prisma bildet `DateTime`
+  /// auf `timestamp(3)` ab - MILLISEKUNDEN. PostgreSQL koennte Mikrosekunden
+  /// (`timestamp(6)`), aber JavaScript-`Date` kann sie nicht darstellen, also
+  /// rundet Prisma ab. Zwei Aufgaben, die in EINER Transaktion entstehen,
+  /// bekommen damit regelmaessig denselben Zeitstempel.
+  ///
+  /// Zwei Ereignisse in derselben Millisekunde sind nach `createdAt` allein
+  /// NICHT eindeutig geordnet. Ein Cursor, der nur "alles aelter als dieser
+  /// Zeitstempel" bedeutet, wuerde dann entweder einen Eintrag doppelt zeigen
+  /// oder einen ueberspringen - abhaengig davon, in welcher Reihenfolge
+  /// PostgreSQL die gleichzeitigen Zeilen zurueckgibt. Mit `id` als zweitem
+  /// Kriterium ist die Ordnung total, und der Cursor kann eine EINDEUTIGE
+  /// Stelle bezeichnen. (Dieselbe Falle wie bei den gleichen `position`-Werten
+  /// auf dem Board - und dieselbe Lehre wie aus dem `Date.now()`-Fehler in
+  /// Sprint 3: Testisolierung und Sortierung duerfen nicht auf der Aufloesung
+  /// einer Uhr beruhen.)
+  ///
+  /// ==========================================================================
+  /// WARUM HIER KEIN `sort: Desc` STEHT, OBWOHL DER FEED ABSTEIGEND SORTIERT
+  /// ==========================================================================
+  /// Prisma kann `@@index([createdAt(sort: Desc)])` - und es waere hier
+  /// nutzlos. Ein B-Baum ist in BEIDE Richtungen lesbar: PostgreSQL nutzt einen
+  /// aufsteigenden Index fuer `ORDER BY ... DESC`, indem es ihn rueckwaerts
+  /// durchlaeuft, ohne Zusatzkosten (im Plan als "Index Scan Backward"
+  /// sichtbar).
+  ///
+  /// Eine Richtungsangabe zahlt sich erst aus, wenn eine Abfrage GEMISCHT
+  /// sortiert - etwa `createdAt DESC, id ASC`. Rueckwaerts lesen dreht dann
+  /// beide Spalten, und der Index passt zu keiner der beiden Reihenfolgen.
+  /// Solange alle Kriterien in dieselbe Richtung zeigen, ist die Angabe
+  /// ueberfluessiger Ballast, den ein spaeterer Leser fuer bedeutsam haelt.
+  @@index([organizationId, createdAt, id])
+  /// ==========================================================================
+  /// DER ZWEITE INDEX - UND WARUM DER ERSTE IHN NICHT ERSETZT
+  /// ==========================================================================
+  /// Der Feed ist zusaetzlich nach Projekt filterbar:
+  /// WHERE organizationId = ? AND projectId = ? ORDER BY createdAt DESC, id DESC
+  ///
+  /// Der Index darueber kann das nicht bedienen. Er ist sortiert nach
+  /// organizationId, DANN createdAt - die Zeilen EINES Projekts liegen darin
+  /// ueber den gesamten Zeitraum verstreut. PostgreSQL muesste alle
+  /// Aktivitaeten des Mandanten lesen, die fremden Projekte wegwerfen und
+  /// hoffen, frueh genug 20 Treffer zu haben. Bei einem Projekt, in dem seit
+  /// Monaten nichts passiert ist, liest es die halbe Tabelle.
+  ///
+  /// Merksatz aus Sprint 2, hier zum zweiten Mal: Ein zusammengesetzter Index
+  /// hilft nur von LINKS gelesen. Was gefiltert wird (Gleichheit), gehoert
+  /// nach vorne; was sortiert wird, dahinter.
+  ///
+  /// `organizationId` steht in diesem Index NICHT - und trotzdem bleibt sie im
+  /// WHERE der Abfrage. Der Index waehlt die Zeilen VOR, der Mandantenfilter
+  /// entscheidet ueber die Sichtbarkeit. Beides zu verwechseln waere genau der
+  /// Fehler aus Sprint 2: Ein fremdes Projekt gehoert nicht automatisch zu der
+  /// Organisation im Pfad, nur weil seine ID im Pfad steht.
+  @@index([projectId, createdAt, id])
+  @@map("activities")
 }
 
 /// Eine ausgesprochene Einladung in eine Organisation.
