@@ -141,3 +141,17 @@ zu `users`, und eine Namensänderung gilt nicht rückwirkend (was für ein Proto
 Nicht in Sprint 4, weil DevBoard keine nachweispflichtige Historie zeigt, sondern einen Feed. Der
 zweite Grund ist didaktisch: Ohne die Verbindung zu `users` gäbe es in Scheibe 4.3 keinen Anlass,
 über Prismas `include` und die Zahl der abgesetzten Abfragen zu sprechen.
+
+### Typen aus dem Backend erzeugen statt abschreiben *(Sprint 4, 14.08.2026)*
+`FeedEintrag`, `Kennzahlen` und `Projekt` stehen im Frontend als handgeschriebene Kopien der
+Backend-Typen. Das ist eine zweite Wahrheit der gefährlichsten Sorte: beim Schreiben richtig, still
+falsch, sobald das Backend ein Feld umbenennt – der Compiler sieht nur die Kopie.
+
+Die Lösung wäre ein erzeugter Typ (OpenAPI-Schema aus NestJS plus Generator, oder ein geteiltes
+Paket im Monorepo). Nicht in Sprint 4, weil beides Aufbau kostet, den ein Projekt dieser Größe
+gerade noch ohne trägt – und weil die Entscheidung besser fällt, wenn in Sprint 5 klar ist, wie viel
+Schnittstelle die GitHub-Integration mitbringt.
+
+Teilweise entschärft ist es bereits: `payload` im Feed ist bewusst `unknown` und wird in
+`feed-satz.ts` an einer Stelle vorsichtig gelesen – ein fehlendes Feld ergibt einen allgemeineren
+Satz statt eines Absturzes.
