@@ -372,3 +372,65 @@ Die Zeilensperre aus Sprint 2 bleibt, wo sie ist.
   läge eine Lücke. So entscheidet die Datenbank in einem Schritt.
 - **Warum `409` und nicht `412`:** `412 Precondition Failed` gehört zu `If-Match`/ETag in der
   Kopfzeile. Wir tragen die Version im Körper – der Konflikt ist fachlich, nicht protokollarisch.
+
+---
+
+## ADR-011: Der Aktivitäts-Feed bekommt eine eigene Tabelle – und ist trotzdem kein Event Sourcing
+
+**Status:** Angenommen (14.08.2026)
+
+### Kontext
+Sprint 4 verlangt einen chronologischen Aktivitäts-Feed pro Organisation. Die Daten dafür liegen
+scheinbar schon vor: `projects` und `tasks` haben beide `createdAt` und `updatedAt`.
+
+### Verworfene Alternative: den Feed ableiten
+Beide Tabellen lesen, nach Zeitstempel zusammensortieren, anzeigen. Keine neue Tabelle, kein
+zusätzlicher Schreibvorgang. Scheitert an drei Punkten:
+
+- **`updatedAt` weiß nicht, *was* sich geändert hat.** Der alte Wert ist überschrieben. „Murat hat
+  ‚Login-Bug' von TODO nach DONE gezogen" lässt sich daraus nicht rekonstruieren – nur „irgendwas
+  an dieser Karte hat sich um 14:03 geändert".
+- **`updatedAt` weiß nicht, *wer* es getan hat.** Diese Angabe existiert im Schema gar nicht.
+- **Gelöschtes ist weg.** Tasks werden wirklich gelöscht. Das Ereignis, das am meisten interessiert,
+  hinterlässt keine Zeile.
+
+Dazu praktisch: Cursor-Paginierung über zwei zusammensortierte Tabellen hinweg ist in SQL
+unangenehm und mit keinem Index sauber zu bedienen.
+
+### Entscheidung
+Eine eigene Tabelle `activities`. Ein Eintrag pro Ereignis, **unveränderlich**, mit Typ, Akteur,
+optionalem Projekt- und Aufgabenbezug und einem `jsonb`-Feld für die typabhängigen Einzelheiten.
+Schema und Indizes sind in `08_DATABASE.md` begründet.
+
+### Was diese Entscheidung ausdrücklich nicht ist
+**Kein Event Sourcing.** Der Unterschied ist keine Wortklauberei, sondern die Frage, wo die Wahrheit
+liegt:
+
+| | Protokoll daneben (hier) | Event Sourcing |
+|---|---|---|
+| Wahrheit über eine Aufgabe | `tasks` | die Ereignisse |
+| `activities` / Event-Log | Beiwerk, verlierbar | einzige Quelle, unverzichtbar |
+| Zustand lesen | direkt aus der Tabelle | Ereignisse wiedergeben oder Projektion nachführen |
+| Zustand von letztem Dienstag | nicht möglich | im Entwurf enthalten |
+| Kosten | ein `INSERT` mehr pro Schreibvorgang | eine zweite Datenhaltung, die konsistent bleiben muss |
+
+Event Sourcing löst „wie sah es zu Zeitpunkt X aus" und „wie kam es zu diesem Zustand". Wir haben
+keine dieser beiden Fragen – wir wollen einen Feed anzeigen. Den Aufwand zu tragen, ohne den Nutzen
+zu brauchen, wäre die teuerste Art, ein Schlagwort zu belegen.
+
+Deshalb heißt das Modell `Activity` und nicht `ActivityEvent`, wie in der Planung vorgesehen. Der
+Name hätte eine Architektur behauptet, die nicht dahintersteht.
+
+### Konsequenzen
+- **Positiv:** Der Feed weiß, was, wer und wann – auch über gelöschte Aufgaben hinaus.
+- **Positiv:** Sprint 5 speist GitHub-Webhooks in dieselbe Tabelle. Der Feed ist von Anfang an
+  nicht auf DevBoard-eigene Ereignisse zugeschnitten.
+- **Positiv:** Genau eine Tabelle für die Feed-Abfrage – Cursor-Paginierung und Index sind dadurch
+  überhaupt sauber möglich.
+- **Negativ:** Jeder schreibende Vorgang schreibt eine zweite Zeile. Bei einer Anwendung mit
+  deutlich mehr Schreib- als Leseverkehr wäre diese Abwägung neu zu treffen.
+- **Negativ:** Die Tabelle wächst unbegrenzt und ist die erste im Schema, für die das gilt. Eine
+  Aufbewahrungsfrist oder Partitionierung nach Monat wäre die Antwort darauf – im Backlog, nicht in
+  Sprint 4, weil ohne echten Verkehr niemand die richtige Frist kennt.
+- **Negativ, bewusst in Kauf genommen:** `payload` ist von der Datenbank nicht geprüft. Die
+  Struktur garantiert allein der Code.
