@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import { ActivitiesService } from '../activities/activities.service';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -136,7 +137,10 @@ const zuAufgabe = (zeile: AufgabeZeile): Aufgabe => ({
 
 @Injectable()
 export class TasksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly activities: ActivitiesService,
+  ) {}
 
   /**
    * Legt eine Aufgabe an - ganz unten in ihrer Spalte.
@@ -164,6 +168,7 @@ export class TasksService {
    */
   async erstelle(
     organizationId: string,
+    akteurId: string,
     projektId: string,
     daten: CreateTaskDto,
   ): Promise<Aufgabe> {
@@ -225,6 +230,14 @@ export class TasksService {
           dueDate: daten.dueDate,
         },
         select: AUFGABE_FELDER,
+      });
+
+      await this.activities.protokolliere(tx, organizationId, akteurId, {
+        typ: 'AUFGABE_ANGELEGT',
+        projektId,
+        aufgabenId: zeile.id,
+        titel: zeile.title,
+        status: zeile.status,
       });
 
       return zuAufgabe(zeile);
@@ -318,6 +331,7 @@ export class TasksService {
    */
   async aendere(
     organizationId: string,
+    akteurId: string,
     projektId: string,
     aufgabenId: string,
     daten: UpdateTaskDto,
@@ -366,6 +380,16 @@ export class TasksService {
         select: AUFGABE_FELDER,
       });
 
+      await this.activities.protokolliere(tx, organizationId, akteurId, {
+        typ: 'AUFGABE_GEAENDERT',
+        projektId,
+        aufgabenId,
+        titel: zeile.title,
+        // Wie beim Projekt: die Schluessel der DTO, nicht eine Liste von Hand.
+        // Enthalten sind genau die Felder, die der Client geschickt hat.
+        geaenderteFelder: Object.keys(daten),
+      });
+
       return zuAufgabe(zeile);
     });
   }
@@ -409,20 +433,61 @@ export class TasksService {
    */
   async loesche(
     organizationId: string,
+    akteurId: string,
     projektId: string,
     aufgabenId: string,
   ): Promise<void> {
-    const ergebnis = await this.prisma.task.deleteMany({
-      where: {
-        id: aufgabenId,
-        projectId: projektId,
-        project: { organizationId },
-      },
-    });
+    // ========================================================================
+    // SEIT SPRINT 4 EINE TRANSAKTION - UND DER TITEL WIRD VORHER GELESEN
+    // ========================================================================
+    // Vorher war das ein einzelnes `deleteMany`. Jetzt haengen zwei Dinge
+    // zusammen, und die Reihenfolge ist erzwungen: Nach dem DELETE gibt es die
+    // Zeile nicht mehr, aus der der Titel stammt.
+    //
+    // Genau deshalb steht der Titel in `payload` und nicht nur hinter
+    // `activity.taskId`. Ein Eintrag "Aufgabe geloescht", der auf eine
+    // geloeschte Zeile zeigt, koennte nur sagen, dass IRGENDETWAS verschwunden
+    // ist - und das ist die einzige Auskunft, die hier niemandem hilft.
+    return this.prisma.$transaction(async (tx) => {
+      // Mit vollstaendigem Mandantenfilter - eine fremde Aufgabe darf hier
+      // nicht einmal ihren Titel preisgeben, bevor das DELETE sie ablehnt.
+      const aufgabe = await tx.task.findFirst({
+        where: {
+          id: aufgabenId,
+          projectId: projektId,
+          project: { organizationId },
+        },
+        select: { title: true },
+      });
 
-    if (ergebnis.count === 0) {
-      throw new NotFoundException('Aufgabe nicht gefunden');
-    }
+      if (!aufgabe) {
+        throw new NotFoundException('Aufgabe nicht gefunden');
+      }
+
+      const ergebnis = await tx.task.deleteMany({
+        where: {
+          id: aufgabenId,
+          projectId: projektId,
+          project: { organizationId },
+        },
+      });
+
+      // Die Aufgabe stand eine Zeile darueber noch da, in derselben
+      // Transaktion. Trifft das DELETE trotzdem nichts, war jemand in genau
+      // diesem Moment schneller - dann ist "nicht gefunden" die richtige
+      // Antwort, und protokolliert wird nichts. Die Alternative waere, die
+      // Pruefung wegzulassen und `count` blind zu vertrauen; dann stuende bei
+      // einem Doppelklick zweimal "geloescht" im Feed.
+      if (ergebnis.count === 0) {
+        throw new NotFoundException('Aufgabe nicht gefunden');
+      }
+
+      await this.activities.protokolliere(tx, organizationId, akteurId, {
+        typ: 'AUFGABE_GELOESCHT',
+        projektId,
+        titel: aufgabe.title,
+      });
+    });
   }
 
   /**
@@ -451,6 +516,7 @@ export class TasksService {
    */
   async verschiebe(
     organizationId: string,
+    akteurId: string,
     projektId: string,
     aufgabenId: string,
     daten: MoveTaskDto,
@@ -462,7 +528,12 @@ export class TasksService {
           projectId: projektId,
           project: { organizationId },
         },
-        select: { id: true },
+        // `status` und `title` sind seit Sprint 4 dabei. Der Status wird
+        // gleich UEBERSCHRIEBEN - "von TODO nach DONE" laesst sich nach dem
+        // UPDATE nicht mehr rekonstruieren. Das ist der Grund, aus dem der
+        // Feed eine eigene Tabelle hat und nicht aus `updatedAt` abgeleitet
+        // wird (ADR-011): Ein ueberschriebener Wert ist weg.
+        select: { id: true, status: true, title: true },
       });
 
       if (!aufgabe) {
@@ -542,6 +613,26 @@ export class TasksService {
       const zeile = await tx.task.findFirstOrThrow({
         where: { id: aufgabenId },
         select: AUFGABE_FELDER,
+      });
+
+      // Protokolliert wird NACH dem erfolgreichen UPDATE - der 409 oben
+      // verlaesst die Methode vorher. Das ist kein Zufall der Reihenfolge,
+      // sondern der Kern der Entscheidung aus ADR-012: Der abgelehnte
+      // Verschiebeversuch ist nichts, was passiert ist, und darf nicht im
+      // Feed stehen. Ein Listener ausserhalb der Transaktion koennte das
+      // nicht zusichern.
+      //
+      // `vonStatus` und `nachStatus` koennen GLEICH sein - beim Umsortieren
+      // innerhalb einer Spalte. Das ist ein gueltiges Ereignis: Die Karte hat
+      // ihren Platz gewechselt, nur nicht ihre Spalte. Das Frontend
+      // unterscheidet die beiden Faelle beim Formulieren des Satzes.
+      await this.activities.protokolliere(tx, organizationId, akteurId, {
+        typ: 'AUFGABE_VERSCHOBEN',
+        projektId,
+        aufgabenId,
+        titel: aufgabe.title,
+        vonStatus: aufgabe.status,
+        nachStatus: daten.status,
       });
 
       return zuAufgabe(zeile);
