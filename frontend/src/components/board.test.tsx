@@ -131,8 +131,11 @@ describe('Board', () => {
 
       zeige();
 
+      // Der zugaengliche Name traegt die BESCHRIFTUNG der Spalte, nicht ihren
+      // Enum-Wert: Ein Screenreader liest genau diesen Text als Feldnamen vor,
+      // und "Neue Aufgabe in IN_PROGRESS" waere eine interne Kennung.
       await nutzer.type(
-        screen.getByLabelText('Neue Aufgabe in IN_PROGRESS'),
+        screen.getByLabelText('Neue Aufgabe in In Arbeit'),
         'Etwas tun',
       );
       await nutzer.click(
@@ -154,7 +157,7 @@ describe('Board', () => {
 
       zeige();
 
-      const feld = screen.getByLabelText('Neue Aufgabe in TODO');
+      const feld = screen.getByLabelText('Neue Aufgabe in Offen');
       await nutzer.type(feld, 'A{Enter}');
 
       // Das Backend verlangt zwei Zeichen. Die Anfrage waere eine 400, die
@@ -197,7 +200,7 @@ describe('Board', () => {
       zeige(true);
 
       expect(
-        screen.queryByLabelText('Neue Aufgabe in TODO'),
+        screen.queryByLabelText('Neue Aufgabe in Offen'),
       ).not.toBeInTheDocument();
       expect(
         screen.queryByRole('button', { name: 'Karte a löschen' }),

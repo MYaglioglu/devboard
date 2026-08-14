@@ -239,7 +239,12 @@ function Spalte({
       </SortableContext>
 
       {!schreibgeschuetzt && (
-        <NeueAufgabe orgId={orgId} projektId={projektId} status={status} />
+        <NeueAufgabe
+          orgId={orgId}
+          projektId={projektId}
+          status={status}
+          spaltenTitel={titel}
+        />
       )}
     </section>
   );
@@ -313,10 +318,24 @@ function NeueAufgabe({
   orgId,
   projektId,
   status,
+  spaltenTitel,
 }: {
   orgId: string;
   projektId: string;
   status: AufgabenStatus;
+  /**
+   * Die BESCHRIFTUNG der Spalte, nicht ihr Status-Wert.
+   *
+   * Das Feld hat keine sichtbare Beschriftung - es steht unter der Spalte, und
+   * fuer sehende Nutzer ergibt sich der Zusammenhang aus der Anordnung. Ein
+   * Screenreader hat diese Anordnung nicht; fuer ihn IST das `aria-label` der
+   * Name des Feldes.
+   *
+   * Stuende dort der Enum-Wert, hiesse das Feld "Neue Aufgabe in IN_PROGRESS"
+   * - eine interne Kennung, vorgelesen an einen Menschen. Genau die Sorte
+   * Fehler, die man beim Draufschauen nie bemerkt.
+   */
+  spaltenTitel: string;
 }) {
   const anlegen = useAufgabeAnlegen(orgId, projektId);
   const [titel, setTitel] = useState('');
@@ -341,7 +360,7 @@ function NeueAufgabe({
       <input
         value={titel}
         onChange={(ereignis) => setTitel(ereignis.target.value)}
-        aria-label={`Neue Aufgabe in ${status}`}
+        aria-label={`Neue Aufgabe in ${spaltenTitel}`}
         placeholder="Neue Aufgabe …"
         className="w-full rounded-lg border border-zinc-300 px-2 py-1 text-sm outline-none
           focus:ring-2 focus:ring-emerald-500/40 dark:border-zinc-700 dark:bg-zinc-900"
