@@ -552,3 +552,86 @@ React-Lebenszyklus, Netzwerk-Zeitverhalten und einer serverseitigen Sicherheitsf
 Nr. 64–95 in `07_INTERVIEW_NOTES.md`. Die stärksten: **72** (warum der Erfolgspfad nicht reicht),
 **82** (warum eine Transaktion nicht gegen Race Conditions hilft), **83** (wie man eine Race
 Condition testet), **92** (der Fehler, den die Tests nicht fanden), **93** (Open Redirect).
+
+---
+
+## Session 8 – 12./13.08.2026 · Sprint 3 abgeschlossen
+
+Der größte Sprint, in sieben Scheiben: Datenmodell, Projekte-CRUD, Tasks-CRUD, Verschieben,
+Frontend-Projektseiten, Board, Politur. **429 Tests**, CI grün, wieder vor Plan.
+
+### Gelernt
+
+**Fractional Indexing – und warum die Grenze sichtbar sein muss.** Eine Karte bekommt beim
+Verschieben den Mittelwert ihrer Nachbarn; das schreibt *eine* Zeile statt der ganzen Spalte. Der
+Preis ist, dass die Zahl bei jedem Einfügen an derselben Stelle länger wird.
+
+Der Punkt, der mir vorher nicht klar war: **Beide Datentypen haben diese Grenze.** Bei `float8`
+sind nach ~50 Halbierungen die Bits verbraucht, und zwei Karten bekommen denselben Wert – ohne
+Fehler, ohne Meldung. Bei `numeric(65,30)` steht sie als Zahl da, die man vergleichen kann. Eine
+bekannte Grenze mit Gegenmaßnahme ist besser als eine unsichtbare ohne.
+
+**Eine Entscheidung in der Datenbank gilt nicht automatisch im Code.** Die Spalte war `numeric`,
+gewählt gegen den Präzisionsverlust – und `decimal.js` rundete trotzdem, weil es voreingestellt mit
+20 signifikanten Stellen rechnet. Es wurde also gerundet, *bevor* die Datenbank überhaupt gefragt
+war. Gefunden hat das ein Grenzfalltest; `1000 + 1000 = 2000` wäre grün geblieben.
+
+Seitdem prüfe ich bei so etwas die ganze Kette: Spalte, Treiber, Rechenbibliothek, Serialisierung.
+Deshalb geht `position` auch als **Zeichenkette** über die API – JSON kennt nur `float64`.
+
+**Optimistisch vs. pessimistisch sperren.** In Sprint 2 hatte ich eine Zeilensperre gebaut und
+hätte sie hier wiederholt. Das Unterscheidungsmerkmal ist aber nicht „Nebenläufigkeit ja/nein",
+sondern **ob der Konflikt heilbar ist**: Ein verlorener Eigentümer lässt sich durch Neuladen nicht
+reparieren, eine falsch liegende Karte schon.
+
+Der Nebeneffekt hat mich überrascht: Optimistisches Sperren macht den Nebenläufigkeitsfehler
+**deterministisch reproduzierbar**. Zwei Anfragen mit derselben gelesenen Version sind exakt der
+Fall – kein Zeitspiel nötig, anders als beim Sperrtest aus Sprint 2.
+
+**Reine Rechnung gehört von Ein- und Ausgabe getrennt.** Zweimal in diesem Sprint: `positionen.ts`
+im Backend, `board-logik.ts` im Frontend. Nicht wegen der Architekturlehre, sondern weil die
+Testkosten um eine Größenordnung auseinanderliegen – Drag & Drop über Testereignisse nachzustellen
+ist brüchig, die Listenarithmetik dahinter ist trivial prüfbar.
+
+**Optimistische Updates im Frontend.** `onMutate` / `onError` / `onSettled`. Das `cancelQueries`
+hätte ich ohne die Dokumentation vergessen – ohne es überschreibt eine bereits laufende Abfrage die
+Vorschau mit dem alten Stand, und die Karte springt zurück. Ein Fehler, der nur unter Last
+auftritt.
+
+Und: Die Vorschau erfindet **keine** Position. Sie sortiert die Karte nur ein. Das geht, weil die
+Anzeige die Reihenfolge aus der Liste liest und nie aus dem Positionswert.
+
+### Schwierig
+
+**Mein eigenes Learning zweimal nicht angewendet.** Der veraltete Prisma-Client stand seit dem
+11.08. im Fehlerprotokoll – und hat mich am 12.08. wieder eine Viertelstunde gekostet. Die richtige
+Konsequenz ist nicht „besser aufpassen", sondern die Schritte zusammenzubinden, die
+zusammengehören. Steht im Backlog.
+
+**Eine Mutationsprobe, die sich selbst überführt hat.** Schutz entfernt, *alle 17* Tests rot – das
+sah nach einem sehr wirksamen Schutz aus. Tatsächlich war die Probe kaputt (`npx jest` statt
+`npm run test:e2e`, also ohne `THROTTLE_LIMIT=0`).
+
+Daraus die Regel, die ich jetzt vorher aufschreibe: **Ein zu breites Rot ist genauso verdächtig wie
+ein ausbleibendes.** Beim zweiten Mal habe ich die Erwartung vorab notiert – und genau das hat den
+nächsten Zufallsfehler entlarvt, als plötzlich alle Tests fielen, weil Docker nicht lief.
+
+**Zwei Testsuiten, die sich gegenseitig gelöscht haben.** Alle E2E-Suiten trennten ihre Testdaten
+über `Date.now()`. Mit vier Suiten fiel nie auf, dass zwei in derselben Millisekunde starten
+können; mit sieben schon – als Fremdschlüsselverletzung in einer Datei, die ich gar nicht angefasst
+hatte. **Eine Testisolierung, die auf Zeit beruht, ist keine Isolierung.**
+
+### Offen
+
+- GitHub-Profil: Bio geschärft (noch selbst zu setzen), Bootcamp-Repos entpinnen
+- LinkedIn – weiterhin offen
+- Wieder-Aktivieren archivierter Projekte, konfigurierbare Board-Spalten, Neuverteilung als
+  Hintergrundaufgabe: alles im Backlog mit Begründung
+- `db:migrate` und `db:generate` zu einem Schritt verbinden
+
+### Interviewfragen dazu
+
+Nr. 96–124 in `07_INTERVIEW_NOTES.md`. Die stärksten: **96** (warum `numeric` statt `float`),
+**99** (optimistisch vs. pessimistisch), **106** (die gerundete Rechenbibliothek), **114** (wie man
+einen Nebenläufigkeitsfehler ohne Timing testet), **121** (optimistisches Update mit Rollback),
+**123** (wie man Drag & Drop testet).

@@ -108,8 +108,8 @@ neu laden.
 
 ## Stand
 
-**Sprint 0, 1 und 2 abgeschlossen** (Stand 11.08.2026). **284 Tests** (98 Backend-Unit,
-105 Backend-E2E, 81 Frontend), CI grün, `main` geschützt.
+**Sprint 0 bis 3 abgeschlossen** (Stand 13.08.2026). **429 Tests** (136 Backend-Unit,
+155 Backend-E2E, 138 Frontend), CI grün, `main` geschützt.
 
 - **Auth** vollständig: Registrierung, Login, Refresh-Rotation mit Wiederverwendungs-Erkennung,
   globaler Guard, Rate Limiting.
@@ -118,18 +118,36 @@ neu laden.
   Autorisierung auf **Datenebene** – der Mandant steht in der `WHERE`-Bedingung, nicht in einer
   Prüfung danach. Siehe Kapitel *Mandantentrennung* in `02_ARCHITECTURE.md`.
 
-**Als Nächstes: Sprint 3 – Projekte, Tasks und Kanban-Board.** Der größte Sprint. Neu darin:
-Sortier-Strategien (Integer-Positionen vs. fractional indexing), optimistische Updates mit Rollback,
-und Race Conditions beim gleichzeitigen Verschieben. Für Letzteres liegt aus Sprint 2 bereits ein
-Muster vor – dort allerdings **pessimistisch** gesperrt; beim Board ist optimistisches Sperren die
-passendere Wahl (begründet in `09_API.md`).
+- **Projekte, Tasks und Kanban-Board** vollständig: Sortierung per **fractional indexing** auf
+  `numeric(65,30)` (ADR-009), **optimistisches Sperren** beim Verschieben mit 409 (ADR-010),
+  optimistisches Update im Frontend mit Rollback, Board mit dnd-kit und Tastaturbedienung.
 
-Das Projekt liegt **zwei Wochen vor Plan** (Roadmap sah Sprint 2 für den 24.08.–01.09. vor).
+**Als Nächstes: Sprint 4 – Dashboard und Aktivitäts-Feed.** Neu darin: N+1-Queries erkennen und
+beheben, `EXPLAIN ANALYZE` lesen, Cursor-Paginierung, Domain Events. Ab dem Ende von Sprint 4 gilt
+das Projekt als vorzeigbar.
 
-**Offen daneben:** GitHub-Profil (Bio, Profil-README, gepinnte Repos) und LinkedIn. Seit Woche 2
-überfällig – mit 284 Tests, ADRs, Fehlerprotokoll und Handbuch gibt es jetzt etwas zu verlinken.
+Das Projekt liegt weiterhin **rund zwei Wochen vor Plan** (Roadmap sah Sprint 3 für den
+02.09.–15.09. vor).
 
-**Kleinigkeit:** `browser-demo-1@example.com` liegt noch in der lokalen Datenbank.
+**Offen daneben:** GitHub-Profil (Bio ist formuliert, muss noch gesetzt werden; Bootcamp-Repos
+entpinnen) und LinkedIn. Seit Woche 2 überfällig – mit 429 Tests, zehn ADRs, Fehlerprotokoll und
+Handbuch gibt es reichlich zu verlinken.
+
+## Was aus Sprint 3 weitergilt
+
+- **Eine Entscheidung in der Datenbank gilt nicht automatisch im Code.** Wer Genauigkeit wählt,
+  prüft die ganze Kette: Spalte, Treiber, Rechenbibliothek, Serialisierung. (`decimal.js` rundete
+  ab 20 Stellen, obwohl die Spalte 30 fasst.)
+- **Bei einer Mutationsprobe die Erwartung vorher aufschreiben.** Ein zu breites Rot ist genauso
+  verdächtig wie ein ausbleibendes – beides heißt, dass der Test etwas anderes misst als gedacht.
+- **Reine Rechnung von Ein- und Ausgabe trennen** (`positionen.ts`, `board-logik.ts`). Nicht wegen
+  der Architekturlehre, sondern weil die Testkosten um eine Größenordnung auseinanderliegen.
+- **Grenzfälle testen, nicht nur den Erfolgspfad.** Der teuerste Fehler des Sprints wäre bei
+  `1000 + 1000 = 2000` unentdeckt geblieben.
+- **Pessimistisch sperren, wenn ein Konflikt Daten zerstört. Optimistisch, wenn er nur eine
+  Wiederholung kostet.**
+- **Testisolierung darf nicht auf Zeit beruhen** – `Date.now()` ist eine Wette auf die Auflösung
+  der Uhr.
 
 ## Was aus Sprint 2 weitergilt
 

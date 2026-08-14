@@ -92,6 +92,17 @@ sichtbar, als die Anwendung tatsächlich gestartet wurde.
 Der größte Sprint. Projekte innerhalb einer Organisation, Tasks mit Status und Reihenfolge,
 Kanban-Board mit Drag & Drop und persistierter Sortierung.
 
+**Abgeschlossen am 13.08.2026** – erneut vor Plan, in sieben Scheiben. **429 Tests**
+(136 Backend-Unit, 155 Backend-E2E, 138 Frontend), CI grün.
+
+Zwei ADRs entstanden: **ADR-009** (Fractional Indexing auf `numeric`) und **ADR-010**
+(optimistisch beim Board, pessimistisch bei der Eigentümerregel).
+
+Vier Fehler wurden protokolliert – der veraltete Prisma-Client als Wiederholungstäter, die
+gerundete Decimal-Rechnung, eine Mutationsprobe mit kaputter Testumgebung und zwei E2E-Suiten, die
+sich gegenseitig die Testdaten gelöscht haben. Der teuerste davon (`decimal.js` rundet ab 20
+Stellen) wurde von einem **Grenzfalltest** gefunden, nicht vom Erfolgspfad.
+
 **Kernthemen:** Sortier-Strategien (Integer-Positionen neu schreiben vs. fractional indexing) ·
 Transaktionen · Race Conditions bei gleichzeitigem Verschieben · optimistische Updates im Frontend
 mit Rollback bei Fehlern.
@@ -104,7 +115,7 @@ mit Rollback bei Fehlern.
 - [x] 3.4 `PATCH …/tasks/:id/move` – Sortierlogik, 409 bei Versionskonflikt, Mutationsprobe (13.08.2026)
 - [x] 3.5 Frontend: Projektliste und Projektdetail (13.08.2026)
 - [x] 3.6 Frontend: Board mit dnd-kit, optimistisches Update mit Rollback (13.08.2026)
-- [ ] 3.7 Politur, Interviewfragen, Handbuch
+- [x] 3.7 Politur, Interviewfragen, Handbuch (13.08.2026)
 
 **Entschieden in 3.1:**
 
