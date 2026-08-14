@@ -1,23 +1,28 @@
 import { Module } from '@nestjs/common';
 
+import { ActivitiesController } from './activities.controller';
 import { ActivitiesService } from './activities.service';
+import { ActivityFeedService } from './activity-feed.service';
 
 /**
  * Der Aktivitaets-Feed.
  *
- * In dieser Scheibe (4.2) enthaelt das Modul nur den SCHREIBER und noch keinen
- * Controller - gelesen wird der Feed erst in 4.3. Ein Modul ohne Controller
- * sieht ungewohnt aus, ist aber genau das, was eine vertikale Scheibe
- * hinterlaesst: ein lauffaehiger Stand, in dem der naechste Schritt fehlt,
- * nicht ein halber.
+ * Zwei Dienste mit Absicht: `ActivitiesService` schreibt (ohne eigenen
+ * `PrismaService`, damit er nur in fremden Transaktionen arbeiten KANN),
+ * `ActivityFeedService` liest. Die Begruendung steht ausfuehrlich in
+ * activities.service.ts - kurz: Was nicht da ist, kann man nicht versehentlich
+ * benutzen.
  *
- * `exports`, weil Projekte und Tasks den Dienst brauchen. Er wird NICHT global
+ * Exportiert wird nur der SCHREIBER, weil Projekte und Tasks ihn brauchen.
+ * Der Feed-Dienst bleibt im Modul: Ihn braucht nur der eigene Controller, und
+ * vorsorglich exportiert wird nichts. Er wird NICHT global
  * bereitgestellt: Wer ihn nutzt, soll das in seinem eigenen Modul sichtbar
  * importieren muessen. Bei einer Abhaengigkeit, die in fremde Transaktionen
  * hineinschreibt, ist diese Sichtbarkeit den Zeilenaufwand wert.
  */
 @Module({
-  providers: [ActivitiesService],
+  controllers: [ActivitiesController],
+  providers: [ActivitiesService, ActivityFeedService],
   exports: [ActivitiesService],
 })
 export class ActivitiesModule {}

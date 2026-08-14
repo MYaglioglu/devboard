@@ -5,6 +5,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 
+import { ActivitiesModule } from './activities/activities.module';
 import { AuthModule } from './auth/auth.module';
 import { AccessTokenGuard } from './auth/guards/access-token.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -82,6 +83,12 @@ import type { Env } from './config/env.schema';
     OrganizationsModule,
     ProjectsModule,
     TasksModule,
+    // Steht hier, obwohl ProjectsModule und TasksModule es ohnehin
+    // importieren und NestJS die Controller dadurch schon faende. Ein Modul
+    // mit eigener Route gehoert sichtbar in diese Liste - sonst muesste man
+    // beim Suchen nach dem Feed-Endpoint erst herausfinden, ueber welchen
+    // Umweg er ueberhaupt registriert ist.
+    ActivitiesModule,
   ],
   providers: [
     // ========================================================================
