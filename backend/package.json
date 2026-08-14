@@ -22,7 +22,9 @@
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
-    "db:deploy": "prisma migrate deploy"
+    "db:deploy": "prisma migrate deploy",
+    "messung:dashboard": "node --env-file=../.env node_modules/ts-node/dist/bin.js --compilerOptions {\\\"module\\\":\\\"commonjs\\\"} scripts/messung-dashboard.ts",
+    "erklaere:feed": "node --env-file=../.env node_modules/ts-node/dist/bin.js --compilerOptions {\\\"module\\\":\\\"commonjs\\\"} scripts/erklaere-feed.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
