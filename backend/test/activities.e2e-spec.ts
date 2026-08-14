@@ -19,6 +19,21 @@ interface LoginAntwort {
   accessToken: string;
 }
 
+interface FeedEintrag {
+  id: string;
+  type: string;
+  actor: { userId: string; name: string | null; email: string } | null;
+  projectId: string | null;
+  taskId: string | null;
+  payload: unknown;
+  createdAt: string;
+}
+
+interface FeedSeite {
+  items: FeedEintrag[];
+  nextCursor: string | null;
+}
+
 /**
  * ============================================================================
  * WAS DIESE SUITE PRUEFT UND WARUM SIE NICHT DURCH UNIT-TESTS ERSETZBAR IST
@@ -308,6 +323,232 @@ describe('Activities (e2e)', () => {
         .expect(404);
 
       expect(await aktivitaeten(opfer.orgId)).toHaveLength(vorher.length);
+    });
+  });
+
+  describe('GET .../activity', () => {
+    const feed = (token: string, orgId: string, query = ''): request.Test =>
+      request(app.getHttpServer())
+        .get(`/organizations/${orgId}/activity${query}`)
+        .set('Authorization', `Bearer ${token}`);
+
+    it('liefert die neuesten Eintraege zuerst', async () => {
+      const { token, orgId, projektId } = await baueAufbau('lesen');
+      await legeAufgabeAn(token, orgId, projektId, 'Zuletzt');
+
+      const antwort = await feed(token, orgId).expect(200);
+      const seite = antwort.body as FeedSeite;
+
+      expect(seite.items.map((e) => e.type)).toEqual([
+        'TASK_CREATED',
+        'PROJECT_CREATED',
+      ]);
+      // Keine weitere Seite - nicht "unbekannt".
+      expect(seite.nextCursor).toBeNull();
+    });
+
+    it('gibt den Akteur mit Namen und Adresse heraus', async () => {
+      const { token, orgId } = await baueAufbau('akteur');
+
+      const seite = (await feed(token, orgId).expect(200)).body as FeedSeite;
+
+      expect(seite.items[0].actor?.email).toBe(email('akteur'));
+    });
+
+    /**
+     * ========================================================================
+     * DER TEST, DER DIE PAGINIERUNG WIRKLICH PRUEFT
+     * ========================================================================
+     * Nicht "eine Seite kommt zurueck", sondern: Ueber alle Seiten hinweg
+     * kommt JEDER Eintrag GENAU EINMAL. Das ist die Zusage, die eine
+     * Cursor-Paginierung von einer Offset-Paginierung unterscheidet.
+     *
+     * Entscheidend ist die Seitengroesse 2 bei ungerader Gesamtzahl - so
+     * faellt eine Seitengrenze mitten in die Eintraege, die in derselben
+     * Millisekunde entstanden sind. Genau dort wuerde ein Cursor ohne die
+     * `id` als zweites Kriterium einen Eintrag doppeln oder ueberspringen.
+     */
+    it('liefert ueber alle Seiten hinweg jeden Eintrag genau einmal', async () => {
+      const { token, orgId, projektId } = await baueAufbau('seiten');
+
+      for (const titel of ['Karte A', 'Karte B', 'Karte C', 'Karte D']) {
+        await legeAufgabeAn(token, orgId, projektId, titel);
+      }
+
+      // 5 Eintraege insgesamt: 1x PROJECT_CREATED, 4x TASK_CREATED.
+      const gesehen: string[] = [];
+      let cursor: string | null = null;
+      let seiten = 0;
+
+      do {
+        const query: string = `?limit=2${cursor ? `&cursor=${cursor}` : ''}`;
+        const seite = (await feed(token, orgId, query).expect(200))
+          .body as FeedSeite;
+
+        gesehen.push(...seite.items.map((e) => e.id));
+        cursor = seite.nextCursor;
+        seiten += 1;
+
+        // Sicherung gegen eine Endlosschleife: Ein Cursor, der auf der Stelle
+        // tritt, waere sonst ein haengender Test statt eines roten.
+        expect(seiten).toBeLessThan(10);
+      } while (cursor);
+
+      expect(gesehen).toHaveLength(5);
+      expect(new Set(gesehen).size).toBe(5);
+      expect(seiten).toBe(3);
+    });
+
+    /**
+     * ========================================================================
+     * DER TEST, DER DEN GLEICHSTAND ERZWINGT
+     * ========================================================================
+     * Der Test darueber sieht so aus, als pruefe er die Cursor-Logik
+     * vollstaendig. Eine Mutationsprobe hat gezeigt, dass er es NICHT tut:
+     * Entfernt man den zweiten Zweig der Keyset-Bedingung - also die
+     * Behandlung gleicher Zeitstempel ueber die `id` - bleibt er gruen.
+     *
+     * Der Grund ist die Uhr. Seine fuenf Eintraege entstehen aus fuenf
+     * getrennten HTTP-Anfragen und liegen deshalb Millisekunden auseinander.
+     * Der Gleichstand, gegen den der zweite Zweig schuetzt, tritt dort
+     * schlicht nicht ein.
+     *
+     * Dasselbe Muster wie beim ersten Nebenlaeufigkeitstest in Sprint 2:
+     * `Promise.all` erzeugt keine Verschraenkung, nur die MOEGLICHKEIT einer.
+     * Und dieselbe Antwort - ein Test, der den Fall ERZWINGT:
+     *
+     * Die Eintraege werden hier direkt ueber Prisma geschrieben, alle mit
+     * EXAKT demselben `createdAt`. Damit entscheidet ausschliesslich die `id`
+     * ueber die Reihenfolge, und die Seitengrenze faellt garantiert mitten in
+     * die Gruppe.
+     *
+     * Ohne den zweiten Zweig ueberspringt die zweite Seite dann alles, was
+     * denselben Zeitstempel traegt - der Test wird rot, und zwar genau er.
+     */
+    it('ueberspringt nichts, wenn alle Eintraege dieselbe Millisekunde tragen', async () => {
+      const { token, orgId, projektId } = await baueAufbau('gleichstand');
+
+      // Ein fester Zeitpunkt, DEUTLICH nach dem Eintrag aus baueAufbau -
+      // sonst haengt die Reihenfolge davon ab, wann der Test laeuft.
+      const gleicheZeit = new Date('2099-01-01T00:00:00.000Z');
+
+      await prisma.activity.createMany({
+        data: Array.from({ length: 5 }, (_, i) => ({
+          organizationId: orgId,
+          projectId: projektId,
+          type: 'TASK_CREATED' as const,
+          payload: { title: `Gleichzeitig ${i}`, status: 'TODO' },
+          createdAt: gleicheZeit,
+        })),
+      });
+
+      const gesehen: string[] = [];
+      let cursor: string | null = null;
+      let seiten = 0;
+
+      do {
+        const query: string = `?limit=2${cursor ? `&cursor=${cursor}` : ''}`;
+        const seite = (await feed(token, orgId, query).expect(200))
+          .body as FeedSeite;
+
+        gesehen.push(...seite.items.map((e) => e.id));
+        cursor = seite.nextCursor;
+        seiten += 1;
+
+        expect(seiten).toBeLessThan(10);
+      } while (cursor);
+
+      // 5 gleichzeitige plus der PROJECT_CREATED-Eintrag aus dem Aufbau.
+      expect(gesehen).toHaveLength(6);
+      expect(new Set(gesehen).size).toBe(6);
+    });
+
+    it('filtert auf ein Projekt derselben Organisation', async () => {
+      const { token, orgId, projektId } = await baueAufbau('filter');
+
+      const zweites = await request(app.getHttpServer())
+        .post(`/organizations/${orgId}/projects`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ name: 'Zweites Projekt' })
+        .expect(201);
+
+      const zweitesId = (zweites.body as MitId).id;
+      await legeAufgabeAn(token, orgId, projektId, 'Gehoert zu eins');
+
+      const seite = (
+        await feed(token, orgId, `?projectId=${zweitesId}`).expect(200)
+      ).body as FeedSeite;
+
+      // Nur das Anlegen des zweiten Projekts - die Aufgabe haengt am ersten.
+      expect(seite.items).toHaveLength(1);
+      expect(seite.items[0].type).toBe('PROJECT_CREATED');
+      expect(seite.items[0].projectId).toBe(zweitesId);
+    });
+
+    /**
+     * Der negative Test, der ab Sprint 2 Pflicht ist - hier in seiner
+     * schaerferen Form: Das Projekt ist FREMD, aber der Nutzer ist Mitglied
+     * der Organisation im Pfad. Der Guard laesst ihn also durch; die
+     * Entscheidung faellt erst im Service.
+     *
+     * 404 und nicht "leere Liste": Waere die Antwort leer, koennte ein Client
+     * mit veralteter Projekt-ID nicht unterscheiden, ob nichts passiert ist
+     * oder ob er ins Leere fragt.
+     */
+    it('meldet 404 fuer ein Projekt aus einer fremden Organisation', async () => {
+      const eigen = await baueAufbau('eigen');
+      const fremd = await baueAufbau('fremdprojekt');
+
+      await feed(
+        eigen.token,
+        eigen.orgId,
+        `?projectId=${fremd.projektId}`,
+      ).expect(404);
+    });
+
+    it('meldet 404 fuer den ganzen Feed einer fremden Organisation', async () => {
+      const opfer = await baueAufbau('feedopfer');
+      const fremderToken = await meldeAn('feedfremd');
+
+      await feed(fremderToken, opfer.orgId).expect(404);
+    });
+
+    describe('weist unbrauchbare Abfragen ab', () => {
+      /**
+       * Ein kaputter Cursor koennte auch still ignoriert werden ("dann eben
+       * von vorne"). Das waere die freundlichere und die schlechtere Variante:
+       * Der Client bekaeme dieselben Eintraege noch einmal und haette keinen
+       * Hinweis, dass seine Paginierung kaputt ist - eine Endlosschleife, die
+       * wie normales Verhalten aussieht.
+       */
+      it('einen unlesbaren Cursor', async () => {
+        const { token, orgId } = await baueAufbau('kaputt');
+
+        await feed(token, orgId, '?cursor=###').expect(400);
+      });
+
+      /**
+       * Ohne Obergrenze waere `?limit=1000000` ein Weg, den Server mit einer
+       * einzigen Anfrage beliebig zu belasten - der haeufigste Weg, wie eine
+       * Paginierung unter Last zusammenbricht.
+       */
+      it('ein limit ueber der Obergrenze', async () => {
+        const { token, orgId } = await baueAufbau('grenze');
+
+        await feed(token, orgId, '?limit=1000000').expect(400);
+      });
+
+      /**
+       * Hier ausdruecklich KEIN `.catch()` auf die sichere Voreinstellung -
+       * anders als bei `?includeArchived`. Dort ist ein unsinniger Wert ein
+       * Filter; hier bestimmt er die MENGE der Arbeit, und ihn still als 20 zu
+       * lesen wuerde einen Programmierfehler im Client verstecken.
+       */
+      it('ein limit, das keine Zahl ist', async () => {
+        const { token, orgId } = await baueAufbau('keinezahl');
+
+        await feed(token, orgId, '?limit=abc').expect(400);
+      });
     });
   });
 });
