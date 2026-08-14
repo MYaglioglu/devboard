@@ -36,6 +36,20 @@ import type { Ereignis } from './ereignisse';
  * Zusicherung aus ereignisse.ts ("payload wird NUR typisiert geschrieben")
  * waere eine Bitte statt einer Regel. Hier ist sie ein Engpass, an dem jeder
  * Eintrag vorbeimuss.
+ *
+ * ============================================================================
+ * WARUM DAS LESEN IN EINER ANDEREN KLASSE STEHT
+ * ============================================================================
+ * Der Feed wird in Scheibe 4.3 auch gelesen, und Lesen BRAUCHT einen eigenen
+ * `PrismaService` - es laeuft in keiner fremden Transaktion. Beides in eine
+ * Klasse zu legen waere die naheliegende Loesung und wuerde die Zusage oben
+ * aufheben: Sobald `this.prisma` in dieser Klasse existiert, ist es eine Frage
+ * der Aufmerksamkeit, ob `protokolliere` den `tx` benutzt oder es.
+ *
+ * Deshalb `ActivityFeedService` als eigene Klasse. Nicht wegen CQRS oder einer
+ * anderen Lehre - sondern weil die Trennung hier eine GARANTIE traegt: Was
+ * nicht da ist, kann man nicht versehentlich benutzen. Dasselbe Argument wie
+ * beim Nachschlagen der Mitgliedschaft im TasksService.
  */
 @Injectable()
 export class ActivitiesService {
