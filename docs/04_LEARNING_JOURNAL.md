@@ -695,8 +695,15 @@ ist, kann man nicht versehentlich benutzen.
 
 ### Offen
 
-- **GitHub-Profil und LinkedIn** – seit Woche 2 überfällig. Ab jetzt gibt es keine Ausrede mehr:
-  Das Projekt ist ab dem Ende dieses Sprints laut Roadmap **vorzeigbar**.
+- **GitHub-Profil: erledigt** – am 14.08. nachgeprüft. Bio, Standort, Website, „hireable" gesetzt,
+  gepinnt sind die richtigen drei Repos. Was tatsächlich fehlte, war etwas anderes und
+  Schlimmeres: Das README nannte als Status noch **„Sprint 0 abgeschlossen, als Nächstes folgt
+  Sprint 1"** – vier Sprints alt. Wer auf das gepinnte Hauptprojekt klickte, las als ersten
+  inhaltlichen Satz das Gegenteil dessen, was stimmt. *Ein veralteter Statusblock ist schlimmer als
+  gar keiner.*
+- **LinkedIn** – weiterhin offen, seit Woche 2. Der einzige Punkt, den ich nicht selbst prüfen
+  kann.
+- **Topics und Homepage-URL** am Repository – nur über die GitHub-Oberfläche zu setzen.
 - Erzeugte Typen statt handgeschriebener Kopien im Frontend (Backlog, Entscheidung nach Sprint 5)
 - Aufbewahrungsfrist für `activities` – die erste unbegrenzt wachsende Tabelle im Schema
 - Die Typprüfung erfasst Testdateien nicht: `tsc --noEmit` meldet Fehler, die weder `npm test` noch

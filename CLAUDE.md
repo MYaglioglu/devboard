@@ -134,9 +134,15 @@ richtige Ort, nicht der Inline-Schreiber.
 Das Projekt liegt weiterhin **rund zwei Wochen vor Plan** (Roadmap sah Sprint 4 für den
 16.09.–22.09. vor).
 
-**Offen daneben – und ab jetzt ohne Ausrede:** GitHub-Profil (Bio ist formuliert, muss noch gesetzt
-werden; Bootcamp-Repos entpinnen) und LinkedIn. Seit Woche 2 überfällig. Mit 494 Tests, zwölf ADRs,
-Fehlerprotokoll, zwei Messskripten und Handbuch gibt es reichlich zu verlinken.
+**GitHub-Profil: erledigt** (geprüft am 14.08.2026). Bio, Standort, Website und „hireable" sind
+gesetzt; gepinnt sind `devboard`, `rissundwisch` und das Profil-README – keine Bootcamp-Repos mehr.
+Das README des Repositories nannte bis zum 14.08. noch „Sprint 0" als Stand; jetzt korrigiert.
+
+**Nicht prüfbar und weiterhin offen: LinkedIn.** Darauf gibt es von hier aus keinen Zugriff – der
+einzige Punkt, bei dem Murats Aussage die Quelle ist. Seit Woche 2 überfällig.
+
+**Ebenfalls offen am Repository, nur über die GitHub-Oberfläche zu erledigen:** Topics
+(`nextjs`, `nestjs`, `postgresql`, `typescript`, `prisma`, `docker`) und die Homepage-URL.
 
 ## Was aus Sprint 4 weitergilt
 
