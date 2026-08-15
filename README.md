@@ -5,10 +5,33 @@
 Eine SaaS-Plattform für Entwicklerteams – Projekte, Aufgaben, Kanban-Board und Aktivitäts-Feed,
 mit Organisationen und rollenbasiertem Zugriff.
 
-> **Status:** In aktiver Entwicklung. Sprint 0 (Fundament) ist abgeschlossen – lauffähige
-> Umgebung, Datenbank, Backend, Frontend, Tests und CI-Pipeline stehen. Als Nächstes folgt
-> Sprint 1 (Authentifizierung).
-> Der aktuelle Stand steht in [`docs/15_CHANGELOG.md`](docs/15_CHANGELOG.md).
+> **Status (14.08.2026):** Sprint 0 bis 4 abgeschlossen – **494 Tests**, CI grün, `main` geschützt.
+> Auth, Mandantentrennung, Projekte, Kanban-Board, Dashboard und Aktivitäts-Feed laufen.
+> Als Nächstes folgt Sprint 5 (GitHub-Integration über Webhooks).
+> Details in [`docs/01_ROADMAP.md`](docs/01_ROADMAP.md) und
+> [`docs/15_CHANGELOG.md`](docs/15_CHANGELOG.md).
+
+| | Umgesetzt |
+|---|---|
+| **Auth** | Registrierung mit argon2id, JWT mit Refresh-Rotation und Wiederverwendungs-Erkennung, globaler Guard, Rate Limiting |
+| **Mandanten** | Organisationen, Rollen (`OWNER`/`ADMIN`/`MEMBER`), Einladungen per gehashtem Token. Autorisierung auf **Datenebene** – der Mandant steht in der `WHERE`-Bedingung |
+| **Board** | Projekte und Aufgaben, Sortierung per fractional indexing auf `numeric(65,30)`, optimistisches Sperren mit `409`, Drag & Drop mit Tastaturbedienung |
+| **Dashboard** | Kennzahlen per `groupBy` unter `REPEATABLE READ`, Aktivitäts-Feed mit Cursor-Paginierung |
+
+**Was dieses Projekt von einem Tutorial-Klon unterscheidet** – die Stellen, an denen nachgemessen
+statt behauptet wird:
+
+- **Keine N+1-Queries, belegt:** `npm run messung:dashboard` lässt die naive und die optimierte
+  Fassung nebeneinander laufen und zählt mit – 202 gegen 4 Abfragen bei 100 Projekten.
+- **Indizes, belegt:** `npm run erklaere:feed` liest die Ausführungspläne auf 40.000 Zeilen,
+  inklusive Gegenprobe ohne Index (`Rows Removed by Filter: 931`).
+- **Tests, die nachweislich etwas bewachen:** Zu jedem sicherheitsrelevanten Schutz gibt es eine
+  **Mutationsprobe** – Schutz entfernen, Tests laufen lassen, zurückbauen. Die Tabelle steht in
+  [`docs/12_TESTING.md`](docs/12_TESTING.md), samt der Probe, die *nichts* rot machte und damit
+  einen eigenen Test überführte.
+- **Zwölf ADRs** mit Alternativen und Preis in [`docs/16_DECISIONS.md`](docs/16_DECISIONS.md), und
+  ein [Fehlerprotokoll](docs/17_MISTAKES_AND_LESSONS.md) mit den eigenen Fehlern – inklusive der
+  zwei Commits, die an einem verketteten `push && merge` verlorengingen.
 
 ---
 
@@ -102,7 +125,8 @@ npm install
 npm run dev
 ```
 
-Danach läuft die Oberfläche auf `http://localhost:3001` und zeigt den Systemstatus.
+Danach läuft die Oberfläche auf `http://localhost:3001`. Nach der Anmeldung zeigt das
+Dashboard die Kennzahlen der aktiven Organisation und ihren Aktivitäts-Feed.
 
 ---
 
@@ -129,11 +153,11 @@ Inhaltsverzeichnis, alle Kapitel):
 
 ```bash
 python -m pip install reportlab
-python scripts/build_handbuch.py
+python scripts/build_handbuch.py --sprint 4
 ```
 
-Ergebnis: `DevBoard-Handbuch.pdf`. Die Datei ist bewusst **nicht** im Repository – sie lässt sich
-jederzeit aus den Markdown-Quellen neu erzeugen.
+Ergebnis: `DevBoard-Handbuch-Sprint-4.pdf` (rund 660 KB). Die Datei ist bewusst **nicht** im
+Repository – sie lässt sich jederzeit aus den Markdown-Quellen neu erzeugen.
 
 | Datei | Inhalt |
 |---|---|
@@ -160,9 +184,11 @@ jederzeit aus den Markdown-Quellen neu erzeugen.
 backend/        NestJS-Anwendung
   prisma/       Datenmodell und Migrationen
   src/          Feature-Module
+  scripts/      Messskripte (N+1, EXPLAIN ANALYZE)
   test/         E2E-Tests
-frontend/       Next.js-Anwendung (Sprint 0, Schritt 4)
+frontend/       Next.js-Anwendung
+scripts/        Handbuch-Erzeugung
 docker/         Dockerfiles und nginx-Konfiguration (Sprint 6)
 docs/           Entwicklerhandbuch
-.github/        CI-Workflows (Sprint 0, Schritt 5)
+.github/        CI-Workflows
 ```
