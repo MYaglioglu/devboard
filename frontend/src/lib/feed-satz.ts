@@ -30,6 +30,44 @@ import type { FeedEintrag } from './aktivitaeten';
  */
 
 /** Liest ein Textfeld aus dem `payload` - oder `null`, wenn es fehlt. */
+/**
+ * Liest ein Zahlenfeld aus dem `payload` - oder `null`.
+ *
+ * `Number.isFinite` und nicht `typeof === 'number'`: `NaN` und `Infinity` sind
+ * in JavaScript Zahlen, und beide ergaeben im Satz "hat NaN Commits gepusht".
+ */
+const zahl = (payload: unknown, feld: string): number | null => {
+  if (typeof payload !== 'object' || payload === null) {
+    return null;
+  }
+
+  const wert = (payload as Record<string, unknown>)[feld];
+
+  return typeof wert === 'number' && Number.isFinite(wert) ? wert : null;
+};
+
+/**
+ * Der gemeinsame Satzbau der drei Pull-Request-Ereignisse.
+ *
+ * Die Nummer ist wichtiger als der Titel: Sie ist die Kennung, nach der man
+ * bei GitHub sucht. Fehlt sie, wird der Titel zum Ersatz - und fehlt auch der,
+ * bleibt der Satz allgemein statt erfunden.
+ */
+const pullRequestSatz = (eintrag: FeedEintrag, verb: string): string => {
+  const nummer = zahl(eintrag.payload, 'number');
+  const titel = text(eintrag.payload, 'title');
+
+  if (nummer !== null) {
+    return titel
+      ? `hat Pull Request #${nummer} „${titel}" ${verb}`
+      : `hat Pull Request #${nummer} ${verb}`;
+  }
+
+  return titel
+    ? `hat den Pull Request „${titel}" ${verb}`
+    : `hat einen Pull Request ${verb}`;
+};
+
 const text = (payload: unknown, feld: string): string | null => {
   if (typeof payload !== 'object' || payload === null) {
     return null;
@@ -141,6 +179,52 @@ export function ereignisSatz(eintrag: FeedEintrag): string {
 
       return `hat ${was} verschoben`;
     }
+
+    /**
+     * ========================================================================
+     * DIE GITHUB-EREIGNISSE - UND WARUM DAS REPOSITORY NICHT IM SATZ STEHT
+     * ========================================================================
+     * "octocat hat 3 Commits nach main gepusht" und nicht "… nach main in
+     * acme/webshop gepusht". Das Repository steht als zweite Zeile unter dem
+     * Satz, zusammen mit dem Zeitpunkt.
+     *
+     * Der Grund ist nicht Kuerze: Der Feed einer Organisation zeigt Ereignisse
+     * aus mehreren Projekten, und das Repository ist eine ORTSANGABE wie das
+     * Datum eine Zeitangabe ist. Beides gehoert in dieselbe Zeile, nicht in
+     * den Satz - sonst liest man in einer Liste zwanzigmal denselben
+     * Repository-Namen mit.
+     */
+    case 'GITHUB_PUSH': {
+      const zweig = text(eintrag.payload, 'branch');
+      const anzahl = zahl(eintrag.payload, 'commitCount');
+
+      if (!zweig) {
+        return 'hat etwas gepusht';
+      }
+
+      // Die Einzahl ist nicht Kosmetik: "1 Commits" ist der Klassiker, an dem
+      // man sieht, dass niemand hingeschaut hat.
+      if (anzahl === null) {
+        return `hat nach „${zweig}" gepusht`;
+      }
+
+      return anzahl === 1
+        ? `hat 1 Commit nach „${zweig}" gepusht`
+        : `hat ${anzahl} Commits nach „${zweig}" gepusht`;
+    }
+
+    case 'GITHUB_PULL_REQUEST_OPENED':
+      return pullRequestSatz(eintrag, 'geöffnet');
+
+    case 'GITHUB_PULL_REQUEST_MERGED':
+      return pullRequestSatz(eintrag, 'zusammengeführt');
+
+    case 'GITHUB_PULL_REQUEST_CLOSED':
+      // "geschlossen, ohne ihn zusammenzufuehren" waere genauer und
+      // umstaendlich. "verworfen" sagt dasselbe in einem Wort - und der
+      // Unterschied zum zusammengefuehrten Fall ist genau der Punkt, weswegen
+      // es zwei Ereignistypen sind.
+      return pullRequestSatz(eintrag, 'verworfen');
   }
 
   // Ein Ereignistyp, den diese Version noch nicht kennt. Kein Absturz und

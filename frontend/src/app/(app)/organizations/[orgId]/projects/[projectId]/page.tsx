@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 import { Board } from '@/components/board';
 import { Geschuetzt } from '@/components/geschuetzt';
+import { RepositoryVerbindung } from '@/components/repository-verbindung';
 import { Feld, Hinweis, Knopf } from '@/components/ui';
 import { ApiFehler } from '@/lib/api';
 import { useOrganisation } from '@/lib/organisationen';
@@ -118,6 +119,18 @@ function Inhalt() {
         projektId={projectId}
         schreibgeschuetzt={projekt.data.archivedAt !== null}
       />
+
+      {/* Die Repository-Verbindung steht UNTER dem Board und ueber der
+          Projektverwaltung: Sie gehoert zur laufenden Arbeit, nicht zu den
+          Einstellungen, die man einmal setzt. Auch ein MEMBER sieht sie -
+          wer im Projekt arbeitet, darf wissen, woher die Ereignisse kommen. */}
+      {!projekt.data.archivedAt && (
+        <RepositoryVerbindung
+          orgId={orgId}
+          projektId={projectId}
+          darfVerwalten={darfVerwalten}
+        />
+      )}
 
       {darfVerwalten && !projekt.data.archivedAt && (
         <VerwaltungsBereich

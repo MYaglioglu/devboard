@@ -132,6 +132,104 @@ describe('ereignisSatz', () => {
       expect(ereignisSatz(unbekannt)).toBe('hat etwas geändert');
     });
   });
+
+  describe('GitHub', () => {
+    it('nennt Zweig und Anzahl bei einem Push', () => {
+      expect(
+        ereignisSatz(
+          eintrag('GITHUB_PUSH', { branch: 'main', commitCount: 3 }),
+        ),
+      ).toBe('hat 3 Commits nach „main" gepusht');
+    });
+
+    /**
+     * "1 Commits" ist der Klassiker, an dem man sieht, dass niemand
+     * hingeschaut hat. Der Test kostet zwei Zeilen.
+     */
+    it('setzt bei einem einzigen Commit die Einzahl', () => {
+      expect(
+        ereignisSatz(
+          eintrag('GITHUB_PUSH', { branch: 'main', commitCount: 1 }),
+        ),
+      ).toBe('hat 1 Commit nach „main" gepusht');
+    });
+
+    it('nennt auch null Commits, statt die Zahl zu verschweigen', () => {
+      // Ein Push ohne Commits gibt es wirklich - etwa beim Anlegen eines
+      // Zweigs. "hat nach main gepusht" waere ungenauer als die Wahrheit.
+      expect(
+        ereignisSatz(
+          eintrag('GITHUB_PUSH', { branch: 'main', commitCount: 0 }),
+        ),
+      ).toBe('hat 0 Commits nach „main" gepusht');
+    });
+
+    it.each([
+      ['ohne Anzahl', { branch: 'main' }, 'hat nach „main" gepusht'],
+      [
+        'mit unbrauchbarer Anzahl',
+        { branch: 'main', commitCount: 'drei' },
+        'hat nach „main" gepusht',
+      ],
+      [
+        'mit NaN als Anzahl',
+        { branch: 'main', commitCount: Number.NaN },
+        'hat nach „main" gepusht',
+      ],
+      ['ohne Zweig', { commitCount: 3 }, 'hat etwas gepusht'],
+      ['ganz leer', {}, 'hat etwas gepusht'],
+    ])('bleibt %s allgemein, statt zu raten', (_fall, payload, erwartet) => {
+      expect(ereignisSatz(eintrag('GITHUB_PUSH', payload))).toBe(erwartet);
+    });
+
+    it.each([
+      ['GITHUB_PULL_REQUEST_OPENED', 'geöffnet'],
+      ['GITHUB_PULL_REQUEST_MERGED', 'zusammengeführt'],
+      ['GITHUB_PULL_REQUEST_CLOSED', 'verworfen'],
+    ] as const)('formuliert %s als „%s"', (typ, verb) => {
+      expect(
+        ereignisSatz(eintrag(typ, { number: 7, title: 'Login reparieren' })),
+      ).toBe(`hat Pull Request #7 „Login reparieren" ${verb}`);
+    });
+
+    /**
+     * Der Unterschied, um den es in diesem Sprint geht: GitHub schickt fuer
+     * "zusammengefuehrt" und "verworfen" dasselbe `action: closed`. Waeren
+     * beide derselbe Ereignistyp, stuende hier zweimal derselbe Satz.
+     */
+    it('unterscheidet zusammengeführt von verworfen im Satz', () => {
+      const zusammen = ereignisSatz(
+        eintrag('GITHUB_PULL_REQUEST_MERGED', { number: 7 }),
+      );
+      const verworfen = ereignisSatz(
+        eintrag('GITHUB_PULL_REQUEST_CLOSED', { number: 7 }),
+      );
+
+      expect(zusammen).not.toBe(verworfen);
+    });
+
+    it.each([
+      ['nur mit Nummer', { number: 7 }, 'hat Pull Request #7 geöffnet'],
+      [
+        'nur mit Titel',
+        { title: 'Login' },
+        'hat den Pull Request „Login" geöffnet',
+      ],
+      ['ganz leer', {}, 'hat einen Pull Request geöffnet'],
+    ])('kommt %s aus', (_fall, payload, erwartet) => {
+      expect(ereignisSatz(eintrag('GITHUB_PULL_REQUEST_OPENED', payload))).toBe(
+        erwartet,
+      );
+    });
+
+    it('stuerzt bei unbrauchbarem payload nicht ab', () => {
+      for (const payload of [null, undefined, 42, 'text', []]) {
+        expect(() =>
+          ereignisSatz(eintrag('GITHUB_PUSH', payload)),
+        ).not.toThrow();
+      }
+    });
+  });
 });
 
 describe('akteurName', () => {
