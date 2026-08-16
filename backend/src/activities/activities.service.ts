@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+import { ActivitySource } from '../generated/prisma/enums';
 import { zuZeile } from './ereignisse';
 import type { Prisma } from '../generated/prisma/client';
 import type { Ereignis } from './ereignisse';
@@ -77,6 +78,60 @@ export class ActivitiesService {
       data: {
         organizationId,
         actorId: akteurId,
+        // `APP` ist der Vorgabewert der Spalte. Er steht hier trotzdem
+        // ausdruecklich: Sonst waere die Herkunft an dieser Stelle unsichtbar,
+        // und die Methode darunter saehe wie eine willkuerliche Variante aus
+        // statt wie die zweite Haelfte einer Unterscheidung.
+        source: ActivitySource.APP,
+        type: zeile.type,
+        projectId: zeile.projectId,
+        taskId: zeile.taskId,
+        payload: zeile.payload,
+      },
+    });
+  }
+
+  /**
+   * Protokolliert ein Ereignis, das von GitHub stammt.
+   *
+   * ==========================================================================
+   * WARUM DAS EINE EIGENE METHODE IST UND KEIN PARAMETER
+   * ==========================================================================
+   * Naheliegend waere `protokolliere(tx, orgId, akteurId, ereignis, source)`
+   * gewesen - ein Parameter mehr. Zwei Gruende dagegen, und der zweite ist der
+   * wichtigere:
+   *
+   * 1. Es gibt hier keinen Akteur. Der Mensch, der gepusht hat, muss in
+   *    DevBoard kein Konto haben - `actorId` ist also NULL. Ein Parameter
+   *    `akteurId: string | null` an der gemeinsamen Methode hiesse, dass auch
+   *    ein Task-Ereignis ohne Akteur geschrieben werden koennte. Genau das
+   *    soll unmoeglich bleiben.
+   *
+   * 2. `actorId = NULL` bedeutete bisher genau EINES: geloeschtes Konto. Das
+   *    Frontend leitet daraus "Ein entferntes Mitglied" ab. Ohne `source`
+   *    wuerde der Feed also behaupten, ein ausgetretener Kollege habe gepusht.
+   *
+   * Zwei Methoden machen den Unterschied im Code sichtbar, statt ihn in einem
+   * Argument zu verstecken. Dasselbe Argument wie beim getrennten Lese-Dienst:
+   * WAS NICHT DA IST, KANN MAN NICHT VERSEHENTLICH BENUTZEN.
+   *
+   * @param tx Der Transaktionsklient des Aufrufers - hier die Transaktion, in
+   *           der auch die Zustellung auf PROCESSED gesetzt wird. Beides gilt,
+   *           oder nichts gilt.
+   */
+  async protokolliereVonGitHub(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    ereignis: Ereignis,
+  ): Promise<void> {
+    const zeile = zuZeile(ereignis);
+
+    await tx.activity.create({
+      data: {
+        organizationId,
+        // Kein Akteur, und zwar nachweislich keiner - nicht "unbekannt".
+        actorId: null,
+        source: ActivitySource.GITHUB,
         type: zeile.type,
         projectId: zeile.projectId,
         taskId: zeile.taskId,

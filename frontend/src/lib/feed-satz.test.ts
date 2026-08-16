@@ -17,9 +17,11 @@ const eintrag = (
   type: Ereignistyp,
   payload: unknown,
   actor: FeedEintrag['actor'] = null,
+  source: FeedEintrag['source'] = 'APP',
 ): FeedEintrag => ({
   id: 'a1',
   type,
+  source,
   actor,
   projectId: 'p1',
   taskId: 't1',
@@ -171,5 +173,47 @@ describe('akteurName', () => {
     expect(akteurName(eintrag('TASK_CREATED', {}))).toBe(
       'Ein entferntes Mitglied',
     );
+  });
+
+  /**
+   * ==========================================================================
+   * DIE TESTS, DIE DIE FALLE AUS SPRINT 5 BEWACHEN
+   * ==========================================================================
+   * Ohne `source` liefe ein GitHub-Ereignis in denselben Zweig wie ein
+   * geloeschtes Konto - der Feed behauptete dann, ein ausgetretener Kollege
+   * habe gepusht. Der Test darueber allein wuerde das NICHT bemerken: Er ist
+   * mit und ohne die Unterscheidung gruen.
+   */
+  it('nennt bei GitHub den Anmeldenamen statt eines entfernten Mitglieds', () => {
+    expect(
+      akteurName(
+        eintrag('GITHUB_PUSH', { githubLogin: 'octocat' }, null, 'GITHUB'),
+      ),
+    ).toBe('octocat');
+  });
+
+  it('bleibt allgemein, wenn der GitHub-Name fehlt', () => {
+    // Wieder der Grundsatz aus dem Kopf dieser Datei: Was fehlt, wird nicht
+    // erfunden. "Jemand auf GitHub" stimmt; "Ein entferntes Mitglied" waere
+    // eine Behauptung ueber jemanden, der nie hier war.
+    expect(akteurName(eintrag('GITHUB_PUSH', {}, null, 'GITHUB'))).toBe(
+      'Jemand auf GitHub',
+    );
+  });
+
+  it('bevorzugt auch bei GitHub einen vorhandenen Akteur', () => {
+    // Kommt spaeter eine Zuordnung GitHub-Konto -> DevBoard-Nutzer dazu, soll
+    // der echte Name gewinnen. Der Test haelt die Reihenfolge fest, bevor es
+    // die Zuordnung gibt.
+    expect(
+      akteurName(
+        eintrag(
+          'GITHUB_PUSH',
+          { githubLogin: 'octocat' },
+          { userId: 'u1', name: 'Murat', email: 'murat@example.com' },
+          'GITHUB',
+        ),
+      ),
+    ).toBe('Murat');
   });
 });
