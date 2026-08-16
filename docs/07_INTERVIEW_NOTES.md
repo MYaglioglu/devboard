@@ -2948,3 +2948,92 @@ Erwartung; ein zu breites Rot ist genauso verdächtig wie ein ausbleibendes.
 Zweitens war es dieselbe Falle, um die es in dieser Scheibe inhaltlich geht – ein HMAC ist eine
 Aussage über Bytes, nicht über Bedeutung –, nur eine Ebene höher. Deshalb steht der Grund als
 Kommentar an der Stelle im Test und nicht nur in der Behebung.
+
+### 164. Sie haben einen Nebenläufigkeitstest geschrieben, der eine kaputte Umsetzung durchgewinkt hat. Wie ist Ihnen das aufgefallen?
+
+Durch die Mutationsprobe – also durch ein Verfahren, das ich absichtlich laufen lasse, und bevor ich
+dem Test vertraut habe.
+
+Der Test schickte fünf Zustellungen mit derselben Kennung ohne `await` dazwischen und prüfte, dass
+nur eine Zeile entsteht. Grün. Dann habe ich den Schutz durch die **naive** Fassung ersetzt – erst
+`findFirst`, dann `create`, also genau die Lücke, die der Test finden sollte.
+
+**Alle 13 Tests blieben grün.** Fünf Anfragen reichten nicht, um die Verschränkung herbeizuführen.
+Bei 30 fällt die naive Fassung zuverlässig, und dann auch nur an dieser einen Stelle.
+
+Das Unangenehme daran ist nicht der Fehler, sondern wie gut er aussah: Der Test hieß „schreibt auch
+bei fünf gleichzeitigen Zustellungen nur eine Zeile", stand im Abschnitt *Idempotenz*, und niemand
+hätte ihn im Review beanstandet.
+
+> **Ein Nebenläufigkeitstest, der nie rot wird, ist kein Nebenläufigkeitstest. Er ist ein
+> Erfolgspfad mit einem irreführenden Namen.**
+
+Es ist das fünfte Mal in diesem Projekt, dass ein Test einen Grenzfall nur *wahrscheinlich*
+erreicht hat – `Promise.all` in Sprint 2, `Date.now()` in Sprint 3, die Seitengrenze in Sprint 4.
+Aber das erste Mal, dass es vor der Auslieferung aufgefallen ist. Das ist der praktische Wert der
+Mutationsprobe: **Sie prüft nicht den Code, sondern die Tests.**
+
+### 165. Sie haben die Anzahl von 5 auf 30 erhöht. Ist der Test damit jetzt korrekt?
+
+Nein, und das ist der interessantere Teil der Antwort.
+
+30 ist eine Zahl aus einer Messung, keine Garantie. Ob eine naive Umsetzung daran scheitert, hängt
+weiter von der Verschränkung ab – auf einer schnelleren Maschine, mit einem anderen Verbindungspool
+oder unter anderer Last kann sie wieder durchrutschen. Ich hätte den Test damit nur *unwahrscheinlich
+nutzlos* gemacht statt nutzlos.
+
+Die Konsequenz war deshalb eine **Trennung**:
+
+> Die **Zusicherung** muss deterministisch prüfbar sein. Die **Belastungsprobe** darf
+> probabilistisch sein, solange man weiß, dass sie es ist.
+
+Die Zusicherung steht jetzt in einem eigenen Test, der an der API vorbei direkt in die Datenbank
+geht: dieselbe Zeile zweimal einfügen, der zweite Versuch muss mit `P2002` scheitern. Der hängt von
+keiner Reihenfolge ab, weil die Datenbank die Zusage gibt, nicht mein Code.
+
+Der nebenläufige Test daneben beweist etwas Kleineres, und das steht so in seinem Kommentar: dass
+der Endpoint die Verletzung unter Last **richtig beantwortet** – 202 statt 500 –, statt sie
+durchzureichen. Das ist weniger, als sein Name verspricht, und deshalb steht es dort.
+
+Nebenbei prüfe ich den Fehler**code** `P2002` und nicht den Meldungstext. Texte ändern sich mit
+jeder Hauptversion, Codes sind Teil der Schnittstelle.
+
+### 166. Warum antwortet Ihr Endpoint auf eine wiederholte Zustellung mit 202 und nicht mit 409?
+
+Weil 409 GitHub sagen würde, es solle es noch einmal versuchen.
+
+GitHub wertet alles außerhalb von 2xx als Fehlschlag und **stellt dann erneut zu**. Ein 409 auf eine
+Wiederholung erzeugte also genau die Schleife, die die Idempotenz verhindern soll: Wiederholung →
+409 → Wiederholung → 409, bis GitHub aufgibt.
+
+Der Statuscode beantwortet hier nicht die Frage „ist etwas Neues passiert?", sondern „bist du fertig
+mit dieser Zustellung?". Und die Antwort ist ja – wir haben sie, sie ist verarbeitet oder wartet
+darauf, es gibt nichts mehr zu tun.
+
+Unterscheidbar bleibt es trotzdem, nur im Rumpf: `{"status":"angenommen"}` gegen
+`{"status":"bereits bekannt"}`. Damit kann ein Mensch beim Nachsehen erkennen, was passiert ist,
+ohne dass die Maschine ein falsches Signal bekommt.
+
+Das ist der allgemeine Punkt: **Ein Statuscode ist eine Anweisung an den Aufrufer, keine
+Beschreibung meines Innenlebens.** Bei einem Browser-Client hätte ich anders entschieden – der
+wiederholt nicht von selbst.
+
+### 167. Ihr Unique-Constraint ist zusammengesetzt. Was wäre denn schlimm an einem globalen auf `deliveryId`?
+
+Es wäre eine Zusage, die weiter reicht als das, was ich brauche – und dadurch ein Kanal zwischen
+Mandanten.
+
+Global hieße: „Diese Zustellungskennung gab es im ganzen System schon." Damit könnte die Zustellung
+**einer** Organisation die einer anderen abweisen. Praktisch ist das unwahrscheinlich, weil GitHub
+UUIDs vergibt; aber die Unwahrscheinlichkeit ist ein Argument über heutige Umstände, keine
+Eigenschaft meines Systems.
+
+Die Zusage, die ich wirklich brauche, ist enger: **diese Verbindung hat diese Zustellung schon
+gesehen.** Genau das steht im Constraint.
+
+Ein Test hält das ausdrücklich fest: dieselbe `deliveryId` an zwei verschiedene Verbindungen ergibt
+**zwei** Zeilen, und die zweite antwortet „angenommen", nicht „bereits bekannt". Ohne diesen Test
+könnte jemand später auf ein globales `UNIQUE` umstellen, und alle anderen Tests blieben grün.
+
+Das ist dieselbe Denkweise wie beim fehlenden globalen `UNIQUE` auf `owner/repo`: Mandantentrennung
+steckt nicht nur in Abfragen, sondern auch in Constraints.
