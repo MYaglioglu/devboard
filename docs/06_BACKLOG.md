@@ -155,3 +155,39 @@ Schnittstelle die GitHub-Integration mitbringt.
 Teilweise entschärft ist es bereits: `payload` im Feed ist bewusst `unknown` und wird in
 `feed-satz.ts` an einer Stelle vorsichtig gelesen – ein fehlendes Feld ergibt einen allgemeineren
 Satz statt eines Absturzes.
+
+### App-Hülle mit Sidebar *(Sprint 5, 16.08.2026)*
+Heute baut jede der acht Seiten ihr eigenes `<main className="mx-auto min-h-screen …">` – in zwei
+verschiedenen Breiten (`max-w-2xl` und `max-w-3xl`) und zwei Ausrichtungen. Beim Navigieren springt
+der Inhalt seitlich und vertikal, es gibt keine bleibende Navigation, und „Abmelden" existiert nur
+auf dem Dashboard. Geplant wäre ein geteiltes `layout.tsx` mit Sidebar (Projekte der aktiven
+Organisation), Organisationswechsler und Kopfleiste.
+
+Zwei kleinere Punkte gehören dazu: In `globals.css` steht noch die Arial-Zeile aus dem
+Next.js-Starter, die die geladene Geist-Schrift überschreibt – der Browser meldet die Datei als
+„preloaded but not used". Und das Board steht mit `md:grid-cols-3` in einem `max-w-2xl`-Container,
+also rund 190 px je Spalte.
+
+Nicht jetzt, weil Sprint 5 das inhaltlich stärkere Material liefert. Die Sichtbarkeit der
+vorhandenen Arbeit bleibt aber ein echter Mangel – dies ist der erste Kandidat nach Sprint 5.
+
+### Selbstverwaltung des Profils *(Sprint 5, 16.08.2026)*
+`User.name` existiert im Schema und wird vom Feed über `akteurName` bereits bevorzugt angezeigt,
+lässt sich aber nach der Registrierung **nie wieder ändern** – es gibt kein `users`-Modul, nur
+`GET /auth/me` zum Lesen. Geplant wäre `GET`/`PATCH /users/me` plus ein Avatar-Baustein, der aus
+dem Namen Initialen und aus der ID eine Farbe ableitet.
+
+Ausdrücklich **nicht** gemeint ist ein Administrationsbereich über fremde Konten – der steht weiter
+oben in dieser Datei und bleibt dort.
+
+Der Bild-Upload dazu gehört nach Sprint 6: Auf der Container-Platte wäre er beim ersten
+Zero-Downtime-Deployment verloren, das Argument gegen die lokale Ablage ist also ein
+Deployment-Argument. Dort liegen Objektspeicher (MinIO) und persistente Volumes ohnehin auf dem
+Tisch. Die Initialen sind kein Wegwerf-Zwischenschritt, sondern der Rückfall, den es für Konten
+ohne Bild und für `actor: null` ohnehin braucht.
+
+### Aufgabenzahlen in der Navigation *(Sprint 5, 16.08.2026)*
+Eine Sidebar, die je Projekt die offenen Aufgaben zeigt. Der Reiz liegt nicht im Feature, sondern
+in der Falle: pro Projekt eine Abfrage wäre genau das N+1, das in Sprint 4 gemessen und beseitigt
+wurde. Richtig wäre ein zusätzliches `groupBy` nach `projectId` im bestehenden
+Dashboard-Endpoint – eine Abfrage für alle Projekte, mit derselben Messung als Beleg.
