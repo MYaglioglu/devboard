@@ -17,6 +17,7 @@ import { OrganizationsModule } from './organizations/organizations.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProjectsModule } from './projects/projects.module';
 import { TasksModule } from './tasks/tasks.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 import type { Env } from './config/env.schema';
 
 @Module({
@@ -91,6 +92,7 @@ import type { Env } from './config/env.schema';
     // Umweg er ueberhaupt registriert ist.
     ActivitiesModule,
     DashboardModule,
+    WebhooksModule,
   ],
   providers: [
     // ========================================================================
