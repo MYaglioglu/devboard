@@ -112,7 +112,8 @@ Dort steht ausschließlich die API-Basis-URL.
 | Secrets aus `.env`-Datei statt Secret-Store | in Produktion unzureichend | Sprint 6 |
 | `WEBHOOK_ENCRYPTION_KEY` liegt neben den Daten | Wer Datenbank **und** Schlüssel hat, hat alle Webhook-Geheimnisse im Klartext | Sprint 6 |
 | Keine Schlüsselrotation umgesetzt | Ein kompromittierter Schlüssel lässt sich nur mit Ausfall wechseln | Sprint 6 |
-| Keine Aufbewahrungsfrist für `webhook_deliveries` | Rohe Fremddaten (Commit-Nachrichten, Benutzernamen) wachsen unbegrenzt | Scheibe 5.7 |
+| ~~Keine Aufbewahrungsfrist für `webhook_deliveries`~~ | **umgesetzt in Scheibe 5.7** – siehe unten | 16.08.2026 |
+| Das Abräumen läuft nicht von selbst | Ohne Scheduler muss es angestoßen werden | Sprint 6 |
 
 Der erste Punkt ist der wichtigste und der am leichtesten zu vergessen: Eine
 Entwicklungs-Einstellung, die niemand vor dem Deployment zurückdreht, ist eine der häufigsten
@@ -134,6 +135,46 @@ aus der Konfiguration für alle wäre bequemer gewesen und hätte jedes Projekt 
 anderen gemacht – wer eines kennt, könnte Ereignisse für alle signieren. Die `keyVersion`-Spalte
 steht bereits im Schema, damit eine Rotation später ohne Ausfall möglich ist; benutzt wird sie
 noch nicht.
+
+### Aufbewahrungsfrist für `webhook_deliveries` (Scheibe 5.7)
+
+Diese Tabelle ist die einzige im Projekt, die **fremde Rohdaten** speichert: Commit-Nachrichten,
+Zweignamen, GitHub-Anmeldenamen, oft auch E-Mail-Adressen von Menschen, die nie etwas mit DevBoard
+zu tun hatten. Erhoben haben wir davon nichts – es kam mit der Nutzlast.
+
+Sie wächst unbegrenzt und wird nach der Verarbeitung nie wieder gelesen. Damit ist sie genau das,
+wovor jede Datenschutzprüfung warnt: **ein Speicher ohne Zweck und ohne Ende.**
+
+`raeumeAlteZustellungenAb(tage)` entfernt deshalb verarbeitete Zustellungen jenseits der Frist.
+Empfohlen sind 30 Tage.
+
+#### Was ausdrücklich **nicht** gelöscht wird
+
+| Zustand | Warum er bleibt |
+|---|---|
+| `ACCEPTED` | Noch nicht verarbeitet. Löschen hieße, ein Ereignis zu verlieren, das nie im Feed ankam. |
+| `FAILED` | Genau die Zeilen, derentwegen die Tabelle existiert. Wer sie nach 30 Tagen wegräumt, löscht die Fehler, die er noch nicht angesehen hat. |
+
+Dass die Halde aus gescheiterten Zeilen damit unbegrenzt wachsen *kann*, ist der bewusst gewählte
+Rest: **lieber eine Liste, die auffällt, als eine, die sich selbst aufräumt.**
+
+#### Zwei Details mit Begründung
+
+Die Frist läuft ab `receivedAt`, nicht ab `processedAt`. Sie beginnt, wenn wir die Daten
+**bekommen** haben – wann wir sie verarbeitet haben, ist unsere Sache und darf die Aufbewahrung
+nicht verlängern. Sonst hielte eine spät verarbeitete Zeile ihre Daten länger fest als eine
+pünktliche.
+
+Eine Frist unter einem Tag wird abgewiesen statt auf einen Vorgabewert zurückzufallen. `0` würde
+alles Verarbeitete löschen – ein Tippfehler mit unumkehrbarer Wirkung soll ein Fehler sein, kein
+stiller Rückfall.
+
+**Der Feed bleibt unberührt.** Gelöscht werden die Rohdaten; die daraus entstandenen Aktivitäten
+hängen an der Organisation und sind das, was fachlich zählt.
+
+**Offen und benannt:** Es läuft nichts von selbst. Ohne Scheduler muss das Abräumen angestoßen
+werden – dieselbe Lücke wie bei der Verarbeitung, und sie wird in Sprint 6 zusammen geschlossen,
+wo mit dem Deployment ohnehin die Frage aufkommt, was regelmäßig laufen soll.
 
 ### Umgesetzt in Scheibe 5.3
 

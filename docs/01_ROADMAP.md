@@ -240,9 +240,36 @@ Signatur aus, nicht mit einer Identität. Das ist der eigentliche Lehrinhalt.
 - [x] 5.5 Verarbeitung: `push` und `pull_request` in Feed-Einträge übersetzen, Zustand je Zeile,
       gescheiterte Zustellungen wiederholbar. Dabei einen echten Entwurfsfehler gefunden –
       dieselbe Zustellung wurde zweimal verarbeitet (16.08.2026)
-- [ ] 5.6 Frontend: Repository auf der Projektseite verbinden, GitHub-Ereignisse im Feed mit
-      eigener Herkunftskennzeichnung
-- [ ] 5.7 `10_SECURITY.md`, Aufbewahrungsfrist für `webhook_deliveries`, Interviewfragen, Handbuch
+- [x] 5.6 Frontend: Repository auf der Projektseite verbinden, GitHub-Ereignisse im Feed mit
+      eigener Herkunftskennzeichnung (16.08.2026)
+- [x] 5.7 `10_SECURITY.md`, Aufbewahrungsfrist für `webhook_deliveries`, Interviewfragen, Handbuch
+      (16.08.2026)
+
+**Abgeschlossen am 16.08.2026** – in sieben Scheiben, plus einer außerplanmäßigen: der App-Hülle
+mit Seitenleiste, die aus dem Backlog vorgezogen wurde. **642 Tests** (220 Backend-Unit,
+221 Backend-E2E, 201 Frontend), CI grün.
+
+Drei ADRs entstanden: **ADR-013** (Repository-Webhook statt GitHub App), **ADR-014** (Geheimnis
+verschlüsselt statt gehasht) und **ADR-015** (Zustellung annehmen und quittieren – die Inbox, nicht
+die Outbox).
+
+Der Sprint hat **drei Fehler protokolliert**, und alle drei waren lehrreicher als das Feature:
+
+1. Ein Nebenläufigkeitstest, der eine kaputte Umsetzung durchwinkte – und dessen Nachfolger dann in
+   der CI an `ECONNRESET` scheiterte, also aus einem Grund, der mit seiner Aussage nichts zu tun
+   hatte.
+2. Dieselbe Zustellung wurde zweimal verarbeitet, weil zwei Durchläufe dieselbe offene Zeile lasen.
+   Die Idempotenz aus 5.4 half nicht: Sie schützt gegen doppelte *Zustellungen*, nicht gegen
+   doppelte *Verarbeitung*.
+3. Die Projektliste in der neuen Seitenleiste fiel auf 68 Pixel zusammen – von 201 grünen Tests
+   nicht bemerkt, im Browser sofort sichtbar.
+
+> **Was bleibt:** Die Regel „die Bedingung gehört ins `WHERE`, nicht in ein `if` davor" steht jetzt
+> an fünf Stellen im Projekt. Und die Lehre aus Sprint 2 hat eine neue Ausprägung bekommen: Die
+> Anwendung wird gestartet, nicht nur getestet – bei Layout gilt das doppelt.
+
+**Nicht gebaut, ausdrücklich:** eine Rückmeldung an GitHub. Sie wäre das, was das
+**Outbox**-Muster erst verdient. Bis dahin ist die Inbox die richtige Antwort.
 
 **Die Mutationsprobe ist in 5.3 nicht optional.** Eine Signaturprüfung ist der einzige Schutz eines
 öffentlichen Endpoints – und der Erfolgspfad ist auch dann grün, wenn sie gar nichts prüft. Dieselbe
