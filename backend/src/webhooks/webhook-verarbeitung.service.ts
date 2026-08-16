@@ -242,4 +242,69 @@ export class WebhookVerarbeitungService {
 
     return ergebnis.count;
   }
+
+  /**
+   * Loescht verarbeitete Zustellungen, die aelter als `tage` sind.
+   *
+   * ==========================================================================
+   * WARUM DIESE TABELLE EINE AUFBEWAHRUNGSFRIST BRAUCHT
+   * ==========================================================================
+   * Sie ist die einzige im Projekt, die FREMDE Rohdaten speichert:
+   * Commit-Nachrichten, Zweignamen, GitHub-Anmeldenamen, oft auch
+   * E-Mail-Adressen von Menschen, die nie etwas mit DevBoard zu tun hatten.
+   * Erhoben haben wir davon nichts - es kam mit der Nutzlast.
+   *
+   * Sie waechst dabei unbegrenzt und wird nach der Verarbeitung nie wieder
+   * gelesen. Damit ist sie genau das, wovor jede Datenschutzpruefung warnt:
+   * ein Speicher ohne Zweck und ohne Ende.
+   *
+   * Der Feed selbst bleibt unberuehrt. Was hier geloescht wird, sind die
+   * ROHDATEN - die daraus entstandenen Aktivitaeten haengen an der
+   * Organisation und sind das, was fachlich zaehlt.
+   *
+   * ==========================================================================
+   * WARUM NUR PROCESSED UND NICHT ALLES
+   * ==========================================================================
+   * `ACCEPTED` heisst "noch nicht verarbeitet" - die Zeile zu loeschen hiesse,
+   * ein Ereignis zu verlieren, das nie im Feed ankam.
+   *
+   * `FAILED` heisst "wir konnten es nicht deuten". Genau diese Zeilen sind die
+   * interessanten: Sie sind der Grund, warum die Tabelle ueberhaupt existiert.
+   * Wer sie nach 30 Tagen wegraeumt, loescht die Fehler, die er noch nicht
+   * angesehen hat.
+   *
+   * Beide bleiben also stehen. Dass die Halde aus gescheiterten Zeilen damit
+   * unbegrenzt wachsen KANN, ist der bewusst gewaehlte Rest: Lieber eine
+   * Liste, die auffaellt, als eine, die sich selbst aufraeumt.
+   */
+  async raeumeAlteZustellungenAb(tage: number): Promise<number> {
+    if (!Number.isInteger(tage) || tage < 1) {
+      // Ein `raeumeAlteZustellungenAb(0)` wuerde alles Verarbeitete loeschen -
+      // ein Tippfehler mit unumkehrbarer Wirkung. Deshalb kein stiller
+      // Rueckfall auf einen Vorgabewert, sondern ein Abbruch.
+      throw new Error('Aufbewahrungsfrist muss mindestens ein Tag sein');
+    }
+
+    const grenze = new Date(Date.now() - tage * 24 * 60 * 60 * 1000);
+
+    const ergebnis = await this.prisma.webhookDelivery.deleteMany({
+      where: {
+        status: WebhookDeliveryStatus.PROCESSED,
+        // `receivedAt` und nicht `processedAt`: Die Frist laeuft ab dem
+        // Zeitpunkt, an dem wir die Daten BEKOMMEN haben. Wann wir sie
+        // verarbeitet haben, ist unsere Sache und darf die Aufbewahrung nicht
+        // verlaengern - sonst hielte eine spaet verarbeitete Zeile ihre Daten
+        // laenger fest als eine puenktliche.
+        receivedAt: { lt: grenze },
+      },
+    });
+
+    if (ergebnis.count > 0) {
+      this.logger.log(
+        `${ergebnis.count} verarbeitete Zustellungen aelter als ${tage} Tage entfernt`,
+      );
+    }
+
+    return ergebnis.count;
+  }
 }

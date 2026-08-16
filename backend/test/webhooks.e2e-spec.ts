@@ -824,6 +824,88 @@ describe('Webhooks (e2e)', () => {
     });
   });
 
+  /**
+   * ==========================================================================
+   * AUFBEWAHRUNGSFRIST - SCHEIBE 5.7
+   * ==========================================================================
+   * Die Zeilen werden hier direkt angelegt, mit gesetztem `receivedAt`. Ein
+   * Test, der auf das Alter einer Zeile WARTET, waere die naechste Wette auf
+   * die Uhr - nach fuenf Malen in diesem Projekt reicht es damit.
+   */
+  describe('Aufbewahrungsfrist', () => {
+    const legeAlteZustellungAn = async (
+      verbindung: VerbindungAntwort,
+      status: 'ACCEPTED' | 'PROCESSED' | 'FAILED',
+      tageAlt: number,
+    ) => {
+      await prisma.webhookDelivery.create({
+        data: {
+          connectionId: verbindung.id,
+          eventType: 'push',
+          deliveryId: randomUUID(),
+          payload: { probe: true },
+          status,
+          receivedAt: new Date(Date.now() - tageAlt * 24 * 60 * 60 * 1000),
+        },
+      });
+    };
+
+    it('entfernt verarbeitete Zustellungen jenseits der Frist', async () => {
+      const verbindung = await baueVerbindung('abraeumen');
+
+      await legeAlteZustellungAn(verbindung, 'PROCESSED', 40);
+      await legeAlteZustellungAn(verbindung, 'PROCESSED', 5);
+
+      const entfernt = await app
+        .get(WebhookVerarbeitungService)
+        .raeumeAlteZustellungenAb(30);
+
+      expect(entfernt).toBeGreaterThanOrEqual(1);
+
+      const rest = await prisma.webhookDelivery.findMany({
+        where: { connectionId: verbindung.id },
+      });
+
+      // Die junge Zeile steht noch. Ohne diese Gegenprobe waere der Test auch
+      // gruen, wenn ALLES geloescht wuerde.
+      expect(rest).toHaveLength(1);
+    });
+
+    /**
+     * Der wichtigere Teil: Was NICHT geloescht wird.
+     *
+     * `ACCEPTED` waere ein verlorenes Ereignis, das nie im Feed ankam.
+     * `FAILED` sind genau die Zeilen, derentwegen die Tabelle existiert - wer
+     * sie abraeumt, loescht die Fehler, die er noch nicht angesehen hat.
+     */
+    it.each(['ACCEPTED', 'FAILED'] as const)(
+      'laesst alte Zustellungen im Zustand %s stehen',
+      async (status) => {
+        const verbindung = await baueVerbindung(`bleibt-${status}`);
+        await legeAlteZustellungAn(verbindung, status, 400);
+
+        await app.get(WebhookVerarbeitungService).raeumeAlteZustellungenAb(30);
+
+        expect(
+          await prisma.webhookDelivery.count({
+            where: { connectionId: verbindung.id },
+          }),
+        ).toBe(1);
+      },
+    );
+
+    it.each([0, -1, 1.5, Number.NaN])(
+      'weist eine Frist von %s ab, statt alles zu loeschen',
+      async (tage) => {
+        // Ein Tippfehler mit unumkehrbarer Wirkung soll ein Fehler sein, kein
+        // stiller Rueckfall auf einen Vorgabewert.
+        await expect(
+          app.get(WebhookVerarbeitungService).raeumeAlteZustellungenAb(tage),
+        ).rejects.toThrow(/mindestens ein Tag/);
+      },
+    );
+  });
+
   const erwarteKeineZustellung = async (verbindungsId: string) => {
     const anzahl = await prisma.webhookDelivery.count({
       where: { connectionId: verbindungsId },
