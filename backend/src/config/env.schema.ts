@@ -54,6 +54,41 @@ export const envSchema = z.object({
   // sich sonst selbst aussperren wuerden - in Produktion niemals 0.
   THROTTLE_LIMIT: z.coerce.number().int().nonnegative().default(100),
 
+  // ==========================================================================
+  // SCHLUESSEL FUER DIE WEBHOOK-GEHEIMNISSE (ADR-014)
+  // ==========================================================================
+  // KEIN Default, aus demselben Grund wie bei JWT_SECRET: Ein voreingestellter
+  // Schluessel waere kein Schluessel.
+  //
+  // Genau 64 Hex-Zeichen, weil AES-256 einen Schluessel von genau 32 Byte
+  // verlangt. Das ist kein Richtwert wie die 32 Zeichen bei JWT_SECRET,
+  // sondern eine harte Vorgabe des Verfahrens: Node wirft bei einer anderen
+  // Laenge `Invalid key length`. Ein zu kurzer Schluessel ist hier also nicht
+  // "etwas schwaecher", sondern gar nicht lauffaehig - und dieser Fehler soll
+  // beim START auftreten, nicht beim ersten Verbinden eines Repositories.
+  //
+  // Hex und nicht Base64: Bei Hex ist die Laenge in Zeichen ein direktes
+  // Vielfaches der Laenge in Byte, eine falsche Eingabe faellt also sofort
+  // auf. Base64 haette Polsterzeichen und mehrere gueltige Schreibweisen.
+  //
+  // Erzeugen mit:  openssl rand -hex 32
+  WEBHOOK_ENCRYPTION_KEY: z
+    .string()
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'WEBHOOK_ENCRYPTION_KEY muss genau 64 Hex-Zeichen lang sein (32 Byte) - erzeugen mit: openssl rand -hex 32',
+    ),
+
+  // Unter welcher Adresse ist DAS BACKEND von aussen erreichbar.
+  //
+  // Wird gebraucht, um dem Nutzer die Webhook-URL zu nennen, die er in GitHub
+  // eintraegt. Bewusst konfigurierbar und nicht aus dem Request abgeleitet:
+  // Der `Host`-Kopf kommt vom Client und ist faelschbar. Wer eine URL aus
+  // ihm zusammenbaut, laesst sich die eigene Adresse vom Anfragenden
+  // diktieren - dieselbe Sorte Fehler wie ein Passwort-Zuruecksetzen-Link,
+  // der auf einen fremden Host zeigt.
+  PUBLIC_BASE_URL: z.url().default('http://localhost:3000'),
+
   // Kein Default: Ohne Datenbank-URL darf das Backend nicht starten.
   DATABASE_URL: z
     .string()
