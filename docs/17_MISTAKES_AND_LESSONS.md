@@ -756,8 +756,31 @@ gar nichts – sieht aber aus, als sagte er etwas. Er hieß „schreibt auch bei
 Zustellungen nur eine Zeile", stand im Abschnitt *Idempotenz*, und niemand hätte ihn im Review
 beanstandet.
 
-Fünf Anfragen reichten schlicht nicht, um die Verschränkung herbeizuführen. Bei **30** fällt die
+Fünf Anfragen reichten schlicht nicht, um die Verschränkung herbeizuführen. Bei **30** fiel die
 naive Fassung zuverlässig – und dann auch nur an dieser einen Stelle.
+
+### Und dann kam der zweite Befund
+
+Mit 30 gleichzeitigen HTTP-Anfragen war der Test lokal grün. **In der CI scheiterte er an
+`read ECONNRESET`.** `supertest` bindet je Anfrage einen eigenen Port; 30 gleichzeitig sprengen auf
+dem GitHub-Runner die Socket-Grenzen.
+
+Das ist die unangenehmere Sorte Fehlschlag:
+
+> **Ein Test, der aus einem Grund scheitert, der mit seiner Aussage nichts zu tun hat, ist
+> schlimmer als kein Test.** Er erzeugt Rauschen, das man irgendwann wegklickt – und dann übersieht
+> man den Lauf, in dem er etwas Echtes meldet.
+
+Die Lösung war nicht, die Zahl wieder zu senken, sondern die **Ebene** zu wechseln. Das Wettrennen
+liegt nicht im HTTP-Stapel, sondern zwischen `findFirst` und `create` – also im Dienst und in der
+Datenbank. Der Test ruft deshalb jetzt `WebhookEmpfangService.nimmAn` direkt auf, ohne Netzwerk.
+
+Damit fällt die Socket-Grenze weg, und die höhere Zahl kostet nichts. Nötig war sie trotzdem: Auch
+am Dienst blieb die Mutationsprobe bei **zehn** Aufrufen grün. Erst bei **50** fällt die naive
+Fassung.
+
+> **Prüfe eine Nebenläufigkeit auf der Ebene, auf der sie stattfindet.** Jede Schicht darüber
+> bringt eigene Grenzen mit, die mit der Frage nichts zu tun haben.
 
 ### Die Lehre, zum fünften Mal
 

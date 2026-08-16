@@ -2998,6 +2998,17 @@ durchzureichen. Das ist weniger, als sein Name verspricht, und deshalb steht es 
 Nebenbei prüfe ich den Fehler**code** `P2002` und nicht den Meldungstext. Texte ändern sich mit
 jeder Hauptversion, Codes sind Teil der Schnittstelle.
 
+Ein Nachspiel hatte die Sache noch: Mit 30 gleichzeitigen **HTTP**-Anfragen war der Test lokal grün,
+in der CI scheiterte er an `read ECONNRESET` – `supertest` bindet je Anfrage einen eigenen Port. Ein
+Test, der aus einem Grund scheitert, der mit seiner Aussage nichts zu tun hat, ist schlimmer als
+kein Test; er erzeugt Rauschen, das man irgendwann wegklickt.
+
+Die Lösung war nicht, die Zahl zu senken, sondern die **Ebene** zu wechseln. Das Wettrennen liegt
+zwischen `findFirst` und `create`, also im Dienst – dort rufe ich jetzt direkt auf, ohne Netzwerk.
+
+> **Prüfe eine Nebenläufigkeit auf der Ebene, auf der sie stattfindet.** Jede Schicht darüber bringt
+> eigene Grenzen mit, die mit der Frage nichts zu tun haben.
+
 ### 166. Warum antwortet Ihr Endpoint auf eine wiederholte Zustellung mit 202 und nicht mit 409?
 
 Weil 409 GitHub sagen würde, es solle es noch einmal versuchen.

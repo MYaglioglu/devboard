@@ -150,8 +150,10 @@ Sprint 5:
 |---|---|
 | `organizationId` aus den drei `where`-Bedingungen im `RepositoryConnectionsService` | 2 E2E, punktgenau |
 | Die Signaturprüfung im `WebhookEmpfangService` | 4 E2E, punktgenau |
-| Constraint-Schutz durch die naive Fassung (`findFirst` + `if`) ersetzt, **5** gleichzeitige Anfragen | **0** – siehe unten |
-| Dieselbe Probe, **30** gleichzeitige Anfragen | 1 E2E, punktgenau |
+| Constraint-Schutz durch die naive Fassung (`findFirst` + `if`) ersetzt, **5** gleichzeitige HTTP-Anfragen | **0** – siehe unten |
+| Dieselbe Probe, **30** gleichzeitige HTTP-Anfragen | 1 E2E – aber `ECONNRESET` in der CI |
+| Dieselbe Probe, **10** gleichzeitige Aufrufe am Dienst | **0** |
+| Dieselbe Probe, **50** gleichzeitige Aufrufe am Dienst | 1 E2E, punktgenau |
 
 ### Die Probe, die den Test überführt hat – nicht den Code
 
@@ -161,9 +163,17 @@ war grün. Dann wurde der Schutz durch die **naive** Fassung ersetzt – erst `f
 
 **Alle 13 Tests blieben grün.** Fünf Anfragen reichten nicht, um die Verschränkung herbeizuführen.
 
-Bei 30 fällt die naive Fassung zuverlässig, und dann auch nur an dieser einen Stelle. Aber die
-Konsequenz ist nicht die 30 – auch sie ist eine Zahl aus einer Messung, keine Garantie. Die
-Konsequenz ist eine Trennung:
+Bei 30 fiel die naive Fassung zuverlässig – lokal. **In der CI scheiterte der Test dann an
+`read ECONNRESET`:** `supertest` bindet je Anfrage einen eigenen Port, und 30 gleichzeitig sprengen
+auf dem Runner die Socket-Grenzen. Ein Test, der aus einem Grund scheitert, der mit seiner Aussage
+nichts zu tun hat, ist schlimmer als kein Test.
+
+Die Lösung war ein Wechsel der **Ebene**, nicht der Zahl: Das Wettrennen liegt zwischen `findFirst`
+und `create`, also im Dienst – dort wird es jetzt geprüft, ohne Netzwerk. (Und auch dort brauchte
+es 50 statt 10 Aufrufe, bis die naive Fassung fiel.)
+
+Die eigentliche Konsequenz ist aber keine Zahl – auch 50 ist eine Messung, keine Garantie. Sie ist
+eine Trennung:
 
 > **Die Zusicherung muss deterministisch prüfbar sein; die Belastungsprobe darf probabilistisch
 > sein, solange man weiß, dass sie es ist.**
