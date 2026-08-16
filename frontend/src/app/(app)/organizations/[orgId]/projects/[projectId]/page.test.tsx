@@ -34,6 +34,22 @@ vi.mock('@/components/board', () => ({
   ),
 }));
 
+/**
+ * Auch die Repository-Verbindung wird ersetzt - aus demselben Grund wie das
+ * Board: Sie zieht `useAuth` heran, und dieser Test prueft die SEITE.
+ *
+ * Die Attrappe gibt `darfVerwalten` sichtbar aus. Damit bleibt pruefbar, was
+ * die Seite entscheidet - naemlich WER verwalten darf -, ohne dass der Test
+ * etwas ueber das Innenleben der Verbindung wissen muesste.
+ */
+vi.mock('@/components/repository-verbindung', () => ({
+  RepositoryVerbindung: ({ darfVerwalten }: { darfVerwalten: boolean }) => (
+    <div data-testid="repository">
+      {darfVerwalten ? 'darf verwalten' : 'nur lesen'}
+    </div>
+  ),
+}));
+
 vi.mock('next/navigation', () => ({
   useParams: () => ({ orgId: 'org-1', projectId: 'p1' }),
   useRouter: () => ({ push }),
@@ -174,6 +190,48 @@ describe('Projektseite', () => {
     expect(
       screen.queryByRole('button', { name: 'Speichern' }),
     ).not.toBeInTheDocument();
+  });
+
+  /**
+   * ==========================================================================
+   * SEHEN UND VERWALTEN SIND HIER ZWEI VERSCHIEDENE DINGE
+   * ==========================================================================
+   * Der Test darueber prueft, dass ein MEMBER die Projektverwaltung NICHT
+   * bekommt. Bei der Repository-Verbindung ist es anders: Er sieht sie, darf
+   * sie aber nicht aendern. Wer im Projekt arbeitet, darf wissen, woher die
+   * Ereignisse kommen.
+   *
+   * Ohne diesen Test waere auch eine Fassung gruen, die den ganzen Bereich vor
+   * einem MEMBER verbirgt - oder eine, die ihm die Knoepfe gibt.
+   */
+  it('zeigt einem MEMBER die Repository-Verbindung, aber nur lesend', () => {
+    alsRolle('MEMBER');
+    mitProjekt(projekt());
+
+    render(<ProjektSeite />);
+
+    expect(screen.getByTestId('repository')).toHaveTextContent('nur lesen');
+  });
+
+  it('laesst OWNER und ADMIN die Verbindung verwalten', () => {
+    mitProjekt(projekt());
+
+    render(<ProjektSeite />);
+
+    expect(screen.getByTestId('repository')).toHaveTextContent(
+      'darf verwalten',
+    );
+  });
+
+  it('zeigt bei einem archivierten Projekt keine Verbindung', () => {
+    // Dieselbe Regel wie im Backend: Ein archiviertes Projekt bleibt lesbar,
+    // nimmt aber nichts Neues mehr auf. Ein Webhook daran waere eine
+    // Verbindung, die still in ein abgeschlossenes Projekt schreibt.
+    mitProjekt(projekt({ archivedAt: '2026-08-16T10:00:00.000Z' }));
+
+    render(<ProjektSeite />);
+
+    expect(screen.queryByTestId('repository')).not.toBeInTheDocument();
   });
 
   describe('Ändern', () => {
