@@ -135,6 +135,34 @@ anderen gemacht – wer eines kennt, könnte Ereignisse für alle signieren. Die
 steht bereits im Schema, damit eine Rotation später ohne Ausfall möglich ist; benutzt wird sie
 noch nicht.
 
+### Umgesetzt in Scheibe 5.3
+
+- **HMAC-SHA256 über den Rohrumpf**, verglichen mit `timingSafeEqual` – ein abbrechender Vergleich
+  verrät über die Laufzeit, wie viele Zeichen gestimmt haben
+- Der Rumpf wird **erst nach** der Prüfung geparst. Bis dahin ist er nichts als Bytes aus dem
+  Internet
+- Unbekannte Verbindung, falsche Signatur und fehlende Kopfzeilen ergeben dieselbe **leere 404** –
+  sonst wäre der Endpoint ein Orakel darüber, welche Verbindungs-IDs existieren
+- `ping` wird beantwortet, aber **nach** der Signaturprüfung
+- Protokolliert wird, *dass* eine Signatur nicht stimmte – nicht die gelieferte Signatur und erst
+  recht nicht das Geheimnis. Ein Protokoll ist eine Datei, die kopiert und weitergereicht wird
+- Mutationsprobe am Schutz selbst: Prüfung entfernt, genau die vier vorhergesagten Tests wurden rot
+
+**Was eine Signatur hier beweist – und was nicht.** Sie beweist, dass der Absender das Geheimnis
+kennt und der Rumpf unverändert ist. Sie beweist **nicht**, *wer* der Absender ist: HMAC ist
+symmetrisch, beide Seiten haben denselben Schlüssel, also kann jede erzeugen, was die andere
+erzeugen könnte. Praktisch genügt das, weil das Geheimnis nur wir und GitHub kennen – aber
+„signiert" klingt umgangssprachlich nach Urheberschaft, und die ist es nicht.
+
+| Neuer offener Punkt | Risiko | Fällig |
+|---|---|---|
+| Webhook-Endpoint unter dem globalen Rate Limit | Ein Push-Sturm kann 429 auslösen | offen, siehe unten |
+
+Das ist derzeit vertretbar: GitHub stellt bei einem Fehlschlag erneut zu, die Zustellung geht also
+nicht verloren, sondern verzögert sich. Ein eigenes, höheres Limit für diesen Endpoint wäre die
+saubere Lösung – aber ein *abgeschaltetes* Limit wäre die falsche: Der Endpoint ist öffentlich, und
+ohne Grenze wäre er eine Einladung, die Datenbank mit abgelehnten Anfragen zu beschäftigen.
+
 ### Umgesetzt in Scheibe 5.2
 
 - Webhook-Geheimnis mit **AES-256-GCM** verschlüsselt, IV je Verschlüsselung neu gezogen

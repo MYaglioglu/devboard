@@ -1344,6 +1344,87 @@ anschließender Prüfung – eine Zeile fremder Herkunft wird gar nicht erst gel
 empfangenen Zustellungen gehen über `ON DELETE CASCADE` mit; die daraus **entstandenen**
 Feed-Einträge bleiben. Was passiert ist, ist passiert.
 
+### `POST /webhooks/github/:connectionId` · **öffentlich**
+
+Der erste Endpoint des Projekts, den fremder Code aufruft. Kein Token, keine Sitzung – die Anfrage
+weist sich mit einer **Signatur** aus, nicht mit einer **Identität**.
+
+| Kopfzeile | |
+|---|---|
+| `X-Hub-Signature-256` | `sha256=<64 Hex>` – HMAC-SHA256 über den Rohrumpf |
+| `X-GitHub-Event` | `push`, `pull_request`, `ping`, … |
+| `X-GitHub-Delivery` | UUID der Zustellung, bei Wiederholungen **gleich** |
+
+| Status | Wann |
+|---|---|
+| 202 | angenommen (auch bei einer bereits bekannten Zustellung) |
+| 400 | `connectionId` ist keine UUID |
+| 404 | Verbindung unbekannt · Signatur falsch · Kopfzeilen fehlen – **ununterscheidbar** |
+
+#### Warum der Endpoint so wenig tut
+
+Er prüft die Signatur, schreibt die Zustellung weg und quittiert. Mehr nicht (ADR-015).
+
+GitHub erwartet binnen zehn Sekunden eine Antwort und wertet alles außerhalb von 2xx als
+Fehlschlag – mit **erneuter Zustellung** als Folge. Wer hier verarbeitet, hat bei einem Fehler nur
+zwei schlechte Antworten: eine 5xx, dann scheitert dieselbe kaputte Nutzlast bei jedem
+Wiederholungsversuch, bis GitHub aufgibt und die Zustellung endgültig verloren ist – oder eine 200,
+dann ist sie sofort weg.
+
+Mit der Zeile in `webhook_deliveries` ist sie **da**, unabhängig davon, ob wir sie schon deuten
+können.
+
+#### Die Falle: der Rohrumpf
+
+Ein HMAC ist eine Aussage über **Bytes**, nicht über Bedeutung. NestJS parst den Rumpf zu JSON und
+wirft die ursprünglichen Bytes weg – eine über `JSON.stringify(body)` neu gebildete Signatur stimmt
+deshalb **nie**:
+
+```
+{"a":1,"b":2}      signiert  ⇒  gültig
+{ "a": 1, "b": 2 } dieselbe Signatur  ⇒  ungültig
+{"b":2,"a":1}      dieselbe Signatur  ⇒  ungültig
+```
+
+Alle drei ergeben dasselbe geparste Objekt. Ein Unit-Test hält genau das fest.
+
+Deshalb wird die Anwendung mit `{ rawBody: true }` erzeugt. Das ist eine Option beim **Erzeugen**,
+kein Modul – Test und Produktion können also auseinanderlaufen, dieselbe Falle wie beim
+`cookieParser`. Der Controller prüft deshalb ausdrücklich, ob der Rohrumpf vorhanden ist, und meldet
+genau das, statt eine „falsche Signatur" zu behaupten.
+
+#### Warum alle Ablehnungen gleich aussehen
+
+Unbekannte Verbindung, falsche Signatur und fehlende Kopfzeilen ergeben dieselbe leere 404. Wären
+die Antworten unterscheidbar, wäre dieser Endpoint ein Auskunftsdienst darüber, welche
+Verbindungs-IDs existieren – wer IDs durchprobiert, hätte ein Ja/Nein-Orakel.
+
+Das ist dieselbe Regel in ihrer dritten Ausprägung: 404 statt 403 für fremde Organisationen
+(Sprint 2), ein Login, der nicht verrät, ob die Adresse existiert (Sprint 1), und jetzt hier.
+
+> **Eine Fehlermeldung darf nicht mehr verraten, als der Fragende sehen darf.**
+
+#### `ping` – erst prüfen, dann antworten
+
+GitHub schickt `ping` einmal beim Einrichten. Es hat eine gültige Signatur, aber keinen fachlichen
+Inhalt. Beantwortet wird es mit `{ "status": "pong" }` – **nach** der Signaturprüfung. Ein Endpoint,
+der auf `ping` ungeprüft antwortet, bestätigt jedem Fremden, dass es diese Verbindung gibt.
+
+#### Warum `timingSafeEqual`
+
+Ein normaler Vergleich bricht beim ersten Unterschied ab. Wie lange er braucht, verrät damit, wie
+viele Zeichen am Anfang gestimmt haben – statt 2^256 Versuchen bräuchte es einige Tausend
+Messungen. Über ein Netzwerk ist das schwer, weil die Laufzeitschwankungen größer sind als der
+gemessene Unterschied. „Schwer" ist aber kein Sicherheitsargument, und der zeitkonstante Vergleich
+kostet nichts.
+
+#### Offen: Rate Limiting
+
+Der Endpoint läuft unter dem globalen Limit (`THROTTLE_LIMIT`, standardmäßig 100/min). Bei einem
+Push-Sturm auf ein großes Repository kann das zu 429 führen. Das ist derzeit vertretbar, weil GitHub
+bei einem Fehlschlag erneut zustellt – die Zustellung geht also nicht verloren, sie verzögert sich.
+Vermerkt in `10_SECURITY.md`.
+
 ### Warum diese Routen an `projects` hängen und nicht an `organizations`
 
 Ein Repository wird einem **Projekt** zugeordnet, nicht einer Organisation: Der Feed ist nach
