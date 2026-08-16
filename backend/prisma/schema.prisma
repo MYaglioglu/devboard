@@ -38,16 +38,19 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  refreshTokens RefreshToken[]
-  memberships   Membership[]
+  refreshTokens         RefreshToken[]
+  memberships           Membership[]
   /// Einladungen, die dieser Nutzer AUSGESPROCHEN hat - nicht die an ihn
   /// gerichteten. Letztere haengen an einer E-Mail-Adresse, nicht an einem
   /// Konto, weil es das Konto beim Einladen noch nicht geben muss.
-  sentInvitations Invitation[]
+  sentInvitations       Invitation[]
   /// Ereignisse, die dieser Nutzer AUSGELOEST hat. Beim Loeschen des Kontos
   /// werden sie nicht mitgeloescht, sondern auf `actorId = NULL` gesetzt -
   /// siehe Kommentar bei Activity.actor.
-  activities      Activity[]
+  activities            Activity[]
+  /// Repository-Verbindungen, die dieser Nutzer eingerichtet hat. Wie bei
+  /// `activities` ueberleben sie die Loeschung des Kontos - siehe SetNull dort.
+  repositoryConnections RepositoryConnection[]
 
   @@map("users")
 }
@@ -123,6 +126,9 @@ model Project {
 
   tasks      Task[]
   activities Activity[]
+
+  /// Optional und Einzahl: hoechstens ein Repository je Projekt (Sprint 5).
+  repositoryConnection RepositoryConnection?
 
   /// Fuer "alle Projekte dieser Organisation" - die haeufigste Abfrage
   /// ueberhaupt, weil sie auf jedem Seitenaufruf im Projektbereich laeuft.
@@ -282,6 +288,24 @@ enum ActivityType {
   TASK_MOVED
   TASK_DELETED
 
+  /// ==========================================================================
+  /// AB HIER: EREIGNISSE VON GITHUB (Sprint 5)
+  /// ==========================================================================
+  /// Sie stehen im SELBEN Enum und nicht in einem zweiten. Der Feed ist eine
+  /// Liste - waeren es zwei Typen, braeuchte die Abfrage eine Vereinigung, der
+  /// Cursor zwei Sortierungen und der Index eine zweite Tabelle. Was sie
+  /// unterscheidet, ist nicht der Typ, sondern die HERKUNFT: `source`.
+  ///
+  /// `PULL_REQUEST_MERGED` ist ein eigener Wert und kein Zusatz im `payload`,
+  /// obwohl GitHub beides als `pull_request` mit `action: closed` schickt.
+  /// Ein zusammengefuehrter und ein verworfener Pull Request sind fachlich
+  /// zwei verschiedene Dinge - und ein Feed, in dem man sie nur durch Lesen
+  /// des `payload` auseinanderhaelt, ist nicht filterbar.
+  GITHUB_PUSH
+  GITHUB_PULL_REQUEST_OPENED
+  GITHUB_PULL_REQUEST_MERGED
+  GITHUB_PULL_REQUEST_CLOSED
+
   @@map("activity_type")
 }
 
@@ -339,6 +363,16 @@ model Activity {
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   type ActivityType
+
+  /// Woher das Ereignis stammt. Siehe `ActivitySource` - dort steht, welche
+  /// Falle dieses Feld verhindert.
+  ///
+  /// `@default(APP)` ist nicht Bequemlichkeit, sondern die Migration: Alle
+  /// bestehenden Zeilen stammen aus der Anwendung, und mit dem Vorgabewert
+  /// bekommen sie den richtigen Wert, ohne dass ein Backfill-Skript laufen
+  /// muss. Ein Vorgabewert ist dann richtig, wenn er fuer die Altdaten WAHR
+  /// ist - nicht, wenn er nur das Schreiben bequemer macht.
+  source ActivitySource @default(APP)
 
   /// ==========================================================================
   /// DER AKTEUR - UND WARUM ER AUF `users` ZEIGT, NICHT AUF `memberships`
@@ -667,4 +701,209 @@ model RefreshToken {
   @@index([userId])
   @@index([familyId])
   @@map("refresh_tokens")
+}
+
+/// Der Zustand einer empfangenen Zustellung.
+///
+/// Drei Werte, weil der Endpunkt und die Verarbeitung GETRENNT sind (ADR-015):
+/// Zwischen "angenommen" und "verarbeitet" liegt ein eigener Schritt, und
+/// genau dazwischen kann etwas schiefgehen.
+enum WebhookDeliveryStatus {
+  /// Signatur geprueft, Zeile geschrieben, 202 geantwortet. Mehr nicht.
+  ACCEPTED
+  /// In Feed-Eintraege uebersetzt.
+  PROCESSED
+  /// Uebersetzung gescheitert. Die Nutzdaten bleiben stehen, damit ein
+  /// zweiter Versuch nach einer Korrektur moeglich ist - der ganze Grund,
+  /// warum die Tabelle ueberhaupt existiert.
+  FAILED
+
+  @@map("webhook_delivery_status")
+}
+
+/// Woher ein Ereignis stammt.
+///
+/// ============================================================================
+/// WARUM ES DIESES FELD BRAUCHT - EINE FALLE AUS DEM BESTAND
+/// ============================================================================
+/// `Activity.actorId` ist bisher genau dann NULL, wenn ein KONTO GELOESCHT
+/// wurde. Das Frontend leitet daraus ab: "Ein entferntes Mitglied". Diese
+/// Ableitung war richtig, solange es nur eine Ursache fuer NULL gab.
+///
+/// Ein GitHub-Ereignis hat ebenfalls keinen DevBoard-Nutzer - der Mensch, der
+/// gepusht hat, muss hier gar kein Konto haben. Ohne unterscheidendes Feld
+/// wuerde der Feed also behaupten, ein ausgetretener Kollege habe gepusht.
+///
+/// Die Alternative waere gewesen, aus dem `payload` zu schliessen ("steht ein
+/// githubLogin drin, ist es GitHub"). Das waere eine Herkunftsangabe, die von
+/// der Datenbank nicht geprueft wird und beim ersten Ereignistyp ohne dieses
+/// Feld still falsch wird. Die Herkunft ist eine Eigenschaft der Zeile, kein
+/// Nebenprodukt ihres Inhalts.
+enum ActivitySource {
+  APP
+  GITHUB
+
+  @@map("activity_source")
+}
+
+/// Die Verbindung eines Projekts zu einem GitHub-Repository (ADR-013).
+model RepositoryConnection {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// ==========================================================================
+  /// WARUM HIER KEIN organizationId STEHT - ANDERS ALS BEI `activities`
+  /// ==========================================================================
+  /// Bei `Activity` ist die Spalte da, weil nicht jedes Ereignis ein Projekt
+  /// hat und weil der Feed-Index sie braucht. Beides gilt hier nicht: Eine
+  /// Verbindung hat IMMER genau ein Projekt, und abgefragt wird sie ueber
+  /// dieses Projekt. Der Mandant wird also geerbt - dieselbe Entscheidung wie
+  /// bei `Task`, mit derselben Begruendung: keine zweite Wahrheit.
+  ///
+  /// Fuer den Mandantenfilter aendert das nichts. Er steht weiterhin in der
+  /// WHERE-Bedingung, nur eine Beziehung weiter:
+  ///   WHERE project.organizationId = ? AND project.id = ?
+  projectId String  @unique @db.Uuid
+  /// `@unique` und nicht nur `@@index`: Ein Projekt hat HOECHSTENS EIN
+  /// Repository. Zwei Verbindungen wuerden bedeuten, dass dasselbe Ereignis
+  /// zweimal im Feed landet - und die Frage "welche gilt" haette keine
+  /// Antwort.
+  ///
+  /// Cascade: Ohne Projekt gibt es nichts zu verbinden.
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  /// Das Repository in der Form `owner/repo`.
+  ///
+  /// ==========================================================================
+  /// BEWUSST KEIN GLOBALES @unique DARAUF
+  /// ==========================================================================
+  /// Naheliegend waere "ein Repository kann nur einmal verbunden sein". Das
+  /// waere ein Informationsleck ueber Mandantengrenzen hinweg: Beim Verbinden
+  /// bekaeme man einen Konflikt gemeldet und wuesste damit, dass eine FREMDE
+  /// Organisation dieses Repository nutzt. Dieselbe Denkweise wie in Sprint 2 -
+  /// eine Fehlermeldung darf nicht mehr verraten, als der Fragende sehen darf.
+  ///
+  /// Fachlich ist Mehrfachnutzung ohnehin richtig: Zwei Teams duerfen dasselbe
+  /// Repository beobachten. Jedes richtet in GitHub seinen eigenen Webhook ein
+  /// und bekommt eigene Zustellungen.
+  repositoryFullName String
+
+  /// ==========================================================================
+  /// DAS GEHEIMNIS - VERSCHLUESSELT, NICHT GEHASHT (ADR-014)
+  /// ==========================================================================
+  /// Passwoerter (argon2id) und Einladungs-Token (SHA-256) liegen gehasht hier.
+  /// Hier geht das nicht, und der Grund ist strukturell: GitHub legt das
+  /// Geheimnis nie vor. Es schickt eine HMAC-Signatur ueber den Rumpf, und um
+  /// dieselbe Signatur NACHZURECHNEN, braucht man das Geheimnis selbst.
+  ///
+  ///   Wiedererkennen  => hashen.
+  ///   Nachrechnen     => verschluesseln.
+  ///
+  /// AES-256-GCM, deshalb drei Spalten statt einer: Der Schluesseltext allein
+  /// ist ohne den Initialisierungsvektor nicht zu entschluesseln, und ohne den
+  /// Authentifizierungs-Tag nicht auf Unversehrtheit pruefbar.
+  ///
+  /// `Bytes` (bytea) und nicht Base64 in einem String: Eine Kodierung, die
+  /// niemand liest, ist nur eine Stelle, an der jemand die falsche waehlen
+  /// kann.
+  secretCiphertext Bytes
+  secretIv         Bytes
+  secretAuthTag    Bytes
+
+  /// Mit welchem Schluessel wurde verschluesselt.
+  ///
+  /// Ohne diese Spalte ist ein Schluesselwechsel nur mit Ausfall moeglich:
+  /// Man muesste alle Zeilen in einem Zug neu verschluesseln und duerfte
+  /// dazwischen keine Zustellung annehmen. Mit ihr koennen alter und neuer
+  /// Schluessel eine Weile nebeneinander gelten.
+  keyVersion Int @default(1)
+
+  /// Wer verbunden hat. SetNull wie beim Akteur einer Aktivitaet: Die
+  /// Verbindung ueberlebt das Konto, das sie eingerichtet hat.
+  createdById String? @db.Uuid
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deliveries WebhookDelivery[]
+
+  @@map("repository_connections")
+}
+
+/// Eine von GitHub empfangene Zustellung - roh, bevor sie gedeutet wird.
+///
+/// ============================================================================
+/// WARUM DIE ROHDATEN UEBERHAUPT GESPEICHERT WERDEN (ADR-015)
+/// ============================================================================
+/// Die Tabelle ist der Grund, warum eine unbekannte oder fehlerhafte Nutzlast
+/// keine Zustellung kostet. GitHub erwartet binnen zehn Sekunden eine Antwort
+/// und stellt bei allem ausserhalb von 2xx ERNEUT zu. Wer inline verarbeitet,
+/// hat bei einem Fehler nur zwei schlechte Antworten: eine 5xx, dann scheitert
+/// dieselbe kaputte Nutzlast bei jedem Wiederholungsversuch, bis GitHub
+/// aufgibt - oder eine 200, dann ist sie sofort weg.
+///
+/// Mit dieser Zeile ist sie DA, unabhaengig davon, ob wir sie schon deuten
+/// koennen.
+model WebhookDelivery {
+  id String @id @default(uuid()) @db.Uuid
+
+  connectionId String               @db.Uuid
+  /// Cascade: Wird die Verbindung getrennt, sind auch ihre Zustellungen
+  /// gegenstandslos. Die daraus ENTSTANDENEN Feed-Eintraege bleiben - sie
+  /// haengen an der Organisation, nicht hieran. Was passiert ist, ist passiert.
+  connection   RepositoryConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  /// Der Wert aus dem Kopffeld `X-GitHub-Delivery`.
+  eventType  String
+  deliveryId String
+
+  /// Die Nutzdaten, wie GitHub sie geschickt hat.
+  ///
+  /// `jsonb` aus demselben Grund wie bei `activities.payload`: einmal
+  /// geschrieben, oft gelesen. Und derselbe Preis - die Datenbank prueft den
+  /// Inhalt NICHT. Hier ist das sogar der Zweck: Was hier steht, ist fremde
+  /// Eingabe und wird erst beim Verarbeiten vorsichtig gelesen.
+  payload Json @db.JsonB
+
+  status WebhookDeliveryStatus @default(ACCEPTED)
+
+  /// Warum die Verarbeitung gescheitert ist - fuer die Fehlersuche, nicht fuer
+  /// die Anzeige. Nutzersichtbar waere sie eine Einladung, interne Meldungen
+  /// nach aussen zu geben.
+  fehlermeldung String?
+
+  /// Wie oft die Verarbeitung versucht wurde. Ohne diesen Zaehler laesst sich
+  /// eine Zeile, die JEDES Mal scheitert, nicht von einer unterscheiden, die
+  /// noch nie an der Reihe war - und die Halde aus ADR-015 waechst unbemerkt.
+  versuche Int @default(0)
+
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  /// ==========================================================================
+  /// DER SCHUTZ GEGEN MEHRFACHZUSTELLUNG - UND WARUM ER HIER STEHT
+  /// ==========================================================================
+  /// GitHub stellt bei jedem Fehlschlag erneut zu, mit DERSELBEN deliveryId.
+  /// Ohne diesen Constraint stuende dasselbe Ereignis mehrfach im Feed.
+  ///
+  /// Der Schutz gehoert in die Datenbank und NICHT in ein vorheriges
+  /// `findFirst`: Zwischen Lesen und Schreiben passen zwei gleichzeitige
+  /// Zustellungen durch, und beide fuenden nichts. Dieselbe Regel wie beim
+  /// optimistischen Sperren (ADR-010) und beim Protokollschreiber (ADR-012) -
+  /// DIE BEDINGUNG GEHOERT INS WHERE BEZIEHUNGSWEISE INS CONSTRAINT, NICHT IN
+  /// EIN `if` DAVOR. Zum dritten Mal dieselbe Lehre.
+  ///
+  /// Warum zusammen mit `connectionId` und nicht global auf `deliveryId`:
+  /// Global waere die Zusage "diese Zustellung gab es im ganzen System schon".
+  /// Damit koennte die Zustellung EINER Organisation die einer anderen
+  /// abweisen - ein Kanal zwischen Mandanten, so unwahrscheinlich er praktisch
+  /// ist. Die Zusage, die wir wirklich brauchen, ist enger: "DIESE Verbindung
+  /// hat DIESE Zustellung schon gesehen."
+  @@unique([connectionId, deliveryId])
+  /// Fuer den Verarbeitungsschritt: "die aeltesten noch nicht verarbeiteten".
+  /// `status` zuerst, weil danach GLEICHHEIT geprueft wird und danach erst
+  /// sortiert - eine Spalte, auf die ein Bereich oder eine Sortierung faellt,
+  /// gehoert im zusammengesetzten Index nach hinten.
+  @@index([status, receivedAt])
+  @@map("webhook_deliveries")
 }
