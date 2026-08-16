@@ -2550,3 +2550,139 @@ Und der unbequeme Teil, der genauso in `12_TESTING.md` steht: Mein 409-Test bewa
 **Reihenfolge**, nicht die Atomarität. Der Schutz gegen einen Fehler *zwischen* Änderung und
 Protokolleintrag ist real, aber ohne wachenden Test. Das habe ich hingeschrieben, damit niemand –
 ich eingeschlossen – den grünen Haken für mehr hält, als er ist.
+
+---
+
+## Sprint 5 – GitHub-Integration
+
+### 146. In Ihrem Schema hat `activities` eine `organizationId`, `repository_connections` aber nicht. Beides sind Tabellen in einer mandantengetrennten Anwendung. Widersprechen Sie sich da nicht?
+
+Nein, aber die Frage ist berechtigt – ich habe die Regel selbst zu grob formuliert gehabt.
+
+Falsch wäre: *„Jede Tabelle bekommt den Mandanten."* Richtig ist:
+
+> **Der Mandant muss in der `WHERE`-Bedingung stehen und lückenlos erreichbar sein.** Ob als eigene
+> Spalte oder über eine Beziehung, entscheidet allein die Frage, ob die Kette dorthin **immer**
+> vollständig ist.
+
+Bei `repository_connections` ist sie es. Eine Verbindung hat immer genau ein Projekt, ein Projekt
+hat immer genau eine Organisation. Der Filter lautet also
+`WHERE project.organizationId = $1 AND project.id = $2` – der Mandant steht in der Bedingung, nur
+eine Beziehung weiter. Eine eigene Spalte wäre eine **zweite Wahrheit**: zwei Angaben, die sich
+widersprechen können. Genau deshalb hat auch `tasks` keine.
+
+Bei `activities` ist die Kette **nicht** lückenlos. `projectId` ist dort optional, weil nicht jedes
+Ereignis ein Projekt hat – eine Einladung hängt an der Organisation, und ab diesem Sprint kommen
+GitHub-Ereignisse dazu. Für manche Zeilen wäre der Mandant über `projects` erreichbar, für andere
+gar nicht. Dazu kommt ein zweiter Grund: PostgreSQL kann keinen Index über Spalten **zweier**
+Tabellen anlegen, und die Hauptabfrage des Feeds ist „die letzten 20 Ereignisse dieser
+Organisation". Ohne eigene Spalte müsste jede Feed-Seite erst verbinden und danach sortieren.
+
+Der Preis dort ist echte Redundanz, und was sie vertretbar macht, ist die **Unveränderlichkeit**:
+Eine Aktivitätszeile wird einmal geschrieben und nie wieder angefasst. Redundanz ist dann
+gefährlich, wenn zwei Kopien sich auseinanderentwickeln können – hier kann sich keine mehr bewegen.
+
+### 147. Passwörter hashen Sie mit argon2id, Einladungs-Token mit SHA-256 – das Webhook-Geheimnis verschlüsseln Sie. Warum die Ausnahme, und was schützt Verschlüsselung hier eigentlich, was Hashing nicht schützt?
+
+Die Ausnahme ist keine Abwägung, sondern eine strukturelle Notwendigkeit.
+
+Ein Hash reicht, wenn ich einen **vorgelegten Wert wiedererkennen** muss. Beim Login schickt der
+Nutzer sein Passwort, ich hashe es und vergleiche. Beim Einladungs-Token dasselbe: Der Token steht
+im Link, wird vorgelegt, gehasht, verglichen.
+
+Bei einem Webhook legt GitHub das Geheimnis **nie** vor. Es schickt eine HMAC-Signatur über den
+Nachrichtenrumpf, in `X-Hub-Signature-256`. Um dieselbe Signatur zu prüfen, muss ich sie
+**nachrechnen** – und dafür brauche ich das Geheimnis selbst. Aus `SHA-256(geheimnis)` bekomme ich
+es nicht zurück; das ist ja gerade der Zweck eines Hashs.
+
+> **Wiedererkennen ⇒ hashen. Nachrechnen ⇒ verschlüsseln.** Der Klartext im Speicher ist nur dann
+> ein Fehler, wenn man ihn nicht braucht.
+
+Zum zweiten Teil der Frage, und das ist der ehrliche Teil: Verschlüsselung im Ruhezustand schützt
+**deutlich weniger** als Hashing. Wer die Datenbank *und* den Schlüssel hat, hat die Geheimnisse im
+Klartext. Sie schützt gegen ein geleaktes Backup, gegen eine weggeworfene Festplatte, gegen einen
+Dump, der versehentlich in einem Ticket landet – nicht gegen einen übernommenen Anwendungsserver.
+
+Bei argon2 gilt das nicht: Selbst mit vollem Zugriff bekommt niemand die Passwörter zurück. Dass
+ich hier weniger Schutz habe, ist also keine Nachlässigkeit, sondern der Preis der Funktion. Was
+ich dagegen tun kann, habe ich getan: **jedes Projekt bekommt ein eigenes Geheimnis.** Ein einziges
+Geheimnis aus der Konfiguration für alle wäre bequemer gewesen – und hätte jedes Projekt zum
+Nachbarn jedes anderen gemacht. Wer eines kennt, könnte Ereignisse für alle signieren.
+
+Der nächste Schritt wäre ein Schlüsselverwaltungsdienst (Vault oder KMS), damit der Schlüssel nicht
+neben den Daten liegt. Das steht mit Fälligkeit Sprint 6 in `10_SECURITY.md`.
+
+### 148. Warum ist der Schutz gegen doppelte Zustellungen ein Datenbank-Constraint und keine Prüfung im Code? Und warum `(connectionId, deliveryId)` statt einfach `deliveryId`?
+
+Zum ersten Teil: Weil eine Prüfung im Code ein Zeitfenster hat.
+
+Der naheliegende Code wäre „nachsehen, ob es die Zeile schon gibt, und nur sonst schreiben".
+Zwischen dem Lesen und dem Schreiben passen aber zwei gleichzeitige Zustellungen durch – beide
+finden nichts, beide schreiben, das Ereignis steht doppelt im Feed. Und Mehrfachzustellung ist hier
+kein Randfall: GitHub stellt bei jedem Fehlschlag erneut zu, mit derselben `deliveryId`. Der
+Endpoint schreibt deshalb blind und fängt genau die Verletzung dieses Constraints ab.
+
+> **Die Bedingung gehört ins `WHERE` beziehungsweise ins Constraint, nicht in ein `if` davor.**
+
+Das ist in diesem Projekt zum dritten Mal dieselbe Lehre. Beim optimistischen Sperren steht die
+Version im `WHERE` der `updateMany`, nicht in einem Vergleich davor (ADR-010). Beim
+Protokollschreiber hängt der Eintrag an `ergebnis.count`, nicht an einem vorher gelesenen Wert
+(ADR-012). Und jetzt hier.
+
+Zum zweiten Teil: Ein globales `UNIQUE` auf `deliveryId` wäre die Zusage *„diese Zustellung gab es
+im ganzen System schon"*. Damit könnte die Zustellung **einer** Organisation die einer anderen
+abweisen – ein Kanal zwischen Mandanten. Praktisch ist das unwahrscheinlich, weil GitHub UUIDs
+vergibt; aber ich möchte keine Zusage geben, die weiter reicht als das, was ich brauche. Die Zusage,
+die ich wirklich brauche, ist enger: **diese Verbindung hat diese Zustellung schon gesehen.**
+
+### 149. Sie haben bewusst darauf verzichtet, `owner/repo` eindeutig zu machen – obwohl „ein Repository, eine Verbindung" sauberer klingt. Begründen Sie das.
+
+Aus zwei Gründen, und der zweite ist der wichtigere.
+
+Fachlich wäre die Regel schlicht falsch. Zwei Teams dürfen dasselbe Repository beobachten – etwa
+ein Produktteam und ein Plattformteam. Jedes richtet in GitHub seinen eigenen Webhook ein und
+bekommt eigene Zustellungen. Eine Eindeutigkeit würde hier eine Regel erzwingen, die es fachlich
+nicht gibt. (Dasselbe Argument wie bei `projects`: Auch dort gibt es bewusst kein
+`UNIQUE (organizationId, name)` – zwei Projekte gleichen Namens sind erlaubt.)
+
+Der sicherheitsrelevante Grund: Ein globales `UNIQUE` wäre ein **Informationsleck über
+Mandantengrenzen hinweg**. Ich verbinde `acme/webshop` und bekomme einen Konflikt gemeldet – damit
+weiß ich, dass eine fremde Organisation dieses Repository beobachtet. Das ist dieselbe Denkweise
+wie bei der Entscheidung, für fremde Ressourcen **404 statt 403** zu antworten: Eine Fehlermeldung
+darf nicht mehr verraten, als der Fragende sehen darf.
+
+Es ist ein hübsches Beispiel dafür, dass Mandantentrennung nicht nur in Abfragen steckt. Sie steckt
+auch in Constraints, in Fehlermeldungen und in Statuscodes.
+
+### 150. Ihr Index heißt `(status, receivedAt)`, nicht `(receivedAt, status)`. Was wäre der Unterschied im Ausführungsplan?
+
+Die Abfrage des Verarbeitungsschritts lautet sinngemäß:
+
+```sql
+WHERE status = 'ACCEPTED' ORDER BY receivedAt LIMIT 50
+```
+
+Ein zusammengesetzter B-Baum-Index ist nach der ersten Spalte sortiert, innerhalb gleicher Werte
+nach der zweiten. Mit `(status, receivedAt)` schneidet PostgreSQL über die Gleichheitsbedingung
+einen **zusammenhängenden Bereich** heraus, und innerhalb dieses Bereichs liegen die Zeilen bereits
+nach `receivedAt` sortiert. Der Plan zeigt einen `Index Scan`, der nach 50 Zeilen aufhören kann –
+kein Sortierschritt.
+
+Mit `(receivedAt, status)` wäre der Index nach Zeit sortiert und die Zeilen eines Status lägen über
+den ganzen Index verstreut. PostgreSQL müsste ihn der Reihe nach durchlaufen und `status` als
+`Filter` anwenden – im Plan an `Rows Removed by Filter` erkennbar. Das funktioniert, wird aber
+schlechter, je größer der Anteil bereits verarbeiteter Zeilen ist. Und genau der wächst mit der
+Zeit gegen 100 %.
+
+> **Im zusammengesetzten Index gehören Gleichheitsspalten nach vorn, Bereiche und Sortierungen nach
+> hinten.**
+
+Dieselbe Regel steckt schon im Feed-Index `(organizationId, createdAt, id)`: Gleichheit auf dem
+Mandanten, danach die Sortierung.
+
+Zwei Dinge sage ich dazu ehrlich mit: Erstens ist das bisher **argumentiert und nicht gemessen** –
+in Sprint 4 habe ich Ausführungspläne für beide Feed-Pfade protokolliert, hier steht das noch aus
+und kommt mit Scheibe 5.5, wenn die Tabelle Zeilen hat. Zweitens beweist ein `EXPLAIN` auf zu
+wenigen Zeilen regelmäßig das Gegenteil dessen, was gemeint ist: Ohne `ANALYZE` nach einem
+Massen-`INSERT` plant PostgreSQL auf dem Stand „Tabelle ist leer", und bei wenigen Zeilen ist ein
+Seq Scan zu Recht schneller.
