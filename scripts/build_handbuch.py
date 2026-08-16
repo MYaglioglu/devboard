@@ -3,8 +3,12 @@
 Aufruf aus dem Wurzelverzeichnis des Repositories:
 
     python -m pip install reportlab
-    python scripts/build_handbuch.py                 -> DevBoard-Handbuch.pdf
-    python scripts/build_handbuch.py --sprint 1      -> DevBoard-Handbuch-Sprint-1.pdf
+    python scripts/build_handbuch.py                 -> beide Baende
+    python scripts/build_handbuch.py --sprint 5      -> beide, mit Standangabe
+    python scripts/build_handbuch.py --band lernbuch -> nur das Lernbuch
+
+Zwei Baende aus denselben Quelldateien: das LERNBUCH in Lernreihenfolge, die
+REFERENZ in Ablageordnung. Warum die Trennung noetig ist, steht bei LERNPFAD.
 
 Die Sprint-Angabe erzeugt eine eigene Datei und vermerkt den Stand auf der
 Titelseite. So bleiben aeltere Ausgaben daneben bestehen - man sieht, wie das
@@ -442,82 +446,141 @@ class Handbuch(BaseDocTemplate):
 
 
 # --------------------------------------------------------------------------
-# Lesereihenfolge
-#
-# Frueher stand hier `sorted(docs_pfad.glob("*.md"))` - also die Reihenfolge
-# der Dateinamen. Die Nummern sind aber Ablagefaecher und keine Didaktik:
-# `18_FRONTEND` setzt React voraus, und `20_REACT` stuende dahinter.
-#
-# Deshalb jetzt eine ausdrueckliche Reihenfolge. Sie ist die einzige Stelle,
-# an der steht, in welcher Reihenfolge dieses Buch gelesen werden soll - im
-# Dateisystem laesst sich das nicht ausdruecken, ohne alles umzubenennen.
-#
-# Die Gruppen sind bewusst nicht als Teile im PDF sichtbar; sie ordnen nur.
+# Die zwei Baende
 # --------------------------------------------------------------------------
-LESEREIHENFOLGE = [
-    # Orientierung - wofuer, wie gebaut, welche Begriffe
+# Dieselben Quelldateien, zwei Reihenfolgen. Kein doppelter Inhalt.
+#
+# Der Grund fuer die Trennung: Lernbuch und Referenz haben ENTGEGENGESETZTE
+# Anforderungen. Ein Lernbuch wird linear gelesen, einmal, von vorn - es
+# braucht eine Reihenfolge, in der jedes Kapitel auf dem vorigen aufbaut, und
+# es darf ausschweifen. Eine Referenz wird nie gelesen, sondern AUFGESCHLAGEN:
+# Man kommt mit einer Frage und will in dreissig Sekunden die Antwort.
+#
+# In einem Band erfuellt es beides nur halb. Wer vorn anfaengt, landet nach der
+# Roadmap in 179 KB Interviewfragen; wer nachschlagen will, muss wissen, dass
+# die Cursor-Paginierung in 09_API steht und nicht in 08_DATABASE.
+
+# Die Lernreihenfolge: Ueberblick -> Begriffe -> Bauteile in der Reihenfolge,
+# in der sie entstanden sind -> Begruendungen -> Fehler -> Verlauf -> Pruefung.
+#
+# Die Interviewfragen stehen ganz am Ende, weil sie SELBSTPRUEFUNG sind. Vorn
+# gelesen verraten sie die Antwort, bevor man gemerkt hat, dass man sie nicht
+# wusste.
+LERNPFAD = [
+    # Orientierung
     "README.md",
     "02_ARCHITECTURE.md",
     "14_GLOSSARY.md",
     "03_CODING_STANDARDS.md",
 
-    # Handwerk - von der Oberflaeche nach unten
-    "20_REACT.md",
-    "18_FRONTEND.md",
+    # Backend - erst die Landkarte, dann die Tiefe. 19_BACKEND sagt, wo was
+    # liegt und wie eine Anfrage laeuft; ohne das sind 08 und 09 Einzelteile
+    # ohne Bild.
     "19_BACKEND.md",
     "08_DATABASE.md",
     "09_API.md",
-    "12_TESTING.md",
+
+    # Frontend - REACT VOR FRONTEND, und das ist der Grund, warum diese Liste
+    # ueberhaupt existiert. 18_FRONTEND beginnt bei Next.js und setzt JSX,
+    # Hooks und Schluessel voraus. Nach Dateinamen sortiert stuende 20_REACT
+    # dahinter, also hinter dem Kapitel, das es voraussetzt.
+    "20_REACT.md",
+    "18_FRONTEND.md",
+
+    # Quer durch beide Schichten
     "10_SECURITY.md",
+    "12_TESTING.md",
     "11_DEVOPS.md",
     "13_DEPLOYMENT.md",
 
-    # Urteil - warum es so ist und was schiefging
+    # Urteil
     "16_DECISIONS.md",
     "17_MISTAKES_AND_LESSONS.md",
+    "04_LEARNING_JOURNAL.md",
 
-    # Projektakte - Verlauf, Umfang, Geparktes
+    # Selbstpruefung, ganz am Ende
+    "07_INTERVIEW_NOTES.md",
+]
+
+# Projektsteuerung - gehoert in die Referenz, nicht ins Lernbuch. Wer lernen
+# will, braucht keinen Sprintplan; wer nachschlagen will, manchmal schon.
+NUR_REFERENZ = [
+    "00_MASTER_PROMPT.md",
     "01_ROADMAP.md",
     "05_FEATURES.md",
     "06_BACKLOG.md",
-    "04_LEARNING_JOURNAL.md",
     "15_CHANGELOG.md",
-
-    # Pruefung und Werkstatt
-    "07_INTERVIEW_NOTES.md",
-    "00_MASTER_PROMPT.md",
 ]
 
 
-def kapitel_in_lesereihenfolge(docs_pfad):
-    """Liefert die Kapiteldateien in der Lesereihenfolge.
-
-    Bricht ab, wenn eine Datei in `docs/` liegt, aber nicht in der Liste steht.
-    Das ist Absicht: Ein neues Kapitel soll nicht STILL aus dem Buch fallen,
-    nur weil jemand vergessen hat, es einzutragen. Ein Fehlschlag beim Bauen
-    ist dafuer der guenstigste Zeitpunkt.
+def waehle_dateien(docs_pfad, band: str) -> list:
     """
-    vorhanden = {d.name for d in docs_pfad.glob("*.md")}
-    genannt = {name for name in LESEREIHENFOLGE if name != "README.md"}
+    Liefert die Dateien in der Reihenfolge des gewaehlten Bandes.
 
-    fehlend = sorted(vorhanden - genannt)
-    if fehlend:
+    ==========================================================================
+    WARUM HIER EINE VOLLSTAENDIGKEITSPRUEFUNG STEHT
+    ==========================================================================
+    Ohne sie waere die haeufigste Panne vorprogrammiert: Jemand legt ein neues
+    Kapitel an, vergisst es in LERNPFAD - und es fehlt im Lernbuch, ohne dass
+    irgendetwas rot wird. Man sieht nicht, was nicht da ist.
+
+    Deshalb bricht der Bau ab, wenn eine Datei in keiner der beiden Listen
+    steht. Derselbe Gedanke wie bei der `never`-Pruefung im Backend: Beim
+    ERZEUGEN auf Vollstaendigkeit pruefen.
+    """
+    vorhanden = {p.name for p in docs_pfad.glob("*.md")}
+    eingeordnet = set(LERNPFAD) | set(NUR_REFERENZ)
+    vergessen = sorted(vorhanden - eingeordnet)
+
+    if vergessen:
         raise SystemExit(
-            "Diese Kapitel liegen in docs/, stehen aber nicht in "
-            "LESEREIHENFOLGE und wuerden fehlen: " + ", ".join(fehlend)
+            "Diese Kapitel stehen weder in LERNPFAD noch in NUR_REFERENZ:\n  "
+            + "\n  ".join(vergessen)
+            + "\n\nIn scripts/build_handbuch.py eintragen - sonst fehlen sie"
+            " stillschweigend im Lernbuch."
         )
 
-    uebrig = sorted(genannt - vorhanden)
-    if uebrig:
+    # Die Gegenrichtung: genannt, aber nicht vorhanden.
+    #
+    # Hier stand urspruenglich `if pfad.exists()` - ein stilles Ueberspringen.
+    # Das ist derselbe Fehler wie oben, nur andersherum: Wer ein Kapitel
+    # umbenennt und den Eintrag vergisst, baut ein Buch, dem ein Kapitel fehlt,
+    # ohne dass irgendetwas davon berichtet.
+    #
+    # Eine Pruefung, die nur eine Richtung abdeckt, bewacht die andere nicht.
+    genannt = {name for name in LERNPFAD + NUR_REFERENZ if name != "README.md"}
+    verschwunden = sorted(genannt - vorhanden)
+
+    if verschwunden:
         raise SystemExit(
-            "Diese Kapitel stehen in LESEREIHENFOLGE, existieren aber "
-            "nicht: " + ", ".join(uebrig)
+            "Diese Kapitel stehen in LERNPFAD oder NUR_REFERENZ, liegen aber"
+            " nicht in docs/:\n  "
+            + "\n  ".join(verschwunden)
+            + "\n\nUmbenannt oder geloescht? Dann den Eintrag mitziehen."
         )
 
-    return [
-        REPO / name if name == "README.md" else docs_pfad / name
-        for name in LESEREIHENFOLGE
-    ]
+    if band == "lernbuch":
+        return [
+            REPO / name if name == "README.md" else docs_pfad / name
+            for name in LERNPFAD
+        ]
+
+    # Referenz: alles, in der Ablageordnung der Dateinamen.
+    return [REPO / "README.md"] + sorted(docs_pfad.glob("*.md"))
+
+
+BAND_TITEL = {
+    "lernbuch": (
+        "Lernbuch",
+        "Fullstack-Entwicklung an einem echten Projekt -<br/>"
+        "mit den Entscheidungen, den Begruendungen und den Fehlern",
+    ),
+    "referenz": (
+        "Referenz",
+        "Architektur, Datenbank, API, Frontend, Security und DevOps -<br/>"
+        "zum Nachschlagen, nicht zum Lesen",
+    ),
+}
 
 
 # --------------------------------------------------------------------------
@@ -531,19 +594,39 @@ def main():
         default=None,
         help="Sprintnummer fuer Dateiname und Titelseite (z. B. 1)",
     )
+    parser.add_argument(
+        "--band",
+        choices=["lernbuch", "referenz", "beide"],
+        default="beide",
+        help="Welcher Band gebaut wird (Vorgabe: beide)",
+    )
     argumente = parser.parse_args()
 
-    docs_pfad = REPO / "docs"
-    dateien = kapitel_in_lesereihenfolge(docs_pfad)
+    baende = (
+        ["lernbuch", "referenz"]
+        if argumente.band == "beide"
+        else [argumente.band]
+    )
 
-    if argumente.sprint is None:
-        ziel = REPO / "DevBoard-Handbuch.pdf"
+    for band in baende:
+        baue_band(band, argumente.sprint)
+
+
+def baue_band(band: str, sprint):
+    docs_pfad = REPO / "docs"
+    dateien = waehle_dateien(docs_pfad, band)
+
+    bandname, bandbeschreibung = BAND_TITEL[band]
+    kurz = "Lernbuch" if band == "lernbuch" else "Referenz"
+
+    if sprint is None:
+        ziel = REPO / f"DevBoard-{kurz}.pdf"
         stand = None
     else:
-        ziel = REPO / f"DevBoard-Handbuch-Sprint-{argumente.sprint}.pdf"
-        stand = f"Stand: nach Sprint {argumente.sprint}"
+        ziel = REPO / f"DevBoard-{kurz}-Sprint-{sprint}.pdf"
+        stand = f"Stand: nach Sprint {sprint}"
 
-    doc = Handbuch(str(ziel), title="DevBoard - Entwicklerhandbuch", author="Murat Yaglioglu")
+    doc = Handbuch(str(ziel), title=f"DevBoard - {bandname}", author="Murat Yaglioglu")
     nutzbreite = A4[0] - 4 * cm
 
     story: list = []
@@ -551,7 +634,7 @@ def main():
     # --- Titelseite ---
     story.append(Spacer(1, 6 * cm))
     story.append(Paragraph("DevBoard", S["titel"]))
-    story.append(Paragraph("Entwicklerhandbuch", S["untertitel"]))
+    story.append(Paragraph(bandname, S["untertitel"]))
     if stand:
         story.append(Spacer(1, 0.3 * cm))
         story.append(Paragraph(stand, S["untertitel"]))
@@ -566,8 +649,8 @@ def main():
     story.append(Spacer(1, 1.2 * cm))
     story.append(
         Paragraph(
-            "Architektur, Datenbank, API, Security, DevOps und Lernnotizen<br/>"
-            "eines Fullstack-Projekts mit Next.js, NestJS und PostgreSQL",
+            bandbeschreibung
+            + "<br/><br/>Next.js, NestJS und PostgreSQL",
             S["titelmeta"],
         )
     )
