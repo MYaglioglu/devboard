@@ -7,6 +7,7 @@ import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/prisma/prisma.service';
 import { erzeugeSignatur } from './../src/webhooks/signatur';
+import { WebhookEmpfangService } from './../src/webhooks/webhook-empfang.service';
 
 interface OrganisationAntwort {
   id: string;
@@ -422,52 +423,64 @@ describe('Webhooks (e2e)', () => {
      * Seitengrenze in Sprint 4.
      *
      * ========================================================================
-     * WARUM HIER 30 STEHT UND NICHT 5
+     * WARUM DIESER TEST AM DIENST ANSETZT UND NICHT AM HTTP-ENDPOINT
      * ========================================================================
-     * In der ersten Fassung waren es fuenf - und die Mutationsprobe blieb
-     * GRUEN: Die naive Umsetzung bestand alle 13 Tests. Fuenf Anfragen
-     * reichten nicht, um die Verschraenkung herbeizufuehren. Der Test sah aus
-     * wie ein Nebenlaeufigkeitstest und war keiner.
+     * Die erste Fassung schickte gleichzeitige HTTP-Anfragen. Zwei Befunde
+     * haben das verworfen, und beide gehoeren hierher:
      *
-     * Bei 30 faellt die naive Fassung zuverlaessig, und zwar nur an dieser
-     * einen Stelle.
+     * 1. Mit FUENF Anfragen blieb die Mutationsprobe GRUEN - die naive
+     *    Umsetzung bestand die gesamte Suite. Fuenf reichten nicht, um die
+     *    Verschraenkung herbeizufuehren. Der Test sah aus wie ein
+     *    Nebenlaeufigkeitstest und war keiner.
      *
-     * Der ehrliche Teil, der dazugehoert: Auch 30 ist eine Zahl aus einer
-     * Messung, keine Garantie. Die ZUSICHERUNG selbst haengt nicht daran -
-     * sie steht im Test darueber und gilt immer. Dieser Test hier zeigt, dass
-     * der Endpoint die Verletzung unter Last richtig beantwortet, statt sie
-     * als 500 durchzureichen. Das ist weniger, als der Name verspricht, und
-     * deshalb steht es hier.
+     * 2. Mit DREISSIG fiel die naive Fassung zuverlaessig - lokal. In der CI
+     *    scheiterte der Test dagegen an `read ECONNRESET`: `supertest` bindet
+     *    je Anfrage einen eigenen Port, und 30 gleichzeitig sprengen auf dem
+     *    Runner die Socket-Grenzen.
+     *
+     * Der zweite Befund ist der entscheidende. Ein Test, der aus einem Grund
+     * scheitert, der mit seiner Aussage NICHTS zu tun hat, ist schlimmer als
+     * kein Test: Er erzeugt Rauschen, das man irgendwann wegklickt.
+     *
+     * Das Wettrennen liegt nicht im HTTP-Stapel, sondern zwischen `findFirst`
+     * und `create` - also im Dienst und in der Datenbank. Genau dort wird es
+     * jetzt geprueft. Damit faellt die Socket-Grenze weg.
+     *
+     * ========================================================================
+     * WARUM 50 UND NICHT 10
+     * ========================================================================
+     * Auch am Dienst blieb die Mutationsprobe bei zehn Aufrufen GRUEN. Erst
+     * bei 50 faellt die naive Fassung, und dann nur an dieser einen Stelle.
+     * Ohne Netzwerk kostet die hoehere Zahl nichts - das war der eigentliche
+     * Gewinn des Umbaus.
+     *
+     * EHRLICH DAZU, ZUM DRITTEN MAL IN DIESER DATEI: Auch 50 ist eine Zahl
+     * aus einer Messung, keine Garantie. Ob eine naive Fassung scheitert,
+     * haengt weiter von der Verschraenkung ab.
+     *
+     * Die ZUSICHERUNG haengt nicht daran - sie steht im Test darueber, kommt
+     * von der Datenbank und gilt immer. Dieser Test hier zeigt das Kleinere:
+     * dass der Dienst die Verletzung ABFAENGT, statt sie durchzureichen.
      */
-    it('schreibt auch bei vielen gleichzeitigen Zustellungen nur eine Zeile', async () => {
+    it('gibt bei gleichzeitigen Aufrufen genau einmal "neu" zurueck', async () => {
       const verbindung = await baueVerbindung('gleichzeitig');
       const rumpf = nutzlast('gleichzeitig');
       const signatur = erzeugeSignatur(rumpf, verbindung.geheimnis);
       const zustellungsId = randomUUID();
 
-      // KEIN `await` in dieser Schleife - die Anfragen gehen alle raus,
-      // bevor die erste beantwortet ist. Genau darum geht es.
-      const antworten = await Promise.all(
-        Array.from({ length: 30 }, () =>
-          stelleZu(verbindung.id, rumpf, signatur, {
-            ereignis: 'push',
-            zustellung: zustellungsId,
-          }),
+      const empfang = app.get(WebhookEmpfangService);
+
+      // KEIN `await` in der Schleife - alle Aufrufe laufen los, bevor der
+      // erste fertig ist. Genau darum geht es.
+      const ergebnisse = await Promise.all(
+        Array.from({ length: 50 }, () =>
+          empfang.nimmAn(verbindung.id, rumpf, signatur, 'push', zustellungsId),
         ),
       );
 
-      // Alle werden quittiert - keine darf einen Fehler bekommen. Ohne das
-      // Abfangen der Constraint-Verletzung stuenden hier 29 mal 500.
-      for (const antwort of antworten) {
-        expect(antwort.status).toBe(202);
-      }
-
-      // Genau eine hat wirklich geschrieben.
-      const angenommen = antworten.filter(
-        (antwort) =>
-          (antwort.body as { status: string }).status === 'angenommen',
-      );
-      expect(angenommen).toHaveLength(1);
+      // Kein Aufruf darf werfen - ohne das Abfangen der
+      // Constraint-Verletzung waeren es neun Fehler.
+      expect(ergebnisse.filter((e) => e.neu)).toHaveLength(1);
 
       expect(
         await prisma.webhookDelivery.count({
