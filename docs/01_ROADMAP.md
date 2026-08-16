@@ -224,8 +224,9 @@ Signatur aus, nicht mit einer Identität. Das ist der eigentliche Lehrinhalt.
 
 - [x] 5.1 Datenmodell: `RepositoryConnection`, `WebhookDelivery`, `Activity.source`, neue
       Ereignistypen, Migration, `UNIQUE` auf `deliveryId` (16.08.2026)
-- [ ] 5.2 Repository verbinden und trennen – Endpoints, Geheimnis erzeugen und verschlüsseln,
+- [x] 5.2 Repository verbinden und trennen – Endpoints, Geheimnis erzeugen und verschlüsseln,
       **einmalige** Klartextanzeige, negative Tests (fremde Organisation ⇒ 404, `MEMBER` ⇒ 403)
+      (16.08.2026)
 - [ ] 5.3 `POST /webhooks/github` – Rohrumpf, Signaturprüfung mit `timingSafeEqual`, `ping`,
       Zustellung wegschreiben, `202`. Mutationsprobe: Prüfung entfernen, Tests müssen rot werden
 - [ ] 5.4 Idempotenz: zweite Zustellung derselben `deliveryId` ⇒ `200`, **kein** zweiter Eintrag.

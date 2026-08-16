@@ -110,10 +110,39 @@ Dort steht ausschließlich die API-Basis-URL.
 | Kein Helmet / Security-Header | XSS, Clickjacking | Sprint 1 |
 | Keine einheitlichen Fehlerantworten | Stacktraces könnten nach außen gelangen | Sprint 1 |
 | Secrets aus `.env`-Datei statt Secret-Store | in Produktion unzureichend | Sprint 6 |
+| `WEBHOOK_ENCRYPTION_KEY` liegt neben den Daten | Wer Datenbank **und** Schlüssel hat, hat alle Webhook-Geheimnisse im Klartext | Sprint 6 |
+| Keine Schlüsselrotation umgesetzt | Ein kompromittierter Schlüssel lässt sich nur mit Ausfall wechseln | Sprint 6 |
+| Keine Aufbewahrungsfrist für `webhook_deliveries` | Rohe Fremddaten (Commit-Nachrichten, Benutzernamen) wachsen unbegrenzt | Scheibe 5.7 |
 
 Der erste Punkt ist der wichtigste und der am leichtesten zu vergessen: Eine
 Entwicklungs-Einstellung, die niemand vor dem Deployment zurückdreht, ist eine der häufigsten
 Ursachen echter Sicherheitsvorfälle.
+
+### Zum Schlüssel neben den Daten – ausdrücklich benannt
+
+Verschlüsselung im Ruhezustand schützt **deutlich weniger** als Hashing, und das gehört
+hingeschrieben statt beschönigt. Sie schützt gegen ein geleaktes Backup, eine weggeworfene
+Festplatte, einen Dump, der versehentlich in einem Ticket landet. Sie schützt **nicht** gegen einen
+übernommenen Anwendungsserver – dort liegt der Schlüssel.
+
+Bei argon2 gilt das nicht: Selbst mit vollem Zugriff bekommt niemand die Passwörter zurück. Der
+Unterschied ist kein Versäumnis, sondern der Preis der Funktion – ein HMAC muss *nachgerechnet*
+werden, und dafür braucht es den Klartext (ADR-014).
+
+Was dagegen möglich war, ist umgesetzt: **jedes Projekt hat ein eigenes Geheimnis.** Ein einziges
+aus der Konfiguration für alle wäre bequemer gewesen und hätte jedes Projekt zum Nachbarn jedes
+anderen gemacht – wer eines kennt, könnte Ereignisse für alle signieren. Die `keyVersion`-Spalte
+steht bereits im Schema, damit eine Rotation später ohne Ausfall möglich ist; benutzt wird sie
+noch nicht.
+
+### Umgesetzt in Scheibe 5.2
+
+- Webhook-Geheimnis mit **AES-256-GCM** verschlüsselt, IV je Verschlüsselung neu gezogen
+- Der Authentifizierungs-Tag von GCM macht eine veränderte Zeile in der Datenbank bemerkbar,
+  statt stillschweigend Unsinn zu liefern – vier Unit-Tests halten das fest
+- Geheimnis **einmalig** im Klartext ausgeliefert, danach über keinen Endpoint mehr abrufbar
+- `WEBHOOK_ENCRYPTION_KEY` wird beim **Start** geprüft (genau 32 Byte), nicht beim ersten Zugriff
+- Mandantenfilter in der `WHERE`-Bedingung, belegt durch eine Mutationsprobe (`12_TESTING.md`)
 
 ---
 

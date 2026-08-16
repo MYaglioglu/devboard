@@ -1,4 +1,4 @@
-# API
+﻿# API
 
 REST-Schnittstelle des Backends. Basis-URL lokal: `http://localhost:3000`
 
@@ -1256,6 +1256,103 @@ Abwägung: Dort müsste der Aufrufer mit Wiederholungen rechnen.
 
 ---
 
+---
+
+## GitHub-Integration
+
+### `POST /organizations/:orgId/projects/:projectId/repository` · OWNER, ADMIN
+
+Verbindet ein Projekt mit einem GitHub-Repository.
+
+```json
+{ "repositoryFullName": "acme/webshop" }
+```
+
+**201 Created**
+
+```json
+{
+  "id": "6f1c…",
+  "repositoryFullName": "acme/webshop",
+  "webhookUrl": "http://localhost:3000/webhooks/github/6f1c…",
+  "createdAt": "2026-08-16T15:40:00.000Z",
+  "geheimnis": "9a3f…"
+}
+```
+
+| Status | Wann |
+|---|---|
+| 201 | verbunden |
+| 400 | `repositoryFullName` nicht in der Form `owner/repo` |
+| 401 | kein Token |
+| 403 | `MEMBER` |
+| 404 | Projekt gehört nicht zu dieser Organisation – oder es gibt es nicht |
+| 409 | Projekt ist bereits verbunden · Projekt ist archiviert |
+
+#### Das Geheimnis kommt genau einmal
+
+Es steht **nur** in dieser Antwort. Danach liegt es verschlüsselt in der Datenbank (ADR-014) und ist
+über keinen Endpoint mehr abrufbar. Wer es verliert, trennt und verbindet neu – dieselbe
+Entscheidung wie bei den Einladungs-Token.
+
+Der Test dazu greift bewusst an der API vorbei direkt in die Datenbank: Nur dort lässt sich zeigen,
+dass gespeichert wurde, was gespeichert werden soll – nicht der Klartext, aber auch **kein Hash**,
+sondern etwas, das sich mit dem Schlüssel wieder lesen lässt. Wäre es ein Hash, liefe die
+Signaturprüfung in Scheibe 5.3 ins Leere, und das fiele erst dort auf.
+
+#### Warum 409 und kein stilles Ersetzen
+
+Ein `upsert` wäre bequemer: verbinden oder ersetzen, ein Aufruf. Er würde aber ein bestehendes
+Geheimnis überschreiben – und der bereits in GitHub eingetragene Webhook wäre ab diesem Moment
+kaputt, ohne dass es jemandem auffällt, bis das erste Ereignis ausbleibt.
+
+> **Eine unumkehrbare Nebenwirkung darf nicht der Standardfall eines bequemen Aufrufs sein.**
+
+Abgefangen wird die Verletzung des `UNIQUE`-Constraints (Prisma-Code P2002), **nicht** vorher
+gelesen: Zwischen einem `findFirst` und dem `create` passen zwei gleichzeitige Anfragen durch.
+
+#### Warum die Verbindungs-ID in der Webhook-URL steht
+
+Die URL, die der Nutzer in GitHub einträgt, enthält die ID der Verbindung. Sie **wählt aus, mit
+welchem Geheimnis die Signatur nachgerechnet wird** (Scheibe 5.3).
+
+Die Alternative wäre, das Repository aus der Nutzlast zu lesen und die Verbindung darüber zu
+finden. Das wäre die falsche Reihenfolge: Ungeprüftes Material würde den Schlüssel auswählen, mit
+dem es selbst geprüft werden soll.
+
+Die ID ist dabei **kein Geheimnis**. Wer sie kennt, kann Anfragen schicken; ohne das Geheimnis
+scheitert jede davon an der Signatur. Genau das ist der Unterschied zwischen einer Kennung und
+einem Berechtigungsnachweis.
+
+### `GET /organizations/:orgId/projects/:projectId/repository` · alle Mitglieder
+
+**200 OK** mit der Verbindung – **ohne** `geheimnis` – oder `null`, wenn keine besteht.
+
+`null` und keine 404: „Dieses Projekt hat kein Repository" ist eine gültige Auskunft über ein
+existierendes Projekt. Eine 404 wäre mehrdeutig – sie hieße entweder „Projekt gibt es nicht" oder
+„Verbindung gibt es nicht", und der Client könnte die Fälle nicht unterscheiden.
+
+Lesbar für **jedes** Mitglied: Wer im Projekt arbeitet, darf wissen, woher die Ereignisse kommen.
+Das Geheimnis steht dabei nicht in der Antwort, auch nicht für einen OWNER.
+
+### `DELETE /organizations/:orgId/projects/:projectId/repository` · OWNER, ADMIN
+
+**204 No Content.** 404, wenn nichts zu trennen ist.
+
+Umgesetzt als `deleteMany` mit dem Mandantenfilter in der Bedingung, nicht als `delete` mit
+anschließender Prüfung – eine Zeile fremder Herkunft wird gar nicht erst geladen. Die bereits
+empfangenen Zustellungen gehen über `ON DELETE CASCADE` mit; die daraus **entstandenen**
+Feed-Einträge bleiben. Was passiert ist, ist passiert.
+
+### Warum diese Routen an `projects` hängen und nicht an `organizations`
+
+Ein Repository wird einem **Projekt** zugeordnet, nicht einer Organisation: Der Feed ist nach
+Projekt filterbar, und ein Team hat mehrere Projekte mit verschiedenen Repositories. Die Alternative
+wäre eine Liste unter `/organizations/:orgId/repositories` gewesen – dann müsste jede Zeile ihr
+Projekt selbst mitführen, und „höchstens eines je Projekt" wäre nicht mehr am Pfad ablesbar.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |
@@ -1264,4 +1361,4 @@ Abwägung: Dort müsste der Aufrufer mit Wiederholungen rechnen.
 | 2 | `GET/POST /organizations`, `POST /organizations/:id/invitations`, `GET /organizations/:id/members` |
 | 3 | `GET/POST/PATCH/DELETE /projects`, `/tasks`, `PATCH /tasks/:id/position` |
 | 4 | ~~`GET …/activity`~~, ~~`GET …/dashboard/stats`~~ – **beide umgesetzt** |
-| 5 | `POST /webhooks/github` |
+| 5 | ~~`POST/GET/DELETE …/projects/:projectId/repository`~~ – **umgesetzt** · `POST /webhooks/github/:connectionId` – Scheibe 5.3 |
