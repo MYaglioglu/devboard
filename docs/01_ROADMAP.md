@@ -284,13 +284,57 @@ Kandidat dafür.
 ---
 
 ## Sprint 6 – Deployment & Staging
-**02.10. – 08.10.2026**
+**02.10. – 08.10.2026** · vorgezogen auf den **16.08.2026**
 
-Multi-Stage-Dockerfiles, nginx als Reverse Proxy, Staging- und Produktionsumgebung auf dem
-eigenen Hetzner-Server, automatisches Deployment aus GitHub Actions.
+DevBoard geht online. Multi-Stage-Dockerfile, Reverse Proxy mit TLS, Staging neben Produktion,
+automatisches Deployment aus GitHub Actions.
 
 **Kernthemen:** Warum Staging existiert (siehe `17_MISTAKES_AND_LESSONS.md`) · Build- vs.
 Laufzeit-Umgebungsvariablen · Zero-Downtime-Deployment · Rollback-Strategie · Backups.
+
+**Abweichung vom ursprünglichen Plan (ADR-016).** Geplant war „alles auf dem eigenen
+Hetzner-Server". Gebaut wird stattdessen dreigeteilt – aufgeteilt nach **Schadenshöhe**, nicht nach
+Bequemlichkeit:
+
+```
+Browser
+   │
+   ├──→ Vercel .......... Next.js          (Ausfall kostet eine Neubereitstellung)
+   │
+   └──→ Hetzner ......... NestJS im Container  ← hier liegt der Lerninhalt
+              │
+              └──→ Neon .. PostgreSQL       (Datenverlust ist nicht reparierbar)
+```
+
+Ein abgestürztes Backend startet neu, eine verlorene Datenbank ist weg. Selbst betriebene Backups
+sind erst dann Backups, wenn sie einmal zurückgespielt wurden – deshalb liegt das unwiederbringliche
+Risiko bei einem Anbieter, der davon lebt.
+
+**Voraussetzungen, die nicht im Repository entstehen:** ein Hetzner-Server (CX22) mit hinterlegtem
+SSH-Schlüssel und eine Domain. Beides blockiert ab 6.2.
+
+**Definition of Done** – die Scheiben, jede einzeln mergebar:
+
+- [x] 6.1 Produktions-Image fürs Backend: mehrstufiges Dockerfile, `.dockerignore`, Benutzer `node`,
+      HEALTHCHECK. Größe gemessen statt geschätzt (743 MB → 390 MB). Nachgewiesen mit echtem
+      Registrierungs- und Login-Durchlauf, nicht nur mit `/health`. Dabei zwei Fehler gefunden:
+      `npm run start:prod` war seit Sprint 1 kaputt, und `--omit=optional` entfernt die native
+      argon2-Binärdatei (16.08.2026)
+- [ ] 6.2 Server aufsetzen: SSH gehärtet, Firewall, Docker, Reverse Proxy mit automatischem TLS,
+      Backend hinter der Domain, Neon angebunden
+- [ ] 6.3 Staging als zweite Umgebung – eigene Subdomain, eigener Neon-Branch, getrennte Geheimnisse
+- [ ] 6.4 Deploy aus GitHub Actions: Image bauen, in die Registry, Server zieht. Migration in der
+      Pipeline. **Ein Schritt, der das gebaute Image startet und `/health` abfragt** – der Fehler
+      aus 6.1 darf sich nicht wiederholen
+- [ ] 6.5 Zero-Downtime: `enableShutdownHooks()`, Health-Gate vor dem Umschalten, Rollback auf die
+      vorige Fassung, Regeln für abwärtskompatible Migrationen (Expand/Contract)
+- [ ] 6.6 Frontend auf Vercel, CORS auf die echte Domain, GitHub-Webhooks auf die öffentliche URL
+      umstellen – erstmals ohne Tunnel
+- [ ] 6.7 Backups prüfen (einmal zurückspielen, nicht nur einrichten), Uptime-Wächter,
+      `11_DEVOPS.md`, `10_SECURITY.md`, Handbuch
+
+**Nicht in diesem Sprint:** Coolify oder ein anderes selbst gehostetes PaaS. Es nähme genau den
+Teil ab, der hier der Lerninhalt ist. Vermerkt im Backlog.
 
 ---
 

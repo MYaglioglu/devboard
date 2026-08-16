@@ -715,3 +715,56 @@ Nr. 125–145 in `07_INTERVIEW_NOTES.md`. Die stärksten: **125** (widerspricht 
 Mandanten-Regel?), **126** (ist das Event Sourcing?), **130** (warum kein `EventEmitter2`),
 **136** (ist base64 nicht Verschleierung?), **138** (können Sie N+1 belegen?), **140**
 (`REPEATABLE READ`), **145** (woher wissen Sie, dass Ihre Tests etwas bewachen?).
+
+---
+
+## Sprint 6 – Deployment, Scheibe 6.1 (16.08.2026)
+
+### Worum es ging
+Die Vorfrage war keine technische: Braucht es überhaupt einen eigenen Server, oder geht das auch
+kostenlos? Erst danach der Code.
+
+Die Antwort steht in **ADR-016** und ist eine Dreiteilung nach Schadenshöhe – Frontend zu Vercel,
+Datenbank zu Neon, Backend auf den eigenen Hetzner-Server. Nicht „alles selbst" und nicht „alles
+fremd", sondern die Frage, was ein Ausfall jeweils kostet: Ein Backend startet neu, eine Datenbank
+ohne funktionierendes Backup ist weg.
+
+Gebaut wurde danach Scheibe 6.1: das Produktions-Image für das Backend.
+
+### Gelernt
+- **Ein Image besteht aus unveränderlichen Schichten.** Eine Datei, die später gelöscht wird, ist in
+  der früheren Schicht weiterhin drin – `docker history` zeigt sie. Deshalb ist Mehrstufigkeit kein
+  Aufräumen am Ende, sondern ein frischer Anfang.
+- **`optional` und `peer` sind bei npm nicht dasselbe** – im Lockfile landen sie trotzdem in einem
+  Topf (`devOptional`). Wer pauschal `--omit=optional` setzt, entfernt womöglich native
+  Binärdateien, die eine Bibliothek genau so ausliefert.
+- **Prisma 7 mit Driver Adapter macht Alpine gefahrlos.** Bis Prisma 6 war die Rust-Engine gegen
+  glibc gebaut und scheiterte an musl. Eine Entscheidung aus Sprint 1, die hier zum ersten Mal
+  auszahlt – gemerkt habe ich es erst, als der Build auf Anhieb lief.
+- **Warum die Exec-Form beim `CMD` zählt:** In der Shell-Form ist PID 1 eine Shell, und die reicht
+  SIGTERM nicht weiter. Ohne das gibt es kein sauberes Herunterfahren.
+
+### Schwierig
+Dass ich mich beim Aufräumen des Images **selbst widerlegt** habe. Der erste Entwurf verschob
+`prisma` und `dotenv` bewusst zu den echten Abhängigkeiten, mit einer ordentlichen Begründung im
+Kommentar. Die Messung sagte 743 MB – und damit war die Begründung wertlos. Der zweite Entwurf war
+kleiner und startete nicht mehr, weil derselbe Schalter das Passwort-Hashing mitnahm.
+
+Unangenehm daran war nicht der Fehler, sondern der **Nachweis**: Nach dem zweiten Umbau habe ich
+geprüft, ob das Paket im Verzeichnis liegt. Es lag da. Gesagt hat das nichts – der Health-Check
+hasht kein Passwort. Erst der echte Login-Durchlauf war ein Beweis.
+
+### Offen
+- **Hetzner-Server und Domain** – beides muss von Hand angelegt werden, beides blockiert 6.2.
+- **`app.enableShutdownHooks()` fehlt in `main.ts`.** Das Signal kommt an, wird aber nicht
+  ausgewertet; `$disconnect()` bleibt liegen. Notiert für 6.5, nicht stillschweigend miterledigt.
+- **Die CI startet nichts.** Sie baut nur – genau deshalb blieb `npm run start:prod` seit Sprint 1
+  kaputt. Startprobe gehört in 6.4.
+- **Frontend-Image gibt es nicht und braucht es nicht**, solange Next.js auf Vercel läuft. Sollte
+  das je zurück auf den Server wandern, ist das eine eigene Scheibe.
+
+### Interviewfragen dazu
+
+Nr. 177–181 in `07_INTERVIEW_NOTES.md`. Die stärksten: **178** (wodurch schrumpfte das Image – die
+Antwort ist eine Methode, keine Zahl), **180** (Migration außerhalb des Containers und der Preis
+dafür) und **181** (Exec-Form, mit der ehrlichen Einschränkung, dass es derzeit noch nicht reicht).

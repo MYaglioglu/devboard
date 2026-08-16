@@ -3229,3 +3229,98 @@ Schritte später bei der Wirkung.
 Geprüft wird dabei auch auf `Number.isInteger`: `1.5` und `NaN` fallen mit durch. `NaN` ist der
 tückischere von beiden, weil jeder Vergleich damit `false` ergibt – die Prüfung `tage < 1` allein
 hätte ihn durchgelassen.
+
+---
+
+## Sprint 6 – Deployment & Staging
+
+### 177. Warum ist Ihr Dockerfile mehrstufig? Ein `FROM node`, `npm install`, `CMD` täte es doch auch.
+
+Es täte es – und liefert drei Dinge mit aus, die in Produktion nichts zu suchen haben.
+
+**Größe.** Zum Bauen brauche ich TypeScript, den Nest-CLI, Jest, ESLint. Zum Laufen brauche ich
+davon nichts. Bei DevBoard sind das gemessen 390 MB gegenüber 743 MB – und die Differenz zieht
+jeder Deploy über die Leitung.
+
+**Angriffsfläche.** Jede mitgelieferte Bibliothek kann eine Lücke haben, auch wenn sie nie
+aufgerufen wird. Ein Angreifer, der im Container steht, freut sich über einen vorhandenen Compiler.
+
+**Vertraulichkeit.** In der einstufigen Fassung liegt der **Quelltext** im Image. Wer es ziehen
+kann, liest ihn.
+
+Der Punkt, den man leicht übersieht: Es reicht nicht, die Dateien am Ende zu löschen. Ein Image
+besteht aus **unveränderlichen Schichten**. Eine Datei, die Schicht 3 anlegt und Schicht 7 wieder
+entfernt, ist in Schicht 3 weiterhin enthalten – `docker history` zeigt sie. Deshalb das *frische*
+`FROM` für die Laufzeitstufe: Nur was ausdrücklich hineinkopiert wird, ist da.
+
+### 178. Sie sagen, Ihr Image sei von 743 auf 390 MB geschrumpft. Wodurch?
+
+Durch das Entfernen des Prisma-CLI – und die Geschichte dahinter ist die interessantere Antwort.
+
+Der erste Entwurf lieferte den CLI mit, damit `prisma migrate deploy` im Container laufen kann. Die
+Messung im Container zeigte, was daran hängt: `@prisma/engines`, `@prisma/dev` – darin ein
+komplettes PostgreSQL als WebAssembly –, `effect` und `typescript`. Rund 270 MB für einen Befehl,
+der **einmal pro Deploy** läuft.
+
+Der Umbau war nicht trivial. `npm ci --omit=dev` änderte exakt nichts, weil `@prisma/client` den CLI
+als *optionale Peer-Abhängigkeit* führt und npm ihn im Lockfile als `devOptional` vermerkt – er
+gehört damit zu zwei Bäumen gleichzeitig. Erst `--omit=optional` griff, und der nahm die native
+argon2-Binärdatei mit, weil native Module ihre Plattformvarianten genau so ausliefern. Gelöst durch
+gezieltes Zurückholen dieses einen Pakets aus der Bau-Stufe – aus dem Lockfile, nicht
+nachinstalliert.
+
+Was ich daraus mitgenommen habe, ist weniger die Zahl als die Methode: Ich habe **im Container
+nachgemessen**, statt zu schätzen, welche Abhängigkeit wie viel wiegt. Die erste Vermutung war
+falsch, und ohne Messung hätte ich sie nicht bemerkt.
+
+### 179. Ihr Container läuft als `node`, nicht als root. Was ändert das konkret?
+
+Er kann nichts schreiben, was er nicht schreiben soll – und das ist der billigste Schutz, den es
+gibt: eine Zeile.
+
+Der Standard in einem Container ist root. Wer eine Lücke in der Anwendung findet, steht damit als
+root im Container. Ein Container ist keine virtuelle Maschine: Der Kernel ist derselbe wie auf dem
+Host. Je nach Konfiguration – gemountetes Docker-Socket, privilegierte Fähigkeiten – ist der Weg
+nach draußen kurz.
+
+Wichtig ist die Reihenfolge: `USER node` steht **nach** allen `COPY`-Anweisungen. Die Dateien
+gehören damit root und die Anwendung darf sie lesen und ausführen, aber nicht verändern. Schreiben
+soll sie ohnehin nirgends – der Zustand liegt in der Datenbank.
+
+### 180. Migrationen laufen bei Ihnen nicht im Container. Warum nicht, und was kostet das?
+
+Sie laufen im Deploy-Workflow, direkt vom GitHub-Actions-Runner gegen Neon. Das geht nur, weil die
+Datenbank bei einem Anbieter liegt und öffentlich erreichbar ist. Läge sie auf meinem Server hinter
+einer Firewall, wäre dieser Weg zu und ich bräuchte ein eigenes Migrations-Image.
+
+Der Gewinn ist der schlanke Container. Der Preis ist ein **Zeitfenster**: Migration und neuer Code
+werden nicht gleichzeitig wirksam. Für einen Moment läuft die **alte** Anwendung gegen das **neue**
+Schema.
+
+Daraus folgt eine Regel, die ab jetzt für jede Migration gilt: Sie muss abwärtskompatibel sein.
+Spalte hinzufügen ist unkritisch. Spalte umbenennen ist es nicht – das geht nur in zwei Schritten
+(neue Spalte anlegen, beide schreiben, umstellen, alte entfernen), verteilt auf zwei Deploys. Das
+nennt sich Expand/Contract.
+
+Die ehrliche Alternative wäre gewesen, die Anwendung während der Migration anzuhalten. Bei einem
+Portfolio-Projekt wäre das vertretbar, aber es hätte mir nichts beigebracht.
+
+### 181. Warum steht in Ihrem `CMD` ein JSON-Array und kein `npm run start:prod`?
+
+Wegen der Signale – und das ist keine Stilfrage, sondern der Unterschied zwischen sauberem und
+hartem Herunterfahren.
+
+In der Shell-Form (`CMD node dist/main`) startet Docker eine Shell als PID 1, und die reicht SIGTERM
+nicht an das Kindprozess weiter. Beim Deploy schickt Docker erst SIGTERM und wartet eine Frist ab,
+dann SIGKILL. Der Prozess bekäme das Signal nie zu sehen und würde am Ende hart abgeschossen –
+mitten in einer laufenden Anfrage.
+
+`npm run start:prod` hat dasselbe Problem aus einem anderen Grund: npm wäre ein zusätzlicher Prozess
+dazwischen. Mit der Exec-Form ist Node selbst PID 1 und bekommt das Signal direkt.
+
+Und die Ehrlichkeit gehört dazu: Bei DevBoard **reicht das derzeit noch nicht**. `main.ts` ruft
+`app.enableShutdownHooks()` nicht auf, also führt NestJS beim Herunterfahren `onModuleDestroy` gar
+nicht aus und `$disconnect()` bleibt liegen. Das Signal kommt an, es wird nur noch nicht ausgewertet.
+Ich habe das beim Schreiben des Dockerfiles gefunden und für die Zero-Downtime-Scheibe notiert,
+statt es stillschweigend mitzuerledigen – es ist ein eigener Gedanke und gehört in einen eigenen
+Commit.
