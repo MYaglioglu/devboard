@@ -66,7 +66,7 @@ function Inhalt() {
     organisation.data?.role === 'OWNER' || organisation.data?.role === 'ADMIN';
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-8 p-8">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
       <header>
         <Link
           href={`/organizations/${orgId}`}
@@ -134,7 +134,7 @@ function Inhalt() {
       )}
 
       {darfAnlegen && <AnlegenFormular orgId={orgId} />}
-    </main>
+    </div>
   );
 }
 

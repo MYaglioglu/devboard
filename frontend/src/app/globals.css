@@ -1,26 +1,135 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
+/*
+ * ============================================================================
+ * SEMANTISCHE TOKENS STATT VERSTREUTER FARBWERTE
+ * ============================================================================
+ * Vorher stand in jeder Datei `border-zinc-200 dark:border-zinc-800`. Das
+ * funktioniert, hat aber zwei Kosten: Eine Aenderung am Grauton beruehrt jede
+ * Datei, und niemand sieht einem `zinc-200` an, ob es eine Trennlinie oder ein
+ * Rahmen sein soll.
+ *
+ * Die Namen hier sagen die ROLLE, nicht die Farbe. `--rand` ist das, was
+ * Bereiche trennt - ob es dabei hell- oder dunkelgrau ist, entscheidet der
+ * Modus, nicht die Aufrufstelle.
+ *
+ * ============================================================================
+ * WARUM DREI BLOECKE UND NICHT ZWEI
+ * ============================================================================
+ * `prefers-color-scheme` allein reicht nicht, sobald es einen Umschalter geben
+ * soll - und den will man frueher, als man denkt. Deshalb:
+ *
+ *   :root                              -> hell, die vollstaendige Grundlage
+ *   @media (prefers-color-scheme: dark) -> dunkel, wenn das System es sagt
+ *   [data-theme="dark"] / ["light"]     -> ausdrueckliche Wahl gewinnt
+ *
+ * Wichtig ist, dass KEINE Farbe ihre einzige Festlegung in einem der beiden
+ * unteren Bloecke hat. Sonst fehlt sie in genau einem der drei Zustaende.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --flaeche: #ffffff;
+  --flaeche-gedaempft: #fafafa;
+  --flaeche-erhoben: #ffffff;
+  --rand: #e4e4e7;
+  --rand-stark: #d4d4d8;
+  --text: #18181b;
+  --text-leise: #52525b;
+  --text-still: #a1a1aa;
+  --akzent: #059669;
+  --akzent-text: #ffffff;
+  --akzent-leise: #ecfdf5;
+  --gefahr: #dc2626;
+  --gefahr-leise: #fef2f2;
+  --ring: color-mix(in oklab, var(--akzent) 40%, transparent);
 }
 
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --flaeche: #09090b;
+    --flaeche-gedaempft: #0c0c0f;
+    --flaeche-erhoben: #131316;
+    --rand: #27272a;
+    --rand-stark: #3f3f46;
+    --text: #fafafa;
+    --text-leise: #a1a1aa;
+    --text-still: #71717a;
+    --akzent: #10b981;
+    --akzent-text: #04231a;
+    --akzent-leise: #052e23;
+    --gefahr: #f87171;
+    --gefahr-leise: #2a1313;
+  }
+}
+
+:root[data-theme='dark'] {
+  --flaeche: #09090b;
+  --flaeche-gedaempft: #0c0c0f;
+  --flaeche-erhoben: #131316;
+  --rand: #27272a;
+  --rand-stark: #3f3f46;
+  --text: #fafafa;
+  --text-leise: #a1a1aa;
+  --text-still: #71717a;
+  --akzent: #10b981;
+  --akzent-text: #04231a;
+  --akzent-leise: #052e23;
+  --gefahr: #f87171;
+  --gefahr-leise: #2a1313;
+}
+
+/*
+ * Die Tokens fuer Tailwind sichtbar machen: `bg-flaeche`, `text-leise`,
+ * `border-rand` funktionieren danach wie eingebaute Klassen. Das ist der Weg,
+ * den Tailwind 4 dafuer vorsieht - kein `tailwind.config.js` mehr.
+ */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-flaeche: var(--flaeche);
+  --color-flaeche-gedaempft: var(--flaeche-gedaempft);
+  --color-flaeche-erhoben: var(--flaeche-erhoben);
+  --color-rand: var(--rand);
+  --color-rand-stark: var(--rand-stark);
+  --color-text: var(--text);
+  --color-leise: var(--text-leise);
+  --color-still: var(--text-still);
+  --color-akzent: var(--akzent);
+  --color-akzent-text: var(--akzent-text);
+  --color-akzent-leise: var(--akzent-leise);
+  --color-gefahr: var(--gefahr);
+  --color-gefahr-leise: var(--gefahr-leise);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/*
+ * ============================================================================
+ * HIER STAND BIS ZUM 16.08.2026 `font-family: Arial, Helvetica, sans-serif`
+ * ============================================================================
+ * Die Zeile stammte aus der Vorlage von `create-next-app` und hat die in
+ * `layout.tsx` geladene Geist-Schrift ueberschrieben. Die Schrift wurde also
+ * heruntergeladen und dann weggeworfen - der Browser meldete das sogar:
+ * "preloaded using link preload but not used".
+ *
+ * Das war der stille Grund, warum die Anwendung wie ein Rohentwurf aussah, und
+ * er war von aussen nicht zu erkennen: Jede einzelne Seite war richtig gebaut.
+ */
+body {
+  background: var(--flaeche);
+  color: var(--text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/*
+ * Ein sichtbarer Fokusring, einheitlich. Der Standard des Browsers ist je nach
+ * Browser verschieden und auf dunklem Grund oft kaum zu sehen.
+ *
+ * `:focus-visible` und nicht `:focus`: Der Ring erscheint bei Tastatur- und
+ * Screenreader-Bedienung, nicht bei jedem Mausklick. Ihn ganz abzuschalten
+ * waere der haeufigste Zugaenglichkeitsfehler ueberhaupt.
+ */
+:focus-visible {
+  outline: 2px solid var(--akzent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
