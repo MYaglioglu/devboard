@@ -3177,3 +3177,55 @@ laufen soll. Bis dahin gibt es `nimmGescheiterteWiederAuf()` – bewusst als Ent
 Automatik: Eine Zeile, die zuverlässig scheitert, erzeugt sonst bei jedem Durchlauf denselben Fehler
 und flutet das Protokoll. Ein erneuter Versuch gehört nach einer Korrektur am Code, nicht nach einer
 Weile.
+
+### 174. Sie löschen alte Webhook-Zustellungen – aber ausgerechnet die gescheiterten nicht. Ist das nicht verkehrt herum?
+
+Es sieht so aus, bis man fragt, wozu die Tabelle da ist.
+
+Sie existiert, damit eine Zustellung nicht verloren geht, die wir gerade nicht deuten können. Eine
+Zeile im Zustand `FAILED` ist also nicht Müll, sondern **der Fall, für den die Tabelle gebaut
+wurde**. Wer sie nach 30 Tagen wegräumt, löscht die Fehler, die er noch nicht angesehen hat – und
+merkt es nie, weil danach alles aufgeräumt aussieht.
+
+`ACCEPTED` bleibt aus einem anderen Grund stehen: Diese Zeilen sind noch gar nicht verarbeitet. Sie
+zu löschen hieße, ein Ereignis zu verlieren, das nie im Feed angekommen ist.
+
+Gelöscht wird also nur, was seinen Zweck erfüllt hat: `PROCESSED`. Dass die Halde aus gescheiterten
+Zeilen damit theoretisch unbegrenzt wachsen kann, ist der bewusst gewählte Rest.
+
+> **Lieber eine Liste, die auffällt, als eine, die sich selbst aufräumt.**
+
+### 175. Warum läuft die Frist ab `receivedAt` und nicht ab `processedAt`?
+
+Weil die Frist eine Zusage an die betroffenen Menschen ist, nicht an uns.
+
+In dieser Tabelle stehen fremde Rohdaten – Commit-Nachrichten, Anmeldenamen, oft E-Mail-Adressen
+von Leuten, die nie etwas mit DevBoard zu tun hatten. Erhoben haben wir davon nichts, es kam mit
+der Nutzlast. Die Zusage lautet: „Wir behalten das 30 Tage."
+
+Liefe die Frist ab `processedAt`, könnten wir sie durch eigene Trägheit verlängern. Eine Zeile, die
+drei Wochen liegen bleibt, weil kein Durchlauf sie aufgenommen hat, behielte ihre Daten dann 51
+Tage statt 30 – und niemand hätte etwas falsch gemacht.
+
+> **Eine Aufbewahrungsfrist beginnt, wenn die Daten ankommen, nicht wenn wir mit ihnen fertig
+> sind.** Sonst ist sie keine Zusage, sondern eine Absichtserklärung.
+
+### 176. Ihre Löschmethode wirft bei einer Frist von 0 Tagen. Warum kein Vorgabewert?
+
+Weil ein Vorgabewert hier den Fehler versteckt, statt ihn zu melden.
+
+`raeumeAlteZustellungenAb(0)` würde alles Verarbeitete löschen – sofort und unumkehrbar. Das ist
+kein exotischer Fall: Der Wert kommt irgendwann aus einer Umgebungsvariablen, und eine leere
+Variable wird in JavaScript schnell zu `0`.
+
+Fiele die Methode dann still auf 30 zurück, liefe sie „richtig" – und der Fehler in der
+Konfiguration bliebe unbemerkt, bis er irgendwo anders auffällt. Ein Abbruch sagt an der Stelle,
+wo er hingehört: Diese Eingabe ergibt keinen Sinn.
+
+Das ist dasselbe Prinzip wie beim Env-Schema, das den Start verweigert, wenn `WEBHOOK_ENCRYPTION_KEY`
+fehlt. **Fail fast, und zwar an der Stelle, an der die falsche Angabe gemacht wurde** – nicht drei
+Schritte später bei der Wirkung.
+
+Geprüft wird dabei auch auf `Number.isInteger`: `1.5` und `NaN` fallen mit durch. `NaN` ist der
+tückischere von beiden, weil jeder Vergleich damit `false` ergibt – die Prüfung `tage < 1` allein
+hätte ihn durchgelassen.
