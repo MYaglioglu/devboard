@@ -172,7 +172,7 @@ N+1-Queries" fast jeder behauptet und fast niemand belegen kann.
 - [x] 4.4 `GET …/dashboard/stats` – zuerst naiv, N+1 im Query-Log belegt, dann `groupBy` (14.08.2026)
 - [x] 4.5 Frontend: Kennzahlen auf dem Dashboard (14.08.2026)
 - [x] 4.6 Frontend: Feed mit „Mehr laden" (14.08.2026)
-- [ ] 4.7 `EXPLAIN ANALYZE` für beide Feed-Pfade protokolliert, Politur, Interviewfragen, Handbuch
+- [x] 4.7 `EXPLAIN ANALYZE` für beide Feed-Pfade protokolliert, Politur, Interviewfragen, Handbuch (14.08.2026)
 
 **Der Nachweis, nicht die Behauptung.** In 4.4 wird die Kennzahlen-Abfrage **absichtlich zuerst
 mit der N+1-Schleife** gebaut, das Prisma-Query-Log eingeschaltet und die Anzahl der Abfragen
