@@ -149,6 +149,33 @@ Sprint 5:
 | Entfernt | Rot geworden |
 |---|---|
 | `organizationId` aus den drei `where`-Bedingungen im `RepositoryConnectionsService` | 2 E2E, punktgenau |
+| Die Signaturprüfung im `WebhookEmpfangService` | 4 E2E, punktgenau |
+
+Bei der Signaturprüfung war die Erwartung ebenfalls **vorher** notiert: „Rot werden *ohne
+Signatur*, *mit falscher Signatur*, *nachträglich veränderter Rumpf* und der `ping`-Test, dessen
+zweite Hälfte eine falsche Signatur schickt. Grün bleiben *unbekannte Verbindung* (scheitert schon
+am Nachschlagen), *ohne Kopfzeilen* und *unsinnige ID* – die hängen nicht an der Signatur."
+
+Genau so kam es. Dass hier **drei** Tests grün bleiben mussten, ist der eigentliche Wert der
+vorher festgelegten Erwartung: Wären sie mit rot geworden, hätte die Probe etwas anderes getroffen
+als die Signaturprüfung.
+
+Jeder dieser Tests prüft zusätzlich, dass **keine Zeile** in `webhook_deliveries` entstanden ist.
+Ohne diese Nachprüfung wären sie auch dann grün, wenn der Endpoint erst geschrieben und danach 404
+gemeldet hätte – dieselbe Lücke wie beim Trennen einer fremden Verbindung.
+
+### Der Fehlschlag, der auf die Sache selbst zeigte
+
+Beim ersten Lauf der Webhook-Suite waren genau die **drei Erfolgspfade rot** und alle negativen
+Tests grün. Dieses Muster hat nur eine mögliche Ursache: Die Signatur stimmte nie.
+
+Der Grund lag im Testaufbau. `superagent` serialisiert bei einem JSON-Content-Type auch einen
+`Buffer` noch einmal selbst – aus den Bytes wurde `{"type":"Buffer","data":[123,34,…]}`. Gesendet
+wurden also **andere Bytes** als die, über die signiert worden war.
+
+Das ist dieselbe Falle, um die es in dieser Scheibe inhaltlich geht, nur eine Ebene höher – und ein
+Beleg dafür, dass „ein HMAC ist eine Aussage über Bytes" keine Theorie ist. Der Grund steht als
+Kommentar an der Stelle im Test, nicht nur in der Behebung.
 
 Erwartung, **vorher** notiert: „Rot werden müssen *gibt 404 für ein Projekt einer fremden
 Organisation* und *trennt nichts in einer fremden Organisation*. Alles andere bleibt grün; ein

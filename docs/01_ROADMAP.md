@@ -227,10 +227,15 @@ Signatur aus, nicht mit einer Identität. Das ist der eigentliche Lehrinhalt.
 - [x] 5.2 Repository verbinden und trennen – Endpoints, Geheimnis erzeugen und verschlüsseln,
       **einmalige** Klartextanzeige, negative Tests (fremde Organisation ⇒ 404, `MEMBER` ⇒ 403)
       (16.08.2026)
-- [ ] 5.3 `POST /webhooks/github` – Rohrumpf, Signaturprüfung mit `timingSafeEqual`, `ping`,
-      Zustellung wegschreiben, `202`. Mutationsprobe: Prüfung entfernen, Tests müssen rot werden
-- [ ] 5.4 Idempotenz: zweite Zustellung derselben `deliveryId` ⇒ `200`, **kein** zweiter Eintrag.
-      Belegt durch einen Test, der beide Zustellungen *gleichzeitig* absetzt
+- [x] 5.3 `POST /webhooks/github/:connectionId` – Rohrumpf, Signaturprüfung mit `timingSafeEqual`,
+      `ping`, Zustellung wegschreiben, `202`. Mutationsprobe: Prüfung entfernt, genau die vier
+      vorhergesagten Tests wurden rot (16.08.2026)
+- [ ] 5.4 Idempotenz **nachweisen**: Test, der beide Zustellungen *gleichzeitig* absetzt, plus
+      Mutationsprobe am `UNIQUE`-Constraint.
+      *Der Code dafür ist bereits in 5.3 entstanden* – das Abfangen der Constraint-Verletzung ließ
+      sich nicht sinnvoll herauslassen, ohne einen 500er bei jeder Wiederholung stehen zu lassen.
+      Diese Scheibe ist deshalb der Beweis, nicht die Umsetzung. Ehrlicher, als den Schnitt
+      nachträglich so zu erzählen, als hätte er gepasst.
 - [ ] 5.5 Verarbeitung: `push` und `pull_request` in Feed-Einträge übersetzen, Zustand je Zeile,
       gescheiterte Zustellungen wiederholbar
 - [ ] 5.6 Frontend: Repository auf der Projektseite verbinden, GitHub-Ereignisse im Feed mit

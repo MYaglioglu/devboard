@@ -2795,3 +2795,156 @@ laufen, statt ihn passend zu machen.
 
 Harmlos war es hier, weil es einen Testaufbau traf. Dieselbe Verwechslung in einer Suchfunktion
 oder beim Einlösen einer Einladung wäre ein Fehler, den Nutzer melden.
+
+### 157. Ihr Webhook-Endpoint hat keinen Guard und kein Token. Ist das nicht ein Loch in Ihrem „secure by default"?
+
+Nein – es ist ein **anderer** Schutz, eine Ebene tiefer.
+
+Der globale `AccessTokenGuard` prüft eine **Identität**: Wer bist du, und ist dein Token gültig?
+GitHub hat keine Identität in DevBoard – kein Konto, keine Sitzung, kein Token. Es weist sich mit
+einer **Signatur** aus: Der Absender kennt das Geheimnis dieser Verbindung, und der Rumpf ist
+unverwaltet geblieben.
+
+Das `@Oeffentlich()` schaltet also nicht den Schutz ab, sondern das *falsche* Prüfverfahren. Der
+richtige sitzt im Dienst und ist genauso zwingend – der Endpoint kommt ohne gültige Signatur keine
+Zeile weit.
+
+Wichtig ist mir dabei die Richtung des Grundprinzips: `@Oeffentlich()` muss man **hinschreiben**.
+Vergisst man es, antwortet der Endpoint mit 401 und der Fehler fällt sofort auf. Andersherum – Guard
+pro Route – wäre ein vergessener Guard ein versehentlich offener Endpoint, und niemand merkte es,
+weil alles funktioniert.
+
+Und noch etwas fehlt im Pfad, ganz bewusst: kein `:orgId`. Der `MitgliedschaftsGuard` findet hier
+keinen solchen Parameter und lässt die Route durch. Das ist genau der Fall, vor dem der Kommentar im
+`OrganizationScopedController` warnt – hier ist er gewollt und deshalb ausdrücklich hingeschrieben.
+Die Organisation ergibt sich aus der Verbindung, nicht aus dem Pfad.
+
+### 158. Warum brauchen Sie den Rohrumpf? Sie haben den geparsten Body doch schon.
+
+Weil ein HMAC eine Aussage über **Bytes** ist, nicht über Bedeutung.
+
+Diese drei Rümpfe ergeben dasselbe geparste Objekt:
+
+```
+{"a":1,"b":2}
+{ "a": 1, "b": 2 }
+{"b":2,"a":1}
+```
+
+Sie haben drei verschiedene Signaturen. Wer über `JSON.stringify(body)` nachrechnet, bekommt also
+bestenfalls zufällig das Richtige – Schlüsselreihenfolge muss nicht erhalten bleiben, Leerzeichen
+sind weg, Unicode kann anders geschrieben sein.
+
+NestJS parst den Rumpf, bevor der Controller ihn sieht, und wirft die ursprünglichen Bytes weg.
+Deshalb wird die Anwendung mit `{ rawBody: true }` erzeugt.
+
+Der unangenehme Teil daran: Das ist eine Option beim **Erzeugen** der Anwendung, kein Modul. Meine
+E2E-Tests bauen die Anwendung selbst und müssen sie ebenfalls setzen – Test und Produktion können
+also auseinanderlaufen. Genau diese Sorte Abweichung war in Sprint 2 mein teuerster Fehler.
+
+Deshalb prüft der Controller ausdrücklich, ob der Rohrumpf da ist, und sagt genau das, wenn er
+fehlt. Ohne diese Zeile wäre die Folge „Signatur stimmt nicht", und man suchte stundenlang am HMAC,
+während die Ursache eine fehlende Zeile im Anwendungsaufbau ist.
+
+> **Wenn zwei Fehlerursachen dieselbe Meldung erzeugen, ist die Meldung falsch.**
+
+### 159. Warum `timingSafeEqual` statt `===`? Über ein Netzwerk kann man Timing doch gar nicht messen.
+
+Der zweite Teil der Frage stimmt weitgehend, und ich sage das auch so.
+
+Der Angriff: Ein normaler Zeichenkettenvergleich bricht beim **ersten** Unterschied ab. Wie lange er
+braucht, verrät damit, wie viele Zeichen am Anfang gestimmt haben. Wer denselben Rumpf millionenfach
+mit variierender Signatur schickt und die Antwortzeiten mittelt, kann die richtige Signatur Zeichen
+für Zeichen erraten – statt 2^256 Versuchen braucht es einige Tausend Messungen je Position.
+
+Über ein Netzwerk ist das tatsächlich schwer: Die Laufzeitschwankungen sind um Größenordnungen
+größer als der gemessene Unterschied. Aber:
+
+1. **„Schwer" ist kein Sicherheitsargument.** Es ist eine Aussage über den heutigen Aufwand eines
+   Angreifers, nicht über eine Eigenschaft meines Systems. Auf demselben Rechenzentrumsnetz, mit
+   genug Messungen, verschiebt sich das.
+2. **Der zeitkonstante Vergleich kostet nichts.** Eine Zeile, keine messbare Laufzeit.
+
+Wenn eine Gegenmaßnahme gratis ist, ist die Frage nicht „wie wahrscheinlich ist der Angriff", sondern
+„warum sollte ich sie weglassen".
+
+Ein technisches Detail dazu: `timingSafeEqual` **wirft** bei unterschiedlich langen Puffern. Die
+Länge wird deshalb vorher geprüft. Das ist kein Leck – bei SHA-256 ist die erwartete Länge ohnehin
+öffentlich bekannt.
+
+### 160. Unbekannte Verbindung, falsche Signatur, fehlende Kopfzeilen – alles 404. Erschwert das nicht die Fehlersuche?
+
+Für den Angreifer ja, und das ist der Zweck. Für mich nicht, weil die Auskunft an einer anderen
+Stelle steht.
+
+Wären die Antworten unterscheidbar – 404 für „kenne ich nicht", 401 für „kenne ich, aber Signatur
+falsch" –, wäre dieser Endpoint ein Auskunftsdienst darüber, welche Verbindungs-IDs existieren. Wer
+IDs durchprobiert, hätte ein Ja/Nein-Orakel.
+
+Das ist dieselbe Regel in ihrer dritten Ausprägung in diesem Projekt: 404 statt 403 für fremde
+Organisationen (Sprint 2), ein Login, der nicht verrät, ob die E-Mail-Adresse existiert (Sprint 1),
+und jetzt hier.
+
+> **Eine Fehlermeldung darf nicht mehr verraten, als der Fragende sehen darf.**
+
+Für die eigene Fehlersuche schreibe ich stattdessen ins **Server-Protokoll**, dass eine Signatur
+nicht stimmte, mit Verbindungs- und Zustellungs-ID. Nicht protokolliert werden die gelieferte
+Signatur und erst recht nicht das Geheimnis: Ein Protokoll ist eine Datei, die kopiert, durchsucht
+und weitergereicht wird.
+
+Der Unterschied ist die **Richtung**: Nach außen so wenig wie möglich, nach innen so viel wie nötig.
+
+### 161. Sie beantworten GitHubs `ping` erst nach der Signaturprüfung. Warum die Umstände bei einer Nachricht ohne Inhalt?
+
+Weil die Antwort selbst der Inhalt ist.
+
+`ping` fragt „bist du da?". Ein Endpoint, der darauf ungeprüft mit `pong` antwortet, beantwortet
+damit auch die Frage „gibt es diese Verbindung?" – und zwar jedem, der die URL kennt. Das wäre genau
+das Orakel, das ich mit den einheitlichen 404 vermeide, nur durch eine Hintertür.
+
+Es kostet nichts, es richtig zu machen: Die Signaturprüfung läuft ohnehin für jede Anfrage, `ping`
+ist danach nur ein anderer Rückgabewert. Der Test hält beide Seiten fest – gültige Signatur ergibt
+`pong`, ungültige ergibt dieselbe 404 wie alles andere.
+
+### 162. Sie sagen, eine Signatur beweise nicht, wer der Absender ist. Was denn dann?
+
+Sie beweist zwei Dinge: Der Absender **kennt das Geheimnis**, und der Rumpf ist auf dem Weg **nicht
+verändert** worden.
+
+Was sie nicht beweist, ist Urheberschaft. HMAC ist ein **symmetrisches** Verfahren – beide Seiten
+haben denselben Schlüssel. Also kann jede Seite erzeugen, was die andere erzeugen könnte. Vor
+Gericht könnte ich mit einem HMAC nicht zeigen, dass GitHub etwas geschickt hat und nicht ich
+selbst; ich könnte es ja auch selbst signiert haben.
+
+Für „nur diese eine Partei kann das geschickt haben" bräuchte es eine **digitale Signatur** mit
+getrennten Schlüsseln: Der Absender signiert mit seinem privaten, jeder prüft mit dem öffentlichen.
+Dann kann der Prüfende die Nachricht nicht selbst erzeugt haben – das ist Nichtabstreitbarkeit.
+
+Praktisch genügt HMAC hier vollkommen: Das Geheimnis kennen nur wir und GitHub, wir vergeben es
+selbst, und wir wollen niemandem etwas beweisen – wir wollen nur fremde Anfragen abweisen. Aber der
+Unterschied gehört benannt, weil „signiert" umgangssprachlich nach Urheberschaft klingt und es hier
+keine ist.
+
+### 163. Ein Test von Ihnen war rot, weil `superagent` einen `Buffer` neu serialisiert hat. Wie sind Sie darauf gekommen?
+
+Über das **Muster** der Fehlschläge, nicht über die Fehlermeldung.
+
+Beim ersten Lauf waren genau die drei **Erfolgspfade** rot und alle negativen Tests grün. Die
+Fehlermeldung sagte nur „expected 202, got 404" – die hätte zu einem Dutzend Ursachen gepasst.
+
+Das Muster passt aber nur zu einer: Die Signatur stimmte **nie**. Wäre der Fehler in der Prüflogik
+gewesen, wären auch negative Tests umgekippt. Wäre `rawBody` nicht gesetzt gewesen, hätte der
+Controller seine ausdrückliche 500er-Meldung geliefert – die Zeile hatte ich genau dafür geschrieben.
+Blieb: Die gesendeten Bytes waren andere als die signierten.
+
+Und so war es. `superagent` serialisiert bei einem JSON-Content-Type auch einen `Buffer` noch einmal
+selbst; aus meinen Bytes wurde `{"type":"Buffer","data":[123,34,…]}`. Eine Zeichenkette reicht es
+unverändert durch – genau das tut GitHub auch.
+
+Zwei Dinge nehme ich mit. Erstens: **Welche Tests rot sind, ist eine Information – nicht nur, dass
+welche rot sind.** Das ist derselbe Gedanke wie bei einer Mutationsprobe mit vorher notierter
+Erwartung; ein zu breites Rot ist genauso verdächtig wie ein ausbleibendes.
+
+Zweitens war es dieselbe Falle, um die es in dieser Scheibe inhaltlich geht – ein HMAC ist eine
+Aussage über Bytes, nicht über Bedeutung –, nur eine Ebene höher. Deshalb steht der Grund als
+Kommentar an der Stelle im Test und nicht nur in der Behebung.
