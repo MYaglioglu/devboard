@@ -9,7 +9,28 @@ import type { Env } from './config/env.schema';
  * Composition Root: der einzige Ort, an dem der Objektgraph gebaut wird.
  */
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  /**
+   * ==========================================================================
+   * `rawBody` - DIE EINSTELLUNG, OHNE DIE DIE SIGNATURPRUEFUNG NIE STIMMT
+   * ==========================================================================
+   * Normalerweise parst NestJS den Rumpf zu JSON und wirft die urspruenglichen
+   * Bytes weg. Fuer einen HMAC ist das toedlich: Er ist eine Aussage ueber
+   * BYTES, nicht ueber Bedeutung. Ein neu serialisiertes Objekt hat andere
+   * Bytes bei gleicher Bedeutung - andere Schluesselreihenfolge, andere
+   * Leerzeichen - und die Signatur stimmt dann NIE.
+   *
+   * Mit dieser Option haelt Nest den Rohrumpf zusaetzlich vor.
+   *
+   * ACHTUNG, GLEICHE FALLE WIE BEI cookieParser (siehe unten): Das ist eine
+   * Option beim ERZEUGEN der Anwendung, kein Modul. Die E2E-Tests bauen ihre
+   * Anwendung selbst und muessen sie deshalb ebenfalls setzen - sonst laeuft
+   * dort etwas anderes als in Produktion.
+   *
+   * Damit dieses Auseinanderlaufen nicht still bleibt, prueft der
+   * Webhook-Controller ausdruecklich, ob der Rohrumpf da ist, und sagt
+   * andernfalls genau das - statt eine falsche Signatur zu melden.
+   */
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // ConfigService liefert die *validierten* Werte - nicht process.env.
   const config = app.get(ConfigService<Env, true>);

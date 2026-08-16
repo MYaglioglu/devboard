@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 
 import { RepositoryConnectionsController } from './repository-connections.controller';
 import { RepositoryConnectionsService } from './repository-connections.service';
+import { WebhookEmpfangService } from './webhook-empfang.service';
+import { WebhooksController } from './webhooks.controller';
 
 /**
  * Feature-Modul fuer die GitHub-Integration.
@@ -21,7 +23,7 @@ import { RepositoryConnectionsService } from './repository-connections.service';
  * nichts - dieselbe Zurueckhaltung wie beim ProjectsModule.
  */
 @Module({
-  controllers: [RepositoryConnectionsController],
-  providers: [RepositoryConnectionsService],
+  controllers: [RepositoryConnectionsController, WebhooksController],
+  providers: [RepositoryConnectionsService, WebhookEmpfangService],
 })
 export class WebhooksModule {}
