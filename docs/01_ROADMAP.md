@@ -1,4 +1,4 @@
-# Roadmap
+﻿# Roadmap
 
 **Stand:** 06.08.2026 · **Zeitbudget:** Vollzeit (30–40 h/Woche) · **Arbeitsweise:** vertikale Slices
 
@@ -185,13 +185,66 @@ nachher 2" ist belastbar, die Behauptung allein nicht.
 ---
 
 ## Sprint 5 – GitHub-Integration
-**23.09. – 01.10.2026**
+**23.09. – 01.10.2026** · vorgezogen auf den **16.08.2026**
 
 Eine echte Integration statt vier angedeuteter: GitHub-Webhooks empfangen, verifizieren und
 in den Aktivitäts-Feed einspeisen.
 
 **Kernthemen:** Webhook-Signaturprüfung (HMAC) · Idempotenz bei mehrfach zugestellten Events ·
 Retry-Verhalten · asynchrone Verarbeitung · Secrets sicher speichern.
+
+Der erste Sprint, in dem **fremder Code unseren Server aufruft**. Alles bisher Gebaute lief in eine
+Richtung: Unser Frontend fragt, unser Backend antwortet, und wer fragen darf, klärt ein Token. Hier
+ruft GitHub an – ohne Konto, ohne Sitzung, ohne unseren Guard. Die Anfrage weist sich mit einer
+Signatur aus, nicht mit einer Identität. Das ist der eigentliche Lehrinhalt.
+
+**Entschieden vor 5.1** (ADR-013, ADR-014, ADR-015):
+
+- **Repository-Webhook je Projekt**, keine GitHub App. Der Installationsablauf einer App bräuchte
+  eine öffentlich erreichbare URL, die es vor Sprint 6 nicht gibt – und die Lehrinhalte sind bei
+  beiden Wegen identisch.
+- Das Geheimnis wird **verschlüsselt** abgelegt, nicht gehasht. Ein HMAC muss *nachgerechnet*
+  werden, und dafür braucht man den Klartext. Damit lautet die Regel schärfer als bisher:
+  **Wiedererkennen ⇒ hashen, nachrechnen ⇒ verschlüsseln.**
+- Der Endpoint **quittiert und verarbeitet danach**. Signatur prüfen, Zustellung wegschreiben,
+  `202`. Das ist die **Inbox**, nicht die Outbox – Sprint 5 empfängt nur.
+
+**Zwei Dinge, die aus dem Bestand nachgezogen werden müssen:**
+
+1. **`Activity` braucht eine Herkunft.** `actorId` ist heute genau dann `NULL`, wenn ein Konto
+   gelöscht wurde – das Frontend schreibt dafür „Ein entferntes Mitglied". Ein GitHub-Ereignis hat
+   ebenfalls keinen DevBoard-Nutzer. Ohne unterscheidendes Feld behauptet der Feed also, ein
+   ausgetretener Kollege habe gepusht. Es braucht `Activity.source` (`APP` | `GITHUB`) und den
+   GitHub-Anmeldenamen im `payload`.
+2. **Der Feed muss unbekannte Typen ertragen** – tut er bereits. `ereignisSatz` fällt auf einen
+   allgemeinen Satz zurück, `payload` wird als `unknown` gelesen. Die Entscheidung aus Sprint 4
+   zahlt hier zum ersten Mal ein und wird durch einen Test festgehalten, statt vorausgesetzt.
+
+**Definition of Done** – die Scheiben, jede einzeln mergebar:
+
+- [ ] 5.1 Datenmodell: `RepositoryConnection`, `WebhookDelivery`, `Activity.source`, neue
+      Ereignistypen, Migration, `UNIQUE` auf `deliveryId`
+- [ ] 5.2 Repository verbinden und trennen – Endpoints, Geheimnis erzeugen und verschlüsseln,
+      **einmalige** Klartextanzeige, negative Tests (fremde Organisation ⇒ 404, `MEMBER` ⇒ 403)
+- [ ] 5.3 `POST /webhooks/github` – Rohrumpf, Signaturprüfung mit `timingSafeEqual`, `ping`,
+      Zustellung wegschreiben, `202`. Mutationsprobe: Prüfung entfernen, Tests müssen rot werden
+- [ ] 5.4 Idempotenz: zweite Zustellung derselben `deliveryId` ⇒ `200`, **kein** zweiter Eintrag.
+      Belegt durch einen Test, der beide Zustellungen *gleichzeitig* absetzt
+- [ ] 5.5 Verarbeitung: `push` und `pull_request` in Feed-Einträge übersetzen, Zustand je Zeile,
+      gescheiterte Zustellungen wiederholbar
+- [ ] 5.6 Frontend: Repository auf der Projektseite verbinden, GitHub-Ereignisse im Feed mit
+      eigener Herkunftskennzeichnung
+- [ ] 5.7 `10_SECURITY.md`, Aufbewahrungsfrist für `webhook_deliveries`, Interviewfragen, Handbuch
+
+**Die Mutationsprobe ist in 5.3 nicht optional.** Eine Signaturprüfung ist der einzige Schutz eines
+öffentlichen Endpoints – und der Erfolgspfad ist auch dann grün, wenn sie gar nichts prüft. Dieselbe
+Lehre wie beim Mandantenfilter in Sprint 2, mit dem Unterschied, dass hier das ganze Internet
+zusehen darf.
+
+**Ausdrücklich nicht in diesem Sprint:** eine Rückmeldung an GitHub (Kommentar am Pull Request,
+wenn eine Aufgabe auf „Erledigt" wandert). Sie wäre das, was das **Outbox**-Muster erst verdient –
+und damit ein eigener Baustein, kein Anhängsel. Falls am Ende Zeit bleibt, ist sie der beste
+Kandidat dafür.
 
 ---
 
