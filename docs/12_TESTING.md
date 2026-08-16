@@ -144,6 +144,24 @@ einem Gefühl – und es hat sich sofort ausgezahlt: Ein Zwischenlauf zeigte wie
 rot, diesmal weil der Docker-Daemon nicht lief. Ohne vorher festgelegte Erwartung wäre das als
 „Schutz wirkt sehr breit" durchgegangen.
 
+Sprint 5:
+
+| Entfernt | Rot geworden |
+|---|---|
+| `organizationId` aus den drei `where`-Bedingungen im `RepositoryConnectionsService` | 2 E2E, punktgenau |
+
+Erwartung, **vorher** notiert: „Rot werden müssen *gibt 404 für ein Projekt einer fremden
+Organisation* und *trennt nichts in einer fremden Organisation*. Alles andere bleibt grün; ein
+breiteres Rot hieße, die Tests messen etwas anderes."
+
+Genau diese beiden wurden es – keiner mehr, keiner weniger. Damit ist belegt, dass die negativen
+Tests den Mandantenfilter tatsächlich bewachen und nicht bloß danebenstehen.
+
+Der zweite Test der beiden ist dabei der interessantere. Er prüft nach dem erwarteten 404
+**zusätzlich**, dass die fremde Verbindung noch existiert. Ohne diese Nachprüfung wäre er auch dann
+grün, wenn `deleteMany` die fremde Zeile gelöscht und *danach* 404 gemeldet hätte – ein Test, der
+den Statuscode bewacht und die Wirkung nicht.
+
 Sprint 4:
 
 | Entfernt | Rot geworden |

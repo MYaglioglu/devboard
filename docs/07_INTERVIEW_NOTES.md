@@ -2686,3 +2686,112 @@ und kommt mit Scheibe 5.5, wenn die Tabelle Zeilen hat. Zweitens beweist ein `EX
 wenigen Zeilen regelmäßig das Gegenteil dessen, was gemeint ist: Ohne `ANALYZE` nach einem
 Massen-`INSERT` plant PostgreSQL auf dem Stand „Tabelle ist leer", und bei wenigen Zeilen ist ein
 Seq Scan zu Recht schneller.
+
+### 151. Sie zeigen das Webhook-Geheimnis genau einmal an. Ist das nicht einfach unbequem?
+
+Es ist unbequem, und das ist der Zweck.
+
+Ein Geheimnis, das jeder `GET` wieder ausliefert, ist so viel wert wie der schwächste Zugang zu
+diesem Endpoint. Jede Sitzung, jedes Gerät, jeder Bildschirm im Großraumbüro, jeder Screenshot in
+einem Ticket wird zu einer weiteren Stelle, an der es abfließen kann. Und man merkt es nie, weil
+Lesen keine Spur hinterlässt.
+
+Wenn es nur einmal kommt, gibt es genau einen Moment, in dem es sichtbar ist – und danach ist die
+einzig mögliche Reaktion auf einen Verlust die richtige: **trennen und neu verbinden.** Das ist
+dieselbe Entscheidung wie bei den Einladungs-Token in Sprint 2 und dasselbe Verhalten, das GitHub,
+AWS und Stripe bei ihren eigenen Schlüsseln zeigen.
+
+Der Vollständigkeit halber: Technisch *könnte* ich es wieder anzeigen – es liegt verschlüsselt und
+nicht gehasht in der Datenbank, ich komme also heran. Genau deshalb ist es hier eine
+**Entscheidung** und keine technische Zwangslage, und genau deshalb steht sie in der
+Dokumentation.
+
+### 152. Warum `create` mit abgefangenem Constraint-Fehler statt eines `upsert`?
+
+Zwei verschiedene Gründe, die zufällig in dieselbe Richtung zeigen.
+
+**Fachlich:** Ein `upsert` würde ein bestehendes Geheimnis still überschreiben. Der Webhook, den
+jemand in GitHub eingetragen hat, wäre ab diesem Moment kaputt – und niemand merkte es, bis das
+erste Ereignis ausbleibt. Ausbleibende Ereignisse sind die unangenehmste Sorte Fehler: Man sieht
+nicht, was nicht da ist. Deshalb 409, und wer wirklich wechseln will, trennt zuerst.
+
+> Eine unumkehrbare Nebenwirkung darf nicht der Standardfall eines bequemen Aufrufs sein.
+
+**Technisch:** Der Konflikt wird als Prisma-Fehler P2002 abgefangen und **nicht** vorher gelesen.
+Zwischen einem `findFirst` und dem `create` passen zwei gleichzeitige Anfragen durch – beide finden
+nichts, beide schreiben. Das ist in diesem Projekt zum vierten Mal dieselbe Regel: Die Bedingung
+gehört in die Datenbank, nicht in ein `if` davor.
+
+### 153. Sie schreiben, Verschlüsselung schütze hier weniger als Hashing. Warum steht das so in Ihrer Dokumentation?
+
+Weil es stimmt, und weil eine Sicherheitsdokumentation, die nur Erfolge auflistet, im Ernstfall
+niemandem hilft.
+
+Konkret: Wer die Datenbank **und** `WEBHOOK_ENCRYPTION_KEY` hat, hat alle Webhook-Geheimnisse im
+Klartext. Verschlüsselung im Ruhezustand schützt gegen ein geleaktes Backup, eine weggeworfene
+Festplatte, einen Dump in einem Ticket – nicht gegen einen übernommenen Anwendungsserver, denn dort
+liegt der Schlüssel. Bei argon2 gilt das nicht: Selbst mit vollem Zugriff bekommt niemand ein
+Passwort zurück.
+
+Der Unterschied ist kein Versäumnis, sondern der Preis der Funktion – ein HMAC muss nachgerechnet
+werden. Was dagegen möglich war, habe ich getan: **jedes Projekt hat sein eigenes Geheimnis**, und
+die `keyVersion`-Spalte steht bereit, damit eine Rotation später ohne Ausfall geht.
+
+Der ehrliche Umgang damit hat auch einen praktischen Wert. In `10_SECURITY.md` steht neben jedem
+offenen Punkt eine **Fälligkeit**. Damit ist die Liste eine Arbeitsgrundlage und keine Beruhigung –
+und im Gespräch kann ich sagen, was als Nächstes dran ist, statt zu behaupten, es sei alles fertig.
+
+### 154. In Ihrer Webhook-URL steht eine UUID. Ist das nicht ein Geheimnis im Klartext in einer URL?
+
+Nein, und die Unterscheidung ist genau der Punkt: **Eine Kennung ist kein Berechtigungsnachweis.**
+
+Die ID sagt, *welche* Verbindung gemeint ist – also mit welchem Geheimnis die Signatur
+nachgerechnet wird. Berechtigt ist die Anfrage dadurch nicht. Wer die ID kennt, kann Anfragen
+schicken; ohne das Geheimnis scheitert jede einzelne an der Signaturprüfung.
+
+Die Alternative wäre gewesen, das Repository aus der Nutzlast zu lesen und die Verbindung darüber
+zu finden. Das wäre die falsche Reihenfolge: Ungeprüftes Material würde den Schlüssel auswählen,
+mit dem es selbst geprüft werden soll. Ein Angreifer könnte dann durch die Wahl des
+`repository.full_name` bestimmen, gegen welches Geheimnis verglichen wird.
+
+Wichtig ist der Umkehrschluss, den ich *nicht* ziehe: Dass eine UUID in einer URL hier unbedenklich
+ist, heißt nicht, dass sie es immer wäre. Ein Einladungs-Token in einer URL ist ein
+Berechtigungsnachweis – der landet in Server-Protokollen, im Browserverlauf und im `Referer`. Bei
+dem ist genau deshalb nur der **Hash** gespeichert und die Gültigkeit befristet.
+
+### 155. Sie mussten `Buffer` in `Uint8Array<ArrayBuffer>` umwandeln. Warum nicht einfach `as` schreiben?
+
+Weil `as` den Compiler zum Schweigen bringt, ohne das Problem zu lösen.
+
+Prisma 7 verlangt für eine `Bytes`-Spalte ein `Uint8Array<ArrayBuffer>`. Der Node-Typ `Buffer` ist
+ein `Uint8Array<ArrayBufferLike>`, und `ArrayBufferLike` schließt `SharedArrayBuffer` mit ein – also
+einen Puffer, den mehrere Threads gleichzeitig sehen und der sich zwischen dem Lesen und dem
+Schreiben unter der Hand ändern kann. Für Daten, die gleich in die Datenbank geschrieben werden,
+ist das eine sinnvolle Zusage, die Prisma sich geben lässt.
+
+Mit `as` hätte ich behauptet, die Zusage sei erfüllt, ohne etwas dafür zu tun. `Uint8Array.from`
+kopiert stattdessen in einen frischen, nicht geteilten Puffer – die Zusage ist danach wahr.
+
+Das ist meine allgemeine Haltung zu `as`: Es ist kein Werkzeug zum Umtypisieren, sondern eine
+Behauptung gegenüber dem Compiler, die ich beweisen können muss. Wo ich sie nicht beweisen kann,
+ist der Compilerfehler die nützlichere Nachricht. Hier ist er sogar der beste Zeitpunkt gewesen –
+er kam beim Bauen und nicht beim ersten Verbinden eines Repositories.
+
+### 156. Ein Test von Ihnen ist beim ersten Lauf fehlgeschlagen, weil eine E-Mail-Adresse Großbuchstaben enthielt. Was haben Sie daraus gelernt?
+
+Dass eine Normalisierung, die an einer Stelle passiert, an allen anderen mitgedacht werden muss.
+
+Der `AuthService` schreibt E-Mail-Adressen kleingeschrieben in die Datenbank – seit Sprint 1, mit
+gutem Grund: Sonst wären `Max@example.com` und `max@example.com` zwei Konten, weil der
+`UNIQUE`-Index zeichengenau vergleicht. Mein Testaufbau erzeugte Kennungen aus Eingabewerten,
+darunter `nurEinName`, und suchte den angelegten Nutzer danach mit der **Originalschreibweise**
+wieder. Gefunden hat er nichts.
+
+Zwei Dinge nehme ich mit. Erstens war die Fehlermeldung („kein Datensatz gefunden") drei Schritte
+von der Ursache entfernt – deshalb steht der Grund jetzt als Kommentar an genau dieser Stelle im
+Test, nicht nur in der Behebung. Zweitens, und das ist das eigentliche Muster: **Der Test hat einen
+echten Zug des Systems entdeckt, nicht einen Fehler in sich selbst.** Genau darum lasse ich ihn
+laufen, statt ihn passend zu machen.
+
+Harmlos war es hier, weil es einen Testaufbau traf. Dieselbe Verwechslung in einer Suchfunktion
+oder beim Einlösen einer Einladung wäre ein Fehler, den Nutzer melden.
