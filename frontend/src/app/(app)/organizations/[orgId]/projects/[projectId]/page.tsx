@@ -84,7 +84,7 @@ function Inhalt() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-8 p-8">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6">
       <header>
         <Link
           href={`/organizations/${orgId}/projects`}
@@ -127,7 +127,7 @@ function Inhalt() {
           beschreibung={projekt.data.description}
         />
       )}
-    </main>
+    </div>
   );
 }
 
@@ -139,7 +139,7 @@ function Rahmen({
   children: React.ReactNode;
 }) {
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-4 p-8">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-6 sm:px-6">
       <Link
         href={`/organizations/${orgId}/projects`}
         className="text-sm text-zinc-500 hover:underline"
@@ -147,7 +147,7 @@ function Rahmen({
         ← Zurück zu den Projekten
       </Link>
       {children}
-    </main>
+    </div>
   );
 }
 

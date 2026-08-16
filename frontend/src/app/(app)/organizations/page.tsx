@@ -51,7 +51,7 @@ function Inhalt() {
   const { aktive, waehle } = useAktiveOrganisation(data);
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-8 p-8">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">
           Organisationen
@@ -79,7 +79,7 @@ function Inhalt() {
         ))}
 
       <AnlegenFormular />
-    </main>
+    </div>
   );
 }
 

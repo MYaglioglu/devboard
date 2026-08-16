@@ -83,7 +83,7 @@ function Inhalt() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-8 p-8">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
       <header>
         <Link
           href="/organizations"
@@ -132,7 +132,7 @@ function Inhalt() {
       </section>
 
       <EinladungenBereich orgId={orgId} eigeneRolle={organisation.data.role} />
-    </main>
+    </div>
   );
 }
 
@@ -255,9 +255,9 @@ function NameBereich({
 
 function Rahmen({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col justify-center p-8">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 py-6 sm:px-6">
       {children}
-    </main>
+    </div>
   );
 }
 
