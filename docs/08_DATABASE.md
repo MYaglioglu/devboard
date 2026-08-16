@@ -1,4 +1,4 @@
-# Datenbank
+﻿# Datenbank
 
 PostgreSQL 18, im Container. Schema und Migrationen über Prisma (ADR-004, ADR-006).
 
@@ -493,6 +493,186 @@ bezeichnet der Cursor eine **eindeutige** Stelle. Dieselbe Falle wie bei gleiche
 
 ---
 
+### `repository_connections`
+
+Die Verbindung eines Projekts zu einem GitHub-Repository (ADR-013). Höchstens eine je Projekt.
+
+| Spalte | Typ | Anmerkung |
+|---|---|---|
+| `id` | `uuid` | |
+| `projectId` | `uuid NOT NULL UNIQUE` | → `projects`, `ON DELETE CASCADE` |
+| `repositoryFullName` | `text NOT NULL` | `owner/repo` – **bewusst nicht** eindeutig |
+| `secretCiphertext` | `bytea NOT NULL` | AES-256-GCM |
+| `secretIv` | `bytea NOT NULL` | Initialisierungsvektor |
+| `secretAuthTag` | `bytea NOT NULL` | Authentifizierungs-Tag |
+| `keyVersion` | `integer NOT NULL DEFAULT 1` | für den Schlüsselwechsel |
+| `createdById` | `uuid NULL` | → `users`, `ON DELETE SET NULL` |
+| `createdAt`, `updatedAt` | `timestamp(3)` | |
+
+#### Warum hier **kein** `organizationId` steht
+
+Bei `activities` steht die Spalte, bei `tasks` nicht. Diese Tabelle folgt `tasks`, und zwar aus
+denselben zwei Gründen, die dort gelten – nur umgekehrt gelesen:
+
+1. Eine Verbindung hat **immer** genau ein Projekt. Der Mandant lässt sich also lückenlos erben,
+   anders als bei `activities`, wo `projectId` optional ist.
+2. Es gibt keine Abfrage „alle Verbindungen dieser Organisation, sortiert". Gelesen wird über das
+   Projekt. Ohne eine solche Abfrage bräuchte kein Index die Spalte.
+
+Für den Mandantenfilter ändert das nichts – er bleibt in der `WHERE`-Bedingung, nur eine Beziehung
+weiter:
+
+```sql
+WHERE project.organizationId = $1 AND project.id = $2
+```
+
+**Die Regel lautet also nicht „jede Tabelle bekommt den Mandanten".** Sie lautet: Der Mandant muss
+in der Bedingung stehen, und er muss lückenlos erreichbar sein. Ob als eigene Spalte oder über eine
+Beziehung, entscheidet die Frage, ob die Kette dorthin **immer** vollständig ist.
+
+#### Warum `repositoryFullName` **nicht** eindeutig ist
+
+Naheliegend wäre „ein Repository kann nur einmal verbunden sein". Das wäre ein **Informationsleck
+über Mandantengrenzen**: Beim Verbinden bekäme man einen Konflikt gemeldet und wüsste damit, dass
+eine *fremde* Organisation dieses Repository beobachtet. Dieselbe Denkweise wie bei den 404 statt
+403 aus Sprint 2 – eine Fehlermeldung darf nicht mehr verraten, als der Fragende sehen darf.
+
+Fachlich ist Mehrfachnutzung ohnehin richtig: Zwei Teams dürfen dasselbe Repository beobachten.
+Jedes richtet in GitHub seinen eigenen Webhook ein und bekommt eigene Zustellungen.
+
+#### Warum drei Spalten für ein Geheimnis
+
+Passwörter liegen als argon2id-Hash hier, Einladungs-Token als SHA-256-Hash. Dieses Geheimnis
+**nicht** – siehe ADR-014. Der Grund ist strukturell und nicht Bequemlichkeit: GitHub legt das
+Geheimnis nie vor, es schickt eine HMAC-Signatur über den Rumpf. Um dieselbe Signatur
+*nachzurechnen*, braucht man das Geheimnis selbst.
+
+> **Wiedererkennen ⇒ hashen. Nachrechnen ⇒ verschlüsseln.**
+
+AES-256-GCM braucht drei Werte: Der Schlüsseltext allein ist ohne Initialisierungsvektor nicht zu
+entschlüsseln und ohne Authentifizierungs-Tag nicht auf Unversehrtheit prüfbar. `bytea` statt
+Base64 in einem `text`, weil eine Kodierung, die niemand liest, nur eine Stelle ist, an der jemand
+die falsche wählen kann.
+
+`keyVersion` ist Vorsorge mit konkretem Zweck: Ohne sie ist ein Schlüsselwechsel nur mit Ausfall
+möglich – man müsste alle Zeilen in einem Zug neu verschlüsseln und dürfte dazwischen keine
+Zustellung annehmen.
+
+---
+
+### `webhook_deliveries`
+
+Eine von GitHub empfangene Zustellung, **roh**, bevor sie gedeutet wird (ADR-015).
+
+| Spalte | Typ | Anmerkung |
+|---|---|---|
+| `id` | `uuid` | |
+| `connectionId` | `uuid NOT NULL` | → `repository_connections`, `ON DELETE CASCADE` |
+| `eventType` | `text NOT NULL` | aus `X-GitHub-Event` |
+| `deliveryId` | `text NOT NULL` | aus `X-GitHub-Delivery` |
+| `payload` | `jsonb NOT NULL` | unverändert, wie empfangen |
+| `status` | `webhook_delivery_status` | `ACCEPTED` / `PROCESSED` / `FAILED` |
+| `fehlermeldung` | `text NULL` | für die Fehlersuche, nicht für die Anzeige |
+| `versuche` | `integer NOT NULL DEFAULT 0` | |
+| `receivedAt` | `timestamp(3)` | |
+| `processedAt` | `timestamp(3) NULL` | |
+
+**Constraints und Indizes**
+
+| | Zweck |
+|---|---|
+| `UNIQUE (connectionId, deliveryId)` | Schutz gegen Mehrfachzustellung |
+| `INDEX (status, receivedAt)` | „die ältesten noch nicht verarbeiteten" |
+
+#### Warum der Schutz ein Constraint ist und kein `findFirst`
+
+GitHub stellt bei jedem Fehlschlag erneut zu, mit **derselben** `deliveryId`. Der naheliegende Code
+wäre: nachsehen, ob es die Zeile schon gibt, und nur sonst schreiben. Zwischen dem Lesen und dem
+Schreiben passen aber zwei gleichzeitige Zustellungen durch – beide finden nichts, beide schreiben,
+das Ereignis steht doppelt im Feed.
+
+**Die Bedingung gehört ins Constraint, nicht in ein `if` davor.** Zum dritten Mal dieselbe Lehre
+nach ADR-010 (optimistisches Sperren) und ADR-012 (der Protokollschreiber am `count`). Der Endpoint
+schreibt also blind und fängt genau die Verletzung dieses Constraints ab.
+
+#### Warum zusammengesetzt und nicht global auf `deliveryId`
+
+Ein globales `UNIQUE` wäre die Zusage „diese Zustellung gab es im ganzen System schon". Damit könnte
+die Zustellung *einer* Organisation die einer anderen abweisen – ein Kanal zwischen Mandanten, so
+unwahrscheinlich er praktisch auch ist. Die Zusage, die wirklich gebraucht wird, ist enger:
+**diese Verbindung hat diese Zustellung schon gesehen.**
+
+#### Warum `status` im Index vorne steht
+
+Auf `status` wird auf **Gleichheit** geprüft (`= 'ACCEPTED'`), auf `receivedAt` wird **sortiert**.
+In einem zusammengesetzten B-Baum-Index gehören Gleichheitsspalten nach vorne: Sie schneiden einen
+zusammenhängenden Bereich heraus, und innerhalb dieses Bereichs liegen die Zeilen bereits nach der
+zweiten Spalte sortiert. Andersherum müsste PostgreSQL den ganzen Index lesen und danach filtern.
+Dieselbe Regel wie beim Feed-Index auf `(organizationId, createdAt, id)`.
+
+#### Die Kehrseite, offen benannt
+
+Diese Tabelle speichert **fremde Rohdaten** – Commit-Nachrichten, Benutzernamen, Zweignamen. Sie
+wächst unbegrenzt und enthält personenbezogene Angaben, die DevBoard nicht selbst erhoben hat. Sie
+braucht deshalb eine Aufbewahrungsfrist; das ist Scheibe 5.7 und steht in `10_SECURITY.md`.
+
+---
+
+### Ergänzung an `activities`: die Spalte `source`
+
+| Spalte | Typ | Anmerkung |
+|---|---|---|
+| `source` | `activity_source NOT NULL DEFAULT 'APP'` | `APP` / `GITHUB` |
+
+**Diese Spalte behebt eine Falle, die vorher keine war.** `actorId` ist bisher genau dann `NULL`,
+wenn ein **Konto gelöscht** wurde – das Frontend leitet daraus „Ein entferntes Mitglied" ab. Die
+Ableitung war richtig, solange es nur eine Ursache für `NULL` gab.
+
+Ein GitHub-Ereignis hat ebenfalls keinen DevBoard-Nutzer; wer gepusht hat, muss hier gar kein Konto
+besitzen. Ohne unterscheidendes Feld würde der Feed also behaupten, **ein ausgetretener Kollege habe
+gepusht**.
+
+Die Alternative wäre gewesen, es aus dem `payload` zu schließen („steht ein `githubLogin` drin, ist
+es GitHub"). Das wäre eine Herkunftsangabe, die die Datenbank nicht prüft und die beim ersten
+Ereignistyp ohne dieses Feld still falsch wird. **Die Herkunft ist eine Eigenschaft der Zeile, kein
+Nebenprodukt ihres Inhalts.**
+
+Der Vorgabewert `APP` ist kein Bequemlichkeitswert: Alle bestehenden Zeilen stammen tatsächlich aus
+der Anwendung, die Migration braucht deshalb kein Backfill-Skript. **Ein Vorgabewert ist dann
+richtig, wenn er für die Altdaten wahr ist** – nicht, wenn er nur das Schreiben bequemer macht.
+
+---
+
+### Diese Migration wurde nicht mit `migrate dev` erzeugt
+
+`npm run db:migrate` (also `prisma migrate dev`) ist interaktiv: Es kann bei erkannter Drift
+nachfragen und dabei anbieten, die Datenbank **zurückzusetzen**. In einer nicht-interaktiven Sitzung
+bleibt es an dieser Rückfrage hängen, ohne etwas auszugeben.
+
+Der Weg hier war deshalb zweistufig – und er ist auch der ehrlichere, weil das SQL vor dem Anwenden
+gelesen wurde:
+
+```bash
+# 1. SQL erzeugen, ohne irgendetwas anzuwenden
+npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script \
+  -o "prisma/migrations/<zeitstempel>_<name>/migration.sql"
+
+# 2. lesen, dann anwenden
+npx prisma migrate deploy
+```
+
+Zwei Anmerkungen dazu:
+
+- **Die Flags heißen in Prisma 7 anders.** `--from-schema-datasource` gibt es nicht mehr; die
+  Fehlermeldung nennt den Ersatz (`--from-config-datasource`) selbst. Wieder der Beleg für die
+  Hausregel: Fehlermeldungen werden gelesen, nicht gegoogelt.
+- **`ALTER TYPE … ADD VALUE` in einer Transaktion** ist erst ab PostgreSQL 12 erlaubt, und auch
+  dann nur, solange der neue Wert im selben Zug nicht *benutzt* wird. Prisma warnt im erzeugten SQL
+  pauschal davor. Hier läuft PostgreSQL 18 und die Migration benutzt die neuen Werte nicht – also
+  unbedenklich.
+
+---
+
 ## Arbeiten mit Migrationen
 
 ```bash
@@ -530,6 +710,8 @@ Umgebungen auseinander – dieselbe Logik wie bei Git-Commits nach dem Push.
 | ~~`Project`~~ | 3 | Projekte innerhalb einer Organisation – **umgesetzt** |
 | ~~`Task`~~ | 3 | Aufgaben mit Status und Sortierposition – **umgesetzt** |
 | ~~`Activity`~~ | 4 | Aktivitäts-Feed – **umgesetzt** (hieß in der Planung `ActivityEvent`; das `Event` ist entfallen, weil die Tabelle ein Protokoll ist und kein Event Sourcing – ADR-011) |
+| ~~`RepositoryConnection`~~ | 5 | Projekt ↔ GitHub-Repository, verschlüsseltes Webhook-Geheimnis – **umgesetzt** (ADR-013, ADR-014) |
+| ~~`WebhookDelivery`~~ | 5 | Empfangene Zustellungen, roh – **umgesetzt** (ADR-015) |
 
 Zu jedem Modell wird hier festgehalten: Felder, Constraints, Indizes – und **warum** ein Index
 gesetzt wurde.

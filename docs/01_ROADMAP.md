@@ -222,8 +222,8 @@ Signatur aus, nicht mit einer Identität. Das ist der eigentliche Lehrinhalt.
 
 **Definition of Done** – die Scheiben, jede einzeln mergebar:
 
-- [ ] 5.1 Datenmodell: `RepositoryConnection`, `WebhookDelivery`, `Activity.source`, neue
-      Ereignistypen, Migration, `UNIQUE` auf `deliveryId`
+- [x] 5.1 Datenmodell: `RepositoryConnection`, `WebhookDelivery`, `Activity.source`, neue
+      Ereignistypen, Migration, `UNIQUE` auf `deliveryId` (16.08.2026)
 - [ ] 5.2 Repository verbinden und trennen – Endpoints, Geheimnis erzeugen und verschlüsseln,
       **einmalige** Klartextanzeige, negative Tests (fremde Organisation ⇒ 404, `MEMBER` ⇒ 403)
 - [ ] 5.3 `POST /webhooks/github` – Rohrumpf, Signaturprüfung mit `timingSafeEqual`, `ping`,
