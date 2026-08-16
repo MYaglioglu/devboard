@@ -237,8 +237,9 @@ Signatur aus, nicht mit einer Identität. Das ist der eigentliche Lehrinhalt.
       sich nicht sinnvoll herauslassen, ohne einen 500er bei jeder Wiederholung stehen zu lassen.
       Diese Scheibe ist deshalb der Beweis, nicht die Umsetzung. Ehrlicher, als den Schnitt
       nachträglich so zu erzählen, als hätte er gepasst.
-- [ ] 5.5 Verarbeitung: `push` und `pull_request` in Feed-Einträge übersetzen, Zustand je Zeile,
-      gescheiterte Zustellungen wiederholbar
+- [x] 5.5 Verarbeitung: `push` und `pull_request` in Feed-Einträge übersetzen, Zustand je Zeile,
+      gescheiterte Zustellungen wiederholbar. Dabei einen echten Entwurfsfehler gefunden –
+      dieselbe Zustellung wurde zweimal verarbeitet (16.08.2026)
 - [ ] 5.6 Frontend: Repository auf der Projektseite verbinden, GitHub-Ereignisse im Feed mit
       eigener Herkunftskennzeichnung
 - [ ] 5.7 `10_SECURITY.md`, Aufbewahrungsfrist für `webhook_deliveries`, Interviewfragen, Handbuch
