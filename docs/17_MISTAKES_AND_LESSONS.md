@@ -919,3 +919,95 @@ Danach wurde er umgebaut: Die Verarbeitungstests legen die Zeile jetzt **direkt*
 Endpoint zu gehen. Ein Test, der einen Hintergrundvorgang neben sich laufen hat, prüft dessen
 Zeitverhalten mit – und das ist genau die Sorte Test, die in Scheibe 5.4 auf die harte Tour
 besichtigt wurde.
+
+---
+
+## 2026-08-16 – `npm run start:prod` war seit Sprint 1 kaputt, 441 Tests haben es nicht gemerkt
+
+**Was passiert ist.** Das frisch gebaute Docker-Image startete nicht:
+
+```
+Error: Cannot find module '/app/dist/main'
+```
+
+Im Image lag die Datei unter `dist/src/main.js`. Der erste Verdacht war das Dockerfile – falsch.
+Lokal war es **genauso**, und zwar seit jeher.
+
+**Die Ursache.** TypeScript leitet das Wurzelverzeichnis der Ausgabe aus dem gemeinsamen Nenner
+aller kompilierten Dateien ab. `tsconfig.build.json` schloss `test` und `**/*spec.ts` aus, aber
+nicht `prisma.config.ts` und `scripts/` – und die liegen **neben** `src/`. Damit war der gemeinsame
+Nenner das Projektverzeichnis, und alles rutschte eine Ebene tiefer. `"start:prod": "node
+dist/main"` zeigte ins Leere.
+
+**Warum es niemand gemerkt hat.** Weil das Skript nie aufgerufen wurde:
+
+- In der Entwicklung läuft `nest start --watch` – der kompiliert im Speicher und benutzt `dist/`
+  gar nicht.
+- In der CI läuft `npm run build`. Der Build war **grün**: Er hat ja fehlerfrei kompiliert. Nur
+  eben nach einem anderen Pfad, als das Startskript erwartete.
+- Die 441 Tests laufen über `ts-jest` gegen den Quelltext, nie gegen `dist/`.
+
+Es gab also keinen einzigen Moment, in dem jemand das **Bauergebnis ausgeführt** hat. Das Docker-
+Image war die erste Gelegenheit dazu – und hat den Fehler in der ersten Sekunde gefunden.
+
+**Das Learning.** Zum dritten Mal dieselbe Lehre, jetzt in einer neuen Ausprägung:
+
+> **Die Anwendung wird gestartet, nicht nur getestet.** In Sprint 2 hieß das: im Browser aufrufen.
+> In Sprint 5: das Layout ansehen. Hier: das *Artefakt* ausführen, nicht nur bauen.
+
+Ein grüner Build beweist, dass der Compiler zufrieden war. Er beweist nicht, dass das Ergebnis
+startet. Das sind zwei verschiedene Aussagen, und die CI prüfte bisher nur die erste.
+
+**Was sich geändert hat.** `scripts` und `prisma.config.ts` stehen jetzt in `exclude`, das Ergebnis
+liegt unter `dist/main.js`. Beide werden nicht aus `dist/` heraus benutzt: Die Prisma-Konfiguration
+liest der CLI direkt als TypeScript, die Skripte laufen über ts-node.
+
+**Was noch offen ist.** Die CI baut weiterhin nur. Ein Schritt, der das gebaute Image **startet**
+und `/health` abfragt, gehört in Scheibe 6.4 – sonst ist die nächste Fassung dieses Fehlers wieder
+erst in Produktion sichtbar.
+
+---
+
+## 2026-08-16 – Ein Schalter, der 350 MB spart und das Passwort-Hashing mitnimmt
+
+**Was passiert ist.** Das Produktions-Image war 743 MB groß. Die Messung im Container zeigte, woran
+es lag: der Prisma-CLI mit `@prisma/engines`, `@prisma/dev` (darin ein vollständiges PostgreSQL als
+WebAssembly), `effect` und `typescript` – rund 270 MB für einen Befehl, der einmal pro Deploy läuft.
+
+Der Versuch, das mit `npm ci --omit=dev` zu lösen, änderte **exakt nichts**: 743 MB, Byte für Byte.
+`@prisma/client` führt `prisma` und `typescript` als optionale Peer-Abhängigkeiten, npm vermerkt sie
+im Lockfile als `devOptional`, und `--omit=dev` lässt solche Einträge stehen.
+
+Der nächste Griff war `--omit=optional`. Er wirkte – 389 MB – und zerstörte die Anwendung:
+
+```
+Error: Cannot find module './argon2.linux-x64-musl.node'
+```
+
+`@node-rs/argon2` verteilt seine plattformabhängigen Binärdateien als `optionalDependencies`. Mit
+dem Prisma-CLI flog auch das Passwort-Hashing raus.
+
+**Der eigentliche Fehler war nicht der Schalter, sondern die Prüfung.** Nach dem ersten Umbau war
+der Nachweis: „Image ist kleiner, Paket `@node-rs` ist im Verzeichnis vorhanden." Beides stimmte,
+und beides sagte nichts. Der Health-Check hasht kein Passwort – er hätte auch bei kaputtem argon2
+`200` gemeldet, wenn das Modul nur später geladen worden wäre.
+
+**Das Learning.**
+
+> **Ein Nachweis muss den Pfad benutzen, den er absichern soll.** „Die Datei ist da" ist keine
+> Aussage über „die Funktion arbeitet". Dieselbe Lehre wie bei der Mutationsprobe aus Sprint 2, nur
+> von der anderen Seite: Dort war ein Test grün, obwohl der Schutz fehlte. Hier war eine Prüfung
+> grün, obwohl die Funktion fehlte.
+
+Der zweite Anlauf prüft deshalb `POST /auth/register`, `POST /auth/login` mit richtigem Passwort
+(`200`) und mit falschem (`401`). Der letzte Fall ist der interessante: Er beweist, dass argon2
+tatsächlich **rechnet** und nicht bloß irgendetwas zurückgibt.
+
+**Was sich geändert hat.** `--omit=dev --omit=optional` bleibt, und die native argon2-Binärdatei
+wird gezielt aus der Bau-Stufe zurückgeholt – lockfile-genau statt per `npm install`
+nachinstalliert, sonst könnte im Image eine andere Version landen als die getestete.
+
+**Nebenbefund für Scheibe 6.5.** Bei der Durchsicht von `main.ts` fiel auf, dass
+`app.enableShutdownHooks()` fehlt. Ohne den Aufruf läuft `onModuleDestroy` beim Herunterfahren nicht
+– `$disconnect()` bleibt liegen und Verbindungen hängen im Pool. Kein Fehler dieses Sprints, aber
+einer, den erst das Nachdenken über SIGTERM sichtbar gemacht hat.

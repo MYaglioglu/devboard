@@ -191,3 +191,19 @@ Eine Sidebar, die je Projekt die offenen Aufgaben zeigt. Der Reiz liegt nicht im
 in der Falle: pro Projekt eine Abfrage wäre genau das N+1, das in Sprint 4 gemessen und beseitigt
 wurde. Richtig wäre ein zusätzliches `groupBy` nach `projectId` im bestehenden
 Dashboard-Endpoint – eine Abfrage für alle Projekte, mit derselben Messung als Beleg.
+
+### Selbst gehostetes PaaS statt Reverse Proxy von Hand *(Sprint 6, 16.08.2026)*
+**Coolify** (oder Dokku, CapRover) auf dem eigenen Server installieren und darauf das
+PaaS-Erlebnis bekommen: Repository verbinden, `git push` deployt, TLS automatisch, Logs im
+Dashboard. Kosten bleiben die eines Servers.
+
+Bewusst **nicht** in Sprint 6, weil es genau den Teil abnimmt, der dort der Lerninhalt ist –
+Reverse Proxy, TLS-Erneuerung, Deploy-Mechanik. Interessant wird es danach: Sobald das einmal von
+Hand verstanden ist, ist der Umstieg eine bewusste Vereinfachung statt einer Abkürzung. Genau so
+lässt er sich auch im Gespräch erzählen.
+
+### Startprobe im CI-Lauf *(Sprint 6, 16.08.2026)*
+Die CI baut das Backend, startet es aber nie – deshalb blieb `npm run start:prod` seit Sprint 1
+unbemerkt kaputt (siehe `17_MISTAKES_AND_LESSONS.md`). Ein Schritt, der das gebaute Image startet
+und `/health` abfragt, ist in Scheibe 6.4 vorgesehen. Falls er dort aus Zeitgründen entfällt,
+gehört er hierher und nicht ins Vergessen.

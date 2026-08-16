@@ -674,3 +674,86 @@ Vermerkt im Backlog.
 - **Negativ:** `webhook_deliveries` speichert rohe Nutzdaten von GitHub. Sie enthalten
   Commit-Nachrichten und Benutzernamen; die Tabelle braucht deshalb eine Aufbewahrungsfrist und
   gehört in `10_SECURITY.md`.
+
+---
+
+## ADR-016: Betrieb auf drei Plattformen statt auf einem Server
+
+**Status:** Angenommen (16.08.2026)
+
+### Kontext
+Die Roadmap sah für Sprint 6 vor: „Multi-Stage-Dockerfiles, nginx als Reverse Proxy, Staging- und
+Produktionsumgebung auf dem eigenen Hetzner-Server". Also alles auf einer Maschine – Frontend,
+Backend und PostgreSQL.
+
+Vor der Umsetzung stand die Frage, ob das überhaupt der richtige Zuschnitt ist. Zur Auswahl standen
+drei Wege:
+
+1. **Alles als PaaS** (Vercel, Render, Neon). Kein Betriebssystem, kein SSH, ein Nachmittag Arbeit.
+2. **Alles auf einem eigenen Server.** Volle Kontrolle, ~5 €/Monat, zwei bis vier Tage Arbeit und
+   dauerhafte Pflege.
+3. **Geteilt** nach der Frage, wo ein Fehler wie viel kostet.
+
+Die harte Randbedingung dieses Projekts ist unverändert **Zeit bis zum nächsten Job** – aber sie ist
+nicht die einzige. Betrieb ist die letzte offene Lücke im Profil: Backend deckt DevBoard inzwischen
+ab, Deployment bisher nicht.
+
+Ein Argument, das während der Diskussion **auftauchte und wieder verworfen wurde**, sei hier
+festgehalten, weil es sonst irgendwann als Begründung zurückkehrt: „Serverless kann unser
+Outbox-Muster nicht ausführen." Das stimmt für Serverless, aber DevBoard hat **keine Outbox** –
+ADR-015 hat ausdrücklich die *Inbox* gebaut, und es gibt bis heute keinen Scheduler im Code. Die
+Begründung wäre falsch gewesen.
+
+### Entscheidung
+Aufgeteilt nach **Schadenshöhe**, nicht nach Bequemlichkeit:
+
+| Teil | Wo | Warum dort |
+|---|---|---|
+| Next.js | **Vercel** | Kostenlos, von den Next.js-Machern, Vorschau-URL pro Pull Request. Ein Ausfall kostet eine Neubereitstellung, mehr nicht. |
+| NestJS | **Hetzner** (Docker) | Kein Kaltstart, ein dauerhafter Prozess, und der Lerninhalt des Sprints liegt genau hier. |
+| PostgreSQL | **Neon** | Backups und Wiederherstellung durch den Anbieter. |
+
+Der Bruch in der Logik ist die Datenbank, und er ist beabsichtigt: **Ein abgestürztes Backend
+startet neu, eine verlorene Datenbank ist weg.** Selbst betriebene Backups sind erst dann Backups,
+wenn sie einmal zurückgespielt wurden – und das ist Arbeit, die in diesem Projekt niemand
+regelmäßig leisten wird. Wo der Schaden nicht reparierbar ist, wird ausgelagert. Wo er eine
+Wiederholung kostet, wird selbst betrieben.
+
+### Was daraus technisch folgt
+Neon ist **öffentlich erreichbar**. Damit kann der GitHub-Actions-Runner Migrationen selbst
+ausführen, und der Prisma-CLI muss nicht ins Produktions-Image (gemessen: 743 MB gegenüber 390 MB).
+Läge PostgreSQL auf dem Server hinter einer Firewall, wäre dieser Weg zu.
+
+Der Preis dieser Trennung ist echt und gehört benannt: Migration und neuer Code werden zu
+**verschiedenen Zeitpunkten** wirksam. Für einen Moment läuft die alte Anwendung gegen das neue
+Schema. Migrationen müssen deshalb abwärtskompatibel sein – Spalte hinzufügen ja, Spalte umbenennen
+nur in zwei Schritten.
+
+### Alternativen
+**Alles als PaaS.** Verworfen, aber knapp. Es wäre schneller und für den reinen Zweck „Link im
+Lebenslauf" ausreichend. Zwei Gründe dagegen: Die kostenlosen Backend-Stufen schlafen nach etwa 15
+Minuten ein, und ein Recruiter wartet keine 30 bis 60 Sekunden auf eine weiße Seite. Und der Sprint
+hätte keinen Lerninhalt mehr gehabt, der über „Repository verbinden" hinausgeht.
+
+**Alles auf dem eigenen Server**, wie ursprünglich geplant. Verworfen wegen der Datenbank – siehe
+oben. Das Frontend zusätzlich selbst auszuliefern hätte weder etwas gespart noch etwas gelehrt: Es
+sind statische Dateien, und Vercel liefert sie kostenlos und näher am Nutzer.
+
+**GitHub Actions als Deployment-Ziel** über einen fertigen Dienst wie Coolify. Nicht verworfen,
+sondern **aufgeschoben**: Coolify nimmt genau den Teil ab, der im Gespräch am wenigsten wert ist.
+Für diesen Sprint ist der Reverse Proxy von Hand aber der Lerninhalt. Vermerkt im Backlog.
+
+### Konsequenzen
+- **Positiv:** Kein Kaltstart. Die Seite antwortet sofort, auch nach Wochen ohne Zugriff.
+- **Positiv:** Der Lerninhalt bleibt: Docker in Produktion, Reverse Proxy, TLS, Staging, Rollback.
+- **Positiv:** Das unwiederbringliche Risiko – Datenverlust – liegt bei einem Anbieter, der davon
+  lebt, es nicht eintreten zu lassen.
+- **Positiv:** Migrationen laufen in der Pipeline; das Produktions-Image bleibt schlank.
+- **Negativ:** Drei Konten, drei Dashboards, drei Orte für Umgebungsvariablen. Ein Wert, der an
+  zwei Stellen gepflegt werden muss, läuft irgendwann auseinander.
+- **Negativ:** Die Anwendung ist über drei Netze verteilt. Jede Anfrage überquert zwei
+  Anbietergrenzen, und bei der Fehlersuche gibt es kein gemeinsames Protokoll.
+- **Negativ:** Der Server bleibt in **voller** Verantwortung: Sicherheitsupdates, Erreichbarkeit,
+  TLS-Erneuerung. Ohne Uptime-Wächter erfährt niemand von einem Ausfall (Scheibe 6.7).
+- **Negativ:** Die Trennung erzwingt abwärtskompatible Migrationen. Das ist gute Praxis, aber ab
+  jetzt eine Pflicht und keine Empfehlung.
