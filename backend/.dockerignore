@@ -1,0 +1,44 @@
+# Was NICHT in den Build-Kontext geht.
+#
+# Der Build-Kontext ist alles, was der Docker-Daemon vor dem ersten Befehl
+# geschickt bekommt. Ohne diese Datei waeren das hier ~400 MB node_modules -
+# bei jedem Build neu uebertragen, nur um im Dockerfile durch `npm ci`
+# ersetzt zu werden.
+#
+# Der zweite Grund ist wichtiger als der erste: Was nicht im Kontext ist,
+# kann auch nicht versehentlich ins Image kopiert werden. Dieselbe Logik wie
+# beim Schreiber ohne eigenen PrismaService - Schutz durch Abwesenheit.
+
+# Wird im Image selbst installiert, passend zur Zielplattform.
+# Ein lokal unter Windows gebautes node_modules waere in Linux ohnehin kaputt.
+node_modules
+
+# Wird im Image gebaut. Ein mitkopiertes dist/ vom Entwicklungsrechner waere
+# schlimmer als keins: Es koennte aelter sein als der Quelltext daneben, und
+# niemand wuerde es merken.
+dist
+
+# Der generierte Prisma-Client. Entsteht im Image durch `prisma generate`.
+src/generated
+
+# GEHEIMNISSE. Der teuerste Eintrag in dieser Datei.
+# Ein Image mit .env darin gibt seine Geheimnisse an jeden weiter, der es
+# ziehen kann - und `docker history` zeigt sie sogar, wenn eine spaetere
+# Schicht die Datei wieder loescht. Schichten sind unveraenderlich.
+.env
+.env.*
+
+# Testcode und Berichte laufen in der CI, nicht in Produktion.
+test
+coverage
+*.spec.ts
+
+# Werkzeug-Kram ohne Nutzen zur Laufzeit.
+.git
+.gitignore
+.eslintrc*
+eslint.config.mjs
+.prettierrc
+Dockerfile
+.dockerignore
+README.md

@@ -1,4 +1,31 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+
+  // WARUM hier mehr ausgeschlossen wird als das Uebliche:
+  //
+  // TypeScript leitet das Wurzelverzeichnis der Ausgabe aus dem gemeinsamen
+  // Nenner ALLER kompilierten Dateien ab. Solange `prisma.config.ts` und
+  // `scripts/` mitkompiliert wurden, war dieser Nenner das Projektverzeichnis
+  // - und das Ergebnis landete unter `dist/src/main.js` statt `dist/main.js`.
+  //
+  // Damit war `npm run start:prod` ("node dist/main") seit jeher kaputt. Es
+  // ist nur nie aufgefallen: In der Entwicklung laeuft `nest start --watch`,
+  // in der CI wird gebaut, aber nicht gestartet. Sichtbar wurde es erst beim
+  // ersten Start des Docker-Images - also genau bei der ersten Gelegenheit,
+  // bei der jemand das Bauergebnis wirklich AUSGEFUEHRT hat.
+  //
+  // Dieselbe Lehre wie aus Sprint 2 und Sprint 5, zum dritten Mal: Die
+  // Anwendung wird gestartet, nicht nur getestet.
+  //
+  // Beide Dateien werden nicht aus `dist/` heraus benutzt: `prisma.config.ts`
+  // liest der Prisma-CLI direkt als TypeScript, die Skripte laufen ueber
+  // ts-node.
+  "exclude": [
+    "node_modules",
+    "test",
+    "dist",
+    "scripts",
+    "prisma.config.ts",
+    "**/*spec.ts"
+  ]
 }
