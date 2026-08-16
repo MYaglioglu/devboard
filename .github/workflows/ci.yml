@@ -49,6 +49,17 @@ jobs:
       # dagegen ein schwerer Fehler: Die Datei ist im Repository sichtbar.
       JWT_SECRET: nur-fuer-die-ci-ein-wegwerf-geheimnis-mit-32-zeichen
       JWT_ACCESS_TTL: 15m
+      # Ebenfalls ein Wegwerf-Wert, aus demselben Grund wie oben. Genau 64
+      # Hex-Zeichen, weil AES-256 einen Schluessel von genau 32 Byte verlangt.
+      #
+      # Dass diese Zeile hier fehlte, hat den ersten CI-Lauf von Scheibe 5.2
+      # rot gemacht - und zwar richtig: Die Fail-Fast-Pruefung im Env-Schema
+      # hat den Start verweigert, statt spaeter beim Verschluesseln
+      # umzufallen. Der Fehlschlag stand an der Stelle, an der er hingehoert.
+      WEBHOOK_ENCRYPTION_KEY: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+      # Ohne Vorgabe wuerde hier localhost:3000 stehen; der Wert wird in den
+      # Tests nur als Praefix der angezeigten Webhook-URL geprueft.
+      PUBLIC_BASE_URL: http://localhost:3000
 
     defaults:
       run:
