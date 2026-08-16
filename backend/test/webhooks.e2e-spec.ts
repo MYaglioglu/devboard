@@ -325,6 +325,223 @@ describe('Webhooks (e2e)', () => {
     });
   });
 
+  /**
+   * ==========================================================================
+   * IDEMPOTENZ - SCHEIBE 5.4
+   * ==========================================================================
+   * GitHub stellt bei jedem Fehlschlag erneut zu, mit DERSELBEN
+   * `X-GitHub-Delivery`. Die Zusage lautet: Dieselbe Zustellung hat dieselbe
+   * WIRKUNG wie eine einzelne - genau eine Zeile.
+   *
+   * Der Schutz liegt im `UNIQUE (connectionId, deliveryId)`, nicht in einem
+   * `findFirst` davor. Warum das ein Unterschied ist, zeigt erst der
+   * nebenlaeufige Test unten.
+   */
+  describe('Idempotenz', () => {
+    it('schreibt eine wiederholte Zustellung nicht zweimal', async () => {
+      const verbindung = await baueVerbindung('wiederholt');
+      const rumpf = nutzlast('einmal gesendet');
+      const signatur = erzeugeSignatur(rumpf, verbindung.geheimnis);
+      const zustellungsId = randomUUID();
+
+      const erste = await stelleZu(verbindung.id, rumpf, signatur, {
+        ereignis: 'push',
+        zustellung: zustellungsId,
+      }).expect(202);
+
+      const zweite = await stelleZu(verbindung.id, rumpf, signatur, {
+        ereignis: 'push',
+        zustellung: zustellungsId,
+      }).expect(202);
+
+      expect(erste.body).toEqual({ status: 'angenommen' });
+      // 202 auch beim zweiten Mal, und das ist wichtig: Eine Wiederholung ist
+      // kein Fehler, sondern erwartetes Verhalten. Bekaeme GitHub hier einen
+      // 4xx oder 5xx, wuerde es WEITER wiederholen.
+      expect(zweite.body).toEqual({ status: 'bereits bekannt' });
+
+      expect(
+        await prisma.webhookDelivery.count({
+          where: { connectionId: verbindung.id },
+        }),
+      ).toBe(1);
+    });
+
+    /**
+     * ========================================================================
+     * DIE ZUSICHERUNG SELBST - DETERMINISTISCH, OHNE JEDE NEBENLAEUFIGKEIT
+     * ========================================================================
+     * Dieser Test geht bewusst an der API vorbei direkt in die Datenbank. Er
+     * prueft die eine Sache, auf der alles andere aufbaut: Der Constraint
+     * EXISTIERT und weist eine doppelte Kombination ab.
+     *
+     * Warum das getrennt gehoert: Alle Tests, die ueber den Endpoint gehen,
+     * haengen an einer Verschraenkung von Anfragen - und die bestimmt das
+     * Betriebssystem, nicht der Test. Diese Zusicherung dagegen gilt
+     * unabhaengig von jeder Reihenfolge, weil die Datenbank sie gibt. Sie ist
+     * damit die einzige Aussage dieser Suite, die IMMER dasselbe sagt.
+     *
+     * Und sie ist die Aussage, die zaehlt: Der Endpoint muss die Verletzung
+     * nur noch richtig BEANTWORTEN. Dass es sie gibt, steht hier.
+     */
+    it('die Datenbank weist eine doppelte (connectionId, deliveryId) selbst ab', async () => {
+      const verbindung = await baueVerbindung('constraint');
+      const zustellungsId = randomUUID();
+
+      const zeile = {
+        connectionId: verbindung.id,
+        eventType: 'push',
+        deliveryId: zustellungsId,
+        payload: { probe: true },
+      };
+
+      await prisma.webhookDelivery.create({ data: zeile });
+
+      // P2002 ist Prismas Code fuer eine verletzte Eindeutigkeit. Geprueft
+      // wird der CODE und nicht der Meldungstext - Texte aendern sich mit
+      // jeder Hauptversion, Codes sind Teil der Schnittstelle.
+      await expect(
+        prisma.webhookDelivery.create({ data: zeile }),
+      ).rejects.toMatchObject({ code: 'P2002' });
+    });
+
+    /**
+     * ========================================================================
+     * DER NEBENLAEUFIGE TEST - UND WAS ER WIRKLICH BEWEIST
+     * ========================================================================
+     * Der sequenzielle Test oben ist gruen - auch mit einer naiven Umsetzung,
+     * die erst nachsieht und dann schreibt. Denn wenn die zweite Anfrage erst
+     * NACH der ersten losgeht, findet ihr `findFirst` die Zeile brav. Die
+     * Luecke liegt genau dazwischen: Zwei Zustellungen, die GLEICHZEITIG
+     * laufen, finden beide nichts und schreiben beide.
+     *
+     * Deshalb gehen die Anfragen ohne `await` dazwischen raus und werden erst
+     * danach gemeinsam abgewartet. Ein `await` in der Schleife machte diesen
+     * Test wertlos, ohne dass er rot wuerde - dieselbe Lehre wie beim
+     * `Promise.all` in Sprint 2, beim `Date.now()` in Sprint 3 und bei der
+     * Seitengrenze in Sprint 4.
+     *
+     * ========================================================================
+     * WARUM HIER 30 STEHT UND NICHT 5
+     * ========================================================================
+     * In der ersten Fassung waren es fuenf - und die Mutationsprobe blieb
+     * GRUEN: Die naive Umsetzung bestand alle 13 Tests. Fuenf Anfragen
+     * reichten nicht, um die Verschraenkung herbeizufuehren. Der Test sah aus
+     * wie ein Nebenlaeufigkeitstest und war keiner.
+     *
+     * Bei 30 faellt die naive Fassung zuverlaessig, und zwar nur an dieser
+     * einen Stelle.
+     *
+     * Der ehrliche Teil, der dazugehoert: Auch 30 ist eine Zahl aus einer
+     * Messung, keine Garantie. Die ZUSICHERUNG selbst haengt nicht daran -
+     * sie steht im Test darueber und gilt immer. Dieser Test hier zeigt, dass
+     * der Endpoint die Verletzung unter Last richtig beantwortet, statt sie
+     * als 500 durchzureichen. Das ist weniger, als der Name verspricht, und
+     * deshalb steht es hier.
+     */
+    it('schreibt auch bei vielen gleichzeitigen Zustellungen nur eine Zeile', async () => {
+      const verbindung = await baueVerbindung('gleichzeitig');
+      const rumpf = nutzlast('gleichzeitig');
+      const signatur = erzeugeSignatur(rumpf, verbindung.geheimnis);
+      const zustellungsId = randomUUID();
+
+      // KEIN `await` in dieser Schleife - die Anfragen gehen alle raus,
+      // bevor die erste beantwortet ist. Genau darum geht es.
+      const antworten = await Promise.all(
+        Array.from({ length: 30 }, () =>
+          stelleZu(verbindung.id, rumpf, signatur, {
+            ereignis: 'push',
+            zustellung: zustellungsId,
+          }),
+        ),
+      );
+
+      // Alle werden quittiert - keine darf einen Fehler bekommen. Ohne das
+      // Abfangen der Constraint-Verletzung stuenden hier 29 mal 500.
+      for (const antwort of antworten) {
+        expect(antwort.status).toBe(202);
+      }
+
+      // Genau eine hat wirklich geschrieben.
+      const angenommen = antworten.filter(
+        (antwort) =>
+          (antwort.body as { status: string }).status === 'angenommen',
+      );
+      expect(angenommen).toHaveLength(1);
+
+      expect(
+        await prisma.webhookDelivery.count({
+          where: { connectionId: verbindung.id },
+        }),
+      ).toBe(1);
+    });
+
+    /**
+     * ========================================================================
+     * WARUM DER CONSTRAINT ZUSAMMENGESETZT IST UND NICHT GLOBAL
+     * ========================================================================
+     * Ein globales `UNIQUE (deliveryId)` waere die Zusage "diese Zustellung
+     * gab es im ganzen System schon". Damit koennte die Zustellung EINER
+     * Organisation die einer anderen abweisen - ein Kanal zwischen Mandanten.
+     *
+     * Dieser Test haelt die engere Zusage fest: DIESE Verbindung hat DIESE
+     * Zustellung schon gesehen. Ohne ihn koennte jemand spaeter auf ein
+     * globales UNIQUE umstellen, und alle anderen Tests blieben gruen.
+     */
+    it('behandelt dieselbe deliveryId an zwei Verbindungen getrennt', async () => {
+      const eine = await baueVerbindung('geteilt-eins');
+      const andere = await baueVerbindung('geteilt-zwei');
+      const rumpf = nutzlast('dieselbe Kennung');
+      const zustellungsId = randomUUID();
+
+      await stelleZu(eine.id, rumpf, erzeugeSignatur(rumpf, eine.geheimnis), {
+        ereignis: 'push',
+        zustellung: zustellungsId,
+      }).expect(202);
+
+      const zweite = await stelleZu(
+        andere.id,
+        rumpf,
+        erzeugeSignatur(rumpf, andere.geheimnis),
+        { ereignis: 'push', zustellung: zustellungsId },
+      ).expect(202);
+
+      // Nicht "bereits bekannt": Fuer DIESE Verbindung ist sie neu.
+      expect(zweite.body).toEqual({ status: 'angenommen' });
+
+      expect(
+        await prisma.webhookDelivery.count({
+          where: { deliveryId: zustellungsId },
+        }),
+      ).toBe(2);
+    });
+
+    it('schreibt zwei verschiedene Zustellungen als zwei Zeilen', async () => {
+      const verbindung = await baueVerbindung('zwei-verschiedene');
+      const rumpf = nutzlast('zwei Ereignisse');
+      const signatur = erzeugeSignatur(rumpf, verbindung.geheimnis);
+
+      // Die Gegenprobe zum ersten Test. Ohne sie waere die Suite auch dann
+      // gruen, wenn der Endpoint NIE eine zweite Zeile schriebe - etwa weil
+      // versehentlich nur auf `connectionId` eindeutig geprueft wird.
+      for (const nummer of [1, 2]) {
+        await stelleZu(verbindung.id, rumpf, signatur, {
+          ereignis: 'push',
+          // Verschiedene Kennungen - das ist der ganze Unterschied zum Test
+          // oben. `nummer` steht nur da, damit die Schleife eine benutzte
+          // Laufvariable hat.
+          zustellung: `${randomUUID()}-${nummer}`,
+        }).expect(202);
+      }
+
+      expect(
+        await prisma.webhookDelivery.count({
+          where: { connectionId: verbindung.id },
+        }),
+      ).toBe(2);
+    });
+  });
+
   const erwarteKeineZustellung = async (verbindungsId: string) => {
     const anzahl = await prisma.webhookDelivery.count({
       where: { connectionId: verbindungsId },
