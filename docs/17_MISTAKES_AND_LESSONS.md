@@ -728,3 +728,82 @@ Testbedingung.
 Und die zweite, unbequemere Hälfte: **Ohne die Mutationsprobe wäre das nicht aufgefallen.** Der
 Test war grün, sah gründlich aus und hätte jede spätere Änderung an der Keyset-Bedingung
 abgesegnet – gefährlicher als gar kein Test.
+
+---
+
+## 2026-08-16 – Fünf gleichzeitige Anfragen waren nicht gleichzeitig genug
+
+**Zum fünften Mal dieselbe Lehre – aber diesmal vor der Auslieferung gefunden.**
+
+### Was passiert ist
+
+Scheibe 5.4 sollte nachweisen, dass eine wiederholt zugestellte `X-GitHub-Delivery` nur eine Zeile
+erzeugt. Der Schutz liegt im `UNIQUE (connectionId, deliveryId)` und im Abfangen der Verletzung –
+ausdrücklich **nicht** in einem `findFirst` davor, weil zwischen Lesen und Schreiben zwei
+gleichzeitige Zustellungen durchpassen.
+
+Der Test dazu schickte **fünf** Anfragen ohne `await` dazwischen, per `Promise.all`. Er war grün.
+
+Dann kam die Mutationsprobe: Ich habe die Umsetzung durch die **naive Fassung** ersetzt – erst
+`findFirst`, dann `create`, also genau die Lücke, die der Test finden sollte.
+
+**Ergebnis: alle 13 Tests grün.** Die naive Fassung bestand die gesamte Suite.
+
+### Warum das schlimmer ist als ein roter Test
+
+Ein roter Test sagt, dass etwas kaputt ist. Ein Test, der eine kaputte Umsetzung durchwinkt, sagt
+gar nichts – sieht aber aus, als sagte er etwas. Er hieß „schreibt auch bei fünf gleichzeitigen
+Zustellungen nur eine Zeile", stand im Abschnitt *Idempotenz*, und niemand hätte ihn im Review
+beanstandet.
+
+Fünf Anfragen reichten schlicht nicht, um die Verschränkung herbeizuführen. Bei **30** fällt die
+naive Fassung zuverlässig – und dann auch nur an dieser einen Stelle.
+
+### Die Lehre, zum fünften Mal
+
+| Sprint | Der Test, der den Grenzfall nur *wahrscheinlich* traf |
+|---|---|
+| 2 | `Promise.all` ohne echte Verschränkung |
+| 3 | `Date.now()` als Testisolierung |
+| 4 | Die Seitengrenze, die den Gleichstand nie erreichte |
+| 5 | Fünf gleichzeitige Anfragen, die nicht gleichzeitig genug waren |
+
+> **Ein Test, der einen Grenzfall nur *wahrscheinlich* erreicht, prüft ihn nicht.** Hängt die
+> Bedingung von einer Uhr, einer Reihenfolge oder einem Scheduler ab, muss der Test sie
+> **herstellen**, nicht abwarten.
+
+### Was ich diesmal anders gemacht habe
+
+Die vier Male davor kam der Fund durch Zufall oder erst im nächsten Sprint. Diesmal kam er aus der
+**Mutationsprobe**, also aus einem Verfahren, das ich absichtlich laufen lasse – und bevor ich dem
+Test vertraut habe.
+
+Das ist der praktische Wert der Regel „Schutz entfernen, Tests laufen lassen, Schutz zurückbauen".
+Sie prüft nicht den Code, sondern die Tests.
+
+### Was daraus im Code steht
+
+Die eigentliche Konsequenz ist nicht die 30. Auch 30 ist eine Zahl aus einer Messung, keine
+Garantie. Deshalb steht die **Zusicherung selbst** jetzt in einem eigenen, deterministischen Test:
+
+```ts
+await prisma.webhookDelivery.create({ data: zeile });
+
+await expect(
+  prisma.webhookDelivery.create({ data: zeile }),
+).rejects.toMatchObject({ code: 'P2002' });
+```
+
+Der geht an der API vorbei direkt in die Datenbank und hängt von **keiner** Verschränkung ab. Er
+sagt: Der Constraint existiert und weist eine doppelte Kombination ab. Das ist die Aussage, die
+zählt.
+
+Der nebenläufige Test daneben beweist etwas Kleineres, und das steht jetzt so in seinem Kommentar:
+dass der Endpoint die Verletzung unter Last **richtig beantwortet** – 202 statt 500 –, statt sie
+durchzureichen.
+
+> **Trenne die Zusicherung von ihrer Belastungsprobe.** Die Zusicherung muss deterministisch
+> prüfbar sein; die Belastungsprobe darf probabilistisch sein, solange man weiß, dass sie es ist.
+
+Und der Satz, den ich mir für das Gespräch merke: Ein Nebenläufigkeitstest, der nie rot wird, ist
+kein Nebenläufigkeitstest. Er ist ein Erfolgspfad mit einem irreführenden Namen.

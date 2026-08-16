@@ -230,8 +230,9 @@ Signatur aus, nicht mit einer Identität. Das ist der eigentliche Lehrinhalt.
 - [x] 5.3 `POST /webhooks/github/:connectionId` – Rohrumpf, Signaturprüfung mit `timingSafeEqual`,
       `ping`, Zustellung wegschreiben, `202`. Mutationsprobe: Prüfung entfernt, genau die vier
       vorhergesagten Tests wurden rot (16.08.2026)
-- [ ] 5.4 Idempotenz **nachweisen**: Test, der beide Zustellungen *gleichzeitig* absetzt, plus
-      Mutationsprobe am `UNIQUE`-Constraint.
+- [x] 5.4 Idempotenz **nachweisen**: deterministischer Test auf den Constraint, nebenläufiger Test
+      auf den Endpoint, Mutationsprobe gegen die naive Fassung – die bei fünf gleichzeitigen
+      Anfragen **nichts** rot machte und erst bei 30 fiel (16.08.2026)
       *Der Code dafür ist bereits in 5.3 entstanden* – das Abfangen der Constraint-Verletzung ließ
       sich nicht sinnvoll herauslassen, ohne einen 500er bei jeder Wiederholung stehen zu lassen.
       Diese Scheibe ist deshalb der Beweis, nicht die Umsetzung. Ehrlicher, als den Schnitt

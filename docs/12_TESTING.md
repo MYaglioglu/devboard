@@ -150,6 +150,32 @@ Sprint 5:
 |---|---|
 | `organizationId` aus den drei `where`-Bedingungen im `RepositoryConnectionsService` | 2 E2E, punktgenau |
 | Die Signaturprüfung im `WebhookEmpfangService` | 4 E2E, punktgenau |
+| Constraint-Schutz durch die naive Fassung (`findFirst` + `if`) ersetzt, **5** gleichzeitige Anfragen | **0** – siehe unten |
+| Dieselbe Probe, **30** gleichzeitige Anfragen | 1 E2E, punktgenau |
+
+### Die Probe, die den Test überführt hat – nicht den Code
+
+Der Idempotenz-Test schickte in seiner ersten Fassung **fünf** Anfragen ohne `await` dazwischen. Er
+war grün. Dann wurde der Schutz durch die **naive** Fassung ersetzt – erst `findFirst`, dann
+`create`, also genau die Lücke, die der Test finden sollte.
+
+**Alle 13 Tests blieben grün.** Fünf Anfragen reichten nicht, um die Verschränkung herbeizuführen.
+
+Bei 30 fällt die naive Fassung zuverlässig, und dann auch nur an dieser einen Stelle. Aber die
+Konsequenz ist nicht die 30 – auch sie ist eine Zahl aus einer Messung, keine Garantie. Die
+Konsequenz ist eine Trennung:
+
+> **Die Zusicherung muss deterministisch prüfbar sein; die Belastungsprobe darf probabilistisch
+> sein, solange man weiß, dass sie es ist.**
+
+Die Zusicherung steht deshalb jetzt in einem eigenen Test, der an der API vorbei direkt in die
+Datenbank geht und von keiner Verschränkung abhängt: zweimal dieselbe Zeile einfügen, der zweite
+Versuch muss mit `P2002` scheitern. Der nebenläufige Test daneben beweist das Kleinere – dass der
+Endpoint die Verletzung unter Last mit 202 beantwortet statt mit 500.
+
+Ausführlich in `17_MISTAKES_AND_LESSONS.md`. Es ist das fünfte Mal in diesem Projekt, dass ein Test
+einen Grenzfall nur *wahrscheinlich* erreicht hat – und das erste Mal, dass die Mutationsprobe es
+gefunden hat, bevor dem Test vertraut wurde.
 
 Bei der Signaturprüfung war die Erwartung ebenfalls **vorher** notiert: „Rot werden *ohne
 Signatur*, *mit falscher Signatur*, *nachträglich veränderter Rumpf* und der `ping`-Test, dessen
