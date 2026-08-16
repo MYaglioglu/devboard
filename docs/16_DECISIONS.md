@@ -509,3 +509,168 @@ scheitern, ohne dass die Änderung falsch wird.
   garantiert aus derselben Quelle.
 - **Negativ, offen benannt:** Der Schutz vor einem Fehler *zwischen* Änderung und Protokolleintrag
   hat keinen wachenden Test (siehe `12_TESTING.md`). Er ist real, aber unbelegt.
+
+---
+
+## ADR-013: Repository-Webhook statt GitHub App
+
+**Status:** Angenommen (16.08.2026)
+
+### Kontext
+Sprint 5 soll GitHub-Ereignisse in den Aktivitäts-Feed einspeisen. GitHub bietet dafür zwei Wege.
+Eine **GitHub App** ist der offizielle, produktreife: Sie wird in einer Organisation installiert,
+bekommt feingranulare Berechtigungen, authentifiziert sich mit einem selbst signierten JWT gegen
+kurzlebige Installations-Token und darf im Namen der Installation auch schreiben. Ein
+**Repository-Webhook** ist die einfache Variante: eine URL, ein selbst vergebenes Geheimnis, eine
+Auswahl an Ereignissen – GitHub schickt bei jedem davon ein `POST`.
+
+### Entscheidung
+Repository-Webhook, je Projekt höchstens einer.
+
+### Alternativen
+**GitHub App.** Verworfen. Der Installationsablauf braucht eine **öffentlich erreichbare**
+Callback-URL – die gibt es erst nach Sprint 6. Dazu kämen App-JWT, Installations-Token mit Ablauf
+und deren Erneuerung, ein OAuth-Rückweg und die Registrierung der App selbst. Das ist eigener
+Aufwand für ein *Zugriffs*-Thema, während die Lehrinhalte dieses Sprints – Signaturprüfung,
+Idempotenz, asynchrone Verarbeitung – bei beiden Wegen **identisch** sind. Der Webhook liefert
+dieselben Nutzdaten mit demselben `X-Hub-Signature-256`.
+
+**OAuth-Anbindung mit Polling der GitHub-API.** Verworfen, und zwar deutlich: Polling ersetzt genau
+die Themen durch ihre langweiligen Gegenstücke. Kein Signaturproblem, keine Mehrfachzustellung,
+kein Zustellungsdruck – dafür Ratenbegrenzung und Abfrageintervalle.
+
+### Konsequenzen
+- **Positiv:** Kein Aufbau vor dem ersten Ereignis. Ein Projekt wird verbunden, indem jemand
+  `owner/repo` einträgt; DevBoard erzeugt ein Geheimnis und zeigt die URL an.
+- **Positiv:** Prüfbar ohne GitHub. Die E2E-Tests erzeugen selbst signierte Nutzdaten – das ist
+  ohnehin der ehrlichere Test, weil er auch die *falsche* Signatur stellen kann.
+- **Negativ:** Nur Empfang. Ein Kommentar zurück an GitHub bräuchte einen Token mit Schreibrecht,
+  und dafür ist der Webhook der falsche Weg (siehe ADR-015 zum Ausblick).
+- **Negativ:** Das Eintragen geschieht von Hand in den Repository-Einstellungen. Eine App würde das
+  bei der Installation erledigen.
+- **Offen bis Sprint 6:** In der Entwicklung ist `localhost` für GitHub nicht erreichbar. Bis zum
+  Staging wird gegen selbst erzeugte Zustellungen geprüft, nicht gegen echte.
+
+---
+
+## ADR-014: Das Webhook-Geheimnis wird verschlüsselt gespeichert, nicht gehasht
+
+**Status:** Angenommen (16.08.2026)
+
+### Kontext
+DevBoard speichert bereits zwei Arten von Geheimnissen, beide **gehasht**: Passwörter mit argon2id
+und Einladungs-Token mit SHA-256. Die Regel dahinter klang bisher wie ein Naturgesetz – *ein
+Geheimnis wird niemals im Klartext abgelegt*. Beim Webhook-Geheimnis lässt sie sich nicht anwenden,
+und der Grund ist keine Bequemlichkeit.
+
+### Entscheidung
+Das Geheimnis wird **symmetrisch verschlüsselt** abgelegt (AES-256-GCM, Schlüssel aus
+`WEBHOOK_ENCRYPTION_KEY`), nicht gehasht.
+
+### Warum ein Hash hier nicht funktioniert
+Ein Hash reicht immer dann, wenn man einen **vorgelegten Wert wiedererkennen** muss: Der Nutzer
+schickt sein Passwort, wir hashen es und vergleichen. Bei einem Webhook legt GitHub das Geheimnis
+aber nie vor. Es schickt eine **HMAC-Signatur über den Nachrichtenrumpf**, und um dieselbe Signatur
+nachzurechnen, braucht man das Geheimnis **selbst**. Aus `SHA-256(geheimnis)` lässt es sich nicht
+zurückgewinnen – das ist ja der Zweck.
+
+Damit ist die Regel präziser zu fassen, und in dieser Form gilt sie weiter:
+
+> **Wiedererkennen ⇒ hashen. Nachrechnen ⇒ verschlüsseln.** Der Klartext im Speicher ist nur dann
+> ein Fehler, wenn man ihn nicht braucht.
+
+### Alternativen
+**Ein einziges Geheimnis für alle Projekte, aus der Umgebung.** Verworfen. Es stünde in der
+Konfiguration statt in der Datenbank – bequem, aber es macht jedes Projekt zum Nachbarn jedes
+anderen: Wer das Geheimnis eines Repositories kennt, kann Ereignisse für **jedes** Projekt
+signieren. Bei einer mandantengetrennten Anwendung wäre das die Wiederholung genau des Fehlers, den
+Sprint 2 vermieden hat, eine Ebene tiefer.
+
+**Ein Schlüsselverwaltungsdienst (Vault, KMS).** Die richtige Antwort in Produktion, hier nicht.
+Der Schlüssel läge dann nicht neben den Daten – der eigentliche Gewinn. Vermerkt in `10_SECURITY.md`
+mit Fälligkeit Sprint 6.
+
+### Konsequenzen
+- **Positiv:** Jedes Projekt hat sein eigenes Geheimnis. Ein verlorenes betrifft ein Repository.
+- **Positiv:** GCM liefert einen Authentifizierungs-Tag mit. Eine veränderte Zeile in der Datenbank
+  fällt beim Entschlüsseln auf, statt stillschweigend Unsinn zu ergeben.
+- **Negativ, ausdrücklich benannt:** Wer die Datenbank **und** `WEBHOOK_ENCRYPTION_KEY` hat, hat die
+  Geheimnisse. Verschlüsselung im Ruhezustand schützt gegen ein geleaktes Backup, nicht gegen einen
+  übernommenen Anwendungsserver. Das ist der Unterschied zu argon2 – und er gehört in die Antwort,
+  wenn im Gespräch danach gefragt wird.
+- **Negativ:** Der Schlüssel muss gewechselt werden können. Dafür braucht die Zeile eine
+  Versionsangabe, sonst ist eine Rotation später nur mit Ausfall möglich.
+- **Negativ:** Das Geheimnis wird **einmal** im Klartext angezeigt, direkt beim Verbinden. Danach
+  nie wieder – dieselbe Entscheidung wie bei den Einladungs-Token.
+
+---
+
+## ADR-015: Zustellung annehmen und quittieren, verarbeiten danach
+
+**Status:** Angenommen (16.08.2026)
+
+### Kontext
+ADR-012 hat entschieden, dass Aktivitäten **inline in der Transaktion** der fachlichen Änderung
+entstehen, und hat dort ausdrücklich vermerkt: Bei der Anbindung eines fremden Systems stellt sich
+die Frage neu. Hier ist sie.
+
+Ein Webhook kehrt die Richtung um. Bei einer Aufgabe ruft *unser* Frontend *unseren* Server – wir
+bestimmen, wie lange das dauert. Bei einer Zustellung ruft **GitHub** an, erwartet innerhalb von
+zehn Sekunden eine Antwort und wertet alles außerhalb von 2xx als Fehlschlag. Die Folge eines
+Fehlschlags ist **erneute Zustellung**.
+
+### Entscheidung
+Der Endpoint tut drei Dinge und hört dann auf: Signatur prüfen, die rohe Zustellung in eine Tabelle
+`webhook_deliveries` schreiben, `202 Accepted` antworten. Die Übersetzung in Feed-Einträge geschieht
+**danach**, in einem eigenen Schritt.
+
+### Das Muster heißt Inbox, nicht Outbox
+Eine Klarstellung, weil die Begriffe leicht durcheinandergehen und die frühere Notiz zu ADR-012 an
+dieser Stelle ungenau war:
+
+- Eine **Outbox** löst das Problem beim *Senden*: Ich ändere Daten und will danach zuverlässig ein
+  fremdes System benachrichtigen, ohne dass Änderung und Zustellung auseinanderfallen.
+- Eine **Inbox** (auch: idempotenter Empfänger) löst das Problem beim *Empfangen*: Dieselbe
+  Nachricht kommt mehrfach an, und die Wirkung soll trotzdem einmalig sein.
+
+Sprint 5 empfängt. Es ist also die Inbox. **Die Outbox wird in diesem Sprint nicht gebaut**, weil es
+nichts zu senden gibt – sie würde erst durch eine Rückmeldung an GitHub verdient, etwa einen
+Kommentar am Pull Request, wenn eine Aufgabe auf „Erledigt" wandert. Das steht als möglicher
+Abschluss in der Roadmap und ist bewusst nicht gesetzt.
+
+### Woran die Einmaligkeit hängt
+An einem `UNIQUE` auf `deliveryId` – dem Wert aus `X-GitHub-Delivery`. Die zweite Zustellung
+verletzt das Constraint, der Endpoint fängt genau diesen Fehler ab und antwortet `200`. Es gibt
+**kein** vorheriges `findFirst`: Zwischen Lesen und Schreiben passen zwei gleichzeitige
+Zustellungen, und dann stünde der Eintrag doppelt im Feed. Dieselbe Regel wie in ADR-010 und
+ADR-012 – **die Bedingung gehört ins `WHERE` beziehungsweise ins Constraint, nicht in ein `if`
+davor.** Zum dritten Mal dieselbe Lehre.
+
+### Alternativen
+**Alles inline im Endpoint verarbeiten.** Verworfen, aber knapper als es klingt: Bei unserem
+Datenaufkommen wäre es schnell genug. Der Grund ist ein anderer – die **Wirkung eines Fehlers**.
+Scheitert die Übersetzung eines Ereignisses inline, gibt es zwei schlechte Antworten: eine 5xx, dann
+stellt GitHub erneut zu und dieselbe kaputte Nutzlast scheitert wieder, bis GitHub aufgibt und die
+Zustellung endgültig verloren ist; oder eine 200, dann ist sie sofort verloren. Mit der Tabelle ist
+sie **da**, unabhängig davon, ob wir sie schon deuten können.
+
+**Eine echte Warteschlange (BullMQ mit Redis).** Verworfen für diesen Sprint. Sie brächte einen
+weiteren Dienst in `docker-compose.yml` und in Sprint 6 in die Bereitstellung, und sie löste ein
+Problem, das wir bei diesem Aufkommen nicht haben. Die Tabelle ist ohnehin der ehrlichere erste
+Schritt: Eine Warteschlange ohne haltbaren Zustand *daneben* verliert Aufträge beim Neustart.
+Vermerkt im Backlog.
+
+### Konsequenzen
+- **Positiv:** Eine unbekannte oder fehlerhafte Nutzlast kostet keine Zustellung. Sie liegt in der
+  Tabelle und kann nach einer Korrektur erneut verarbeitet werden.
+- **Positiv:** Der Endpoint bleibt schnell und berechenbar – er schreibt eine Zeile.
+- **Positiv:** Die Tabelle ist bei der Fehlersuche das, was sonst in Protokolldateien steht: Was hat
+  GitHub *wirklich* geschickt.
+- **Negativ:** Der Feed hinkt der Wirklichkeit um die Verarbeitungsspanne hinterher. Bei einem
+  Aktivitätsprotokoll belanglos, bei einer Zahlung nicht.
+- **Negativ:** Zwei Zustände statt einem. Eine Zeile kann angenommen, verarbeitet oder gescheitert
+  sein, und es braucht eine Antwort auf „was passiert mit den gescheiterten" – sonst wächst dort
+  still eine Halde.
+- **Negativ:** `webhook_deliveries` speichert rohe Nutzdaten von GitHub. Sie enthalten
+  Commit-Nachrichten und Benutzernamen; die Tabelle braucht deshalb eine Aufbewahrungsfrist und
+  gehört in `10_SECURITY.md`.
