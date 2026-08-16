@@ -178,7 +178,16 @@ function ProjektListe({
   const basis = `/organizations/${orgId}/projects`;
 
   return (
-    <div className="flex min-h-0 flex-col gap-0.5">
+    // `flex-1` fehlte hier in der ersten Fassung, und das war im Browser
+    // sofort zu sehen: Der Bereich nahm nur seine Mindesthoehe ein, die Liste
+    // fiel auf eine winzige Box mit eigenem Scrollbalken zusammen, und der
+    // Nutzerblock darunter rutschte aus dem Bild.
+    //
+    // `flex-1 min-h-0` ist das Paar, das man in einer Flex-Spalte fast immer
+    // zusammen braucht: `flex-1` laesst den Bereich den uebrigen Platz nehmen,
+    // `min-h-0` hebt die Vorgabe `min-height: auto` auf - ohne sie kann ein
+    // Flex-Kind nicht kleiner werden als sein Inhalt und scrollt deshalb nie.
+    <div className="flex min-h-0 flex-1 flex-col gap-0.5">
       <div className="flex items-baseline justify-between px-2 pb-1">
         <h2 className="text-[11px] font-medium uppercase tracking-wide text-still">
           Projekte
@@ -206,8 +215,12 @@ function ProjektListe({
       )}
 
       {/* `overflow-y-auto` erst hier, nicht an der ganzen Leiste: Nur die
-          Projektliste darf lang werden, Kopf und Fuss bleiben stehen. */}
-      <ul className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
+          Projektliste darf lang werden, Kopf und Fuss bleiben stehen.
+          `flex-1` gehoert dazu - ohne das bleibt die Liste auf Inhaltshoehe
+          stehen und zeigt schon bei einem einzigen Projekt einen
+          Scrollbalken. Genau so war es, und im Browser war es sofort zu
+          sehen. */}
+      <ul className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
         {projekte?.map((projekt) => (
           <li key={projekt.id}>
             <NavEintrag
