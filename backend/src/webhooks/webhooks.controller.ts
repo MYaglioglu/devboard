@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { Oeffentlich } from '../auth/decorators/public.decorator';
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { WebhookEmpfangService } from './webhook-empfang.service';
+import { WebhookVerarbeitungService } from './webhook-verarbeitung.service';
 // `import type` ist hier Pflicht, nicht Stil: Mit `isolatedModules` und
 // `emitDecoratorMetadata` versucht TypeScript sonst, den Typ aus einer
 // dekorierten Signatur zur Laufzeit zu erhalten - und `RawBodyRequest`
@@ -49,7 +50,10 @@ const verbindungsIdSchema = z.uuid('Ungültige Verbindungs-ID');
  */
 @Controller('webhooks/github')
 export class WebhooksController {
-  constructor(private readonly empfang: WebhookEmpfangService) {}
+  constructor(
+    private readonly empfang: WebhookEmpfangService,
+    private readonly verarbeitung: WebhookVerarbeitungService,
+  ) {}
 
   /**
    * POST /webhooks/github/:connectionId
@@ -131,6 +135,27 @@ export class WebhooksController {
     if (ereignisTyp === 'ping') {
       return { status: 'pong' };
     }
+
+    /**
+     * ========================================================================
+     * DIE VERARBEITUNG WIRD ANGESTOSSEN, NICHT ABGEWARTET
+     * ========================================================================
+     * Kein `await`, und das ist der ganze Punkt von ADR-015: GitHub erwartet
+     * binnen zehn Sekunden eine Antwort. Die Uebersetzung darf sie nicht
+     * aufhalten - und ihr Scheitern darf die Quittung nicht verhindern, sonst
+     * stellt GitHub eine Zustellung erneut zu, die laengst sicher in der
+     * Tabelle liegt.
+     *
+     * `void` und ein `catch` sind hier Pflicht, keine Formsache: Eine
+     * abgelehnte Zusage ohne Behandlung beendet in Node den Prozess. Der
+     * Fehler ist an der Zeile bereits vermerkt (Status FAILED), hier bleibt
+     * nur, ihn nicht zur Katastrophe werden zu lassen.
+     *
+     * Was das NICHT ist: eine Warteschlange. Kommt keine weitere Zustellung,
+     * bleibt eine gescheiterte Zeile liegen. Der Preis steht ausdrücklich im
+     * Kopf von `webhook-verarbeitung.service.ts`.
+     */
+    void this.verarbeitung.verarbeiteOffene().catch(() => undefined);
 
     // 202 in beiden Faellen. Eine zweite Zustellung ist kein Fehler, sondern
     // erwartetes Verhalten - GitHub soll aufhoeren zu wiederholen, und dafuer

@@ -13,7 +13,30 @@ export type Ereignistyp =
   | 'TASK_CREATED'
   | 'TASK_UPDATED'
   | 'TASK_MOVED'
-  | 'TASK_DELETED';
+  | 'TASK_DELETED'
+  | 'GITHUB_PUSH'
+  | 'GITHUB_PULL_REQUEST_OPENED'
+  | 'GITHUB_PULL_REQUEST_MERGED'
+  | 'GITHUB_PULL_REQUEST_CLOSED';
+
+/**
+ * Woher ein Ereignis stammt.
+ *
+ * ============================================================================
+ * WARUM DAS FRONTEND DIESES FELD BRAUCHT
+ * ============================================================================
+ * `actor: null` hatte bisher genau eine Bedeutung - das Konto wurde geloescht,
+ * und `akteurName` schreibt dafuer "Ein entferntes Mitglied".
+ *
+ * Ein GitHub-Ereignis hat ebenfalls keinen Akteur: Wer gepusht hat, muss in
+ * DevBoard kein Konto haben. Ohne dieses Feld behauptete der Feed, ein
+ * ausgetretener Kollege habe gepusht.
+ *
+ * Der Wert wird bewusst NICHT auf Vollstaendigkeit geprueft (kein `never`):
+ * Kommt spaeter eine dritte Herkunft dazu, soll die alte Fassung im Browser
+ * das ertragen - dieselbe Regel wie bei `Ereignistyp`.
+ */
+export type Herkunft = 'APP' | 'GITHUB';
 
 export interface Akteur {
   userId: string;
@@ -46,6 +69,7 @@ export interface Akteur {
 export interface FeedEintrag {
   id: string;
   type: Ereignistyp;
+  source: Herkunft;
   actor: Akteur | null;
   projectId: string | null;
   taskId: string | null;

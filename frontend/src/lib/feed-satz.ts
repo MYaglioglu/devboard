@@ -62,6 +62,19 @@ const spaltenName = (status: string | null): string | null =>
 export const akteurName = (eintrag: FeedEintrag): string =>
   eintrag.actor?.name ??
   eintrag.actor?.email ??
+  // ==========================================================================
+  // GITHUB-EREIGNISSE HABEN NIE EINEN AKTEUR - UND DAS IST KEIN VERLUST
+  // ==========================================================================
+  // Ohne diesen Zweig liefe ein Push in den Satz darunter und der Feed
+  // behauptete, ein ausgetretener Kollege habe ihn gemacht. `actor: null` hat
+  // seit Sprint 5 zwei Ursachen, und nur `source` unterscheidet sie.
+  //
+  // Der GitHub-Anmeldename steht im `payload` und wird wie alles dort
+  // vorsichtig gelesen: Fehlt er, bleibt es beim allgemeinen "Jemand auf
+  // GitHub" - ein Satz, der stimmt, statt eines, der genauer klingt.
+  (eintrag.source === 'GITHUB'
+    ? (text(eintrag.payload, 'githubLogin') ?? 'Jemand auf GitHub')
+    : null) ??
   // `actor: null` ist kein Fehler, sondern der Normalfall nach einer
   // Kontoloeschung: Das Backend setzt die Verbindung auf NULL und laesst das
   // Ereignis stehen. Der Verlauf des Teams soll nicht verschwinden, nur weil

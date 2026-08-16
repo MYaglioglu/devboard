@@ -6,7 +6,7 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { dekodiereCursor, kodiereCursor } from './cursor';
-import type { ActivityType } from '../generated/prisma/enums';
+import type { ActivitySource, ActivityType } from '../generated/prisma/enums';
 import type { Prisma } from '../generated/prisma/client';
 import type { FeedQueryDto } from './dto/feed-query.dto';
 
@@ -21,6 +21,14 @@ export interface Akteur {
 export interface FeedEintrag {
   id: string;
   type: ActivityType;
+  /**
+   * Woher das Ereignis stammt - `APP` oder `GITHUB`.
+   *
+   * Ohne dieses Feld kann der Client `actor: null` nicht deuten: Es hiesse
+   * entweder "Konto geloescht" oder "kam von GitHub", und die beiden Saetze
+   * dazu sind grundverschieden.
+   */
+  source: ActivitySource;
   actor: Akteur | null;
   projectId: string | null;
   taskId: string | null;
@@ -80,6 +88,12 @@ export interface FeedSeite {
 const FEED_FELDER = {
   id: true,
   type: true,
+  // Seit Scheibe 5.5 im Feed, und ohne sie waere er falsch: `actor: null`
+  // bedeutete bisher genau EINES - geloeschtes Konto. Das Frontend schreibt
+  // dafuer "Ein entferntes Mitglied". Ein GitHub-Ereignis hat ebenfalls keinen
+  // Akteur; ohne diese Spalte behauptete der Feed, ein ausgetretener Kollege
+  // habe gepusht.
+  source: true,
   projectId: true,
   taskId: true,
   payload: true,
@@ -90,6 +104,7 @@ const FEED_FELDER = {
 interface FeedZeile {
   id: string;
   type: ActivityType;
+  source: ActivitySource;
   projectId: string | null;
   taskId: string | null;
   payload: Prisma.JsonValue;
@@ -98,13 +113,16 @@ interface FeedZeile {
 }
 
 /**
- * `actor: null` ist nach einer Kontoloeschung der Normalfall und kein Fehler:
- * `ON DELETE SET NULL` laesst das Ereignis stehen und nimmt ihm nur die
- * Zuordnung. Das Frontend zeigt dann "Ein entferntes Mitglied".
+ * `actor: null` hat seit Scheibe 5.5 ZWEI Ursachen, und nur zusammen mit
+ * `source` sind sie unterscheidbar:
+ *
+ *   source = APP    -> das Konto wurde geloescht ("Ein entferntes Mitglied")
+ *   source = GITHUB -> es gab nie eines; der Name steht im `payload`
  */
 const zuFeedEintrag = (zeile: FeedZeile): FeedEintrag => ({
   id: zeile.id,
   type: zeile.type,
+  source: zeile.source,
   actor: zeile.actor
     ? {
         userId: zeile.actor.id,

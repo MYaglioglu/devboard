@@ -7,7 +7,9 @@ import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/prisma/prisma.service';
 import { erzeugeSignatur } from './../src/webhooks/signatur';
+import { ActivitiesService } from './../src/activities/activities.service';
 import { WebhookEmpfangService } from './../src/webhooks/webhook-empfang.service';
+import { WebhookVerarbeitungService } from './../src/webhooks/webhook-verarbeitung.service';
 
 interface OrganisationAntwort {
   id: string;
@@ -180,12 +182,34 @@ describe('Webhooks (e2e)', () => {
 
       expect(zeile.eventType).toBe('push');
       expect(zeile.deliveryId).toBe(zustellungsId);
-      expect(zeile.status).toBe('ACCEPTED');
-      expect(zeile.versuche).toBe(0);
-      expect(zeile.processedAt).toBeNull();
       // Die Nutzlast liegt unveraendert da - das ist der ganze Zweck der
       // Tabelle: Was hat GitHub WIRKLICH geschickt.
       expect(zeile.payload).toMatchObject({ text: 'erster Push' });
+
+      /**
+       * ======================================================================
+       * WAS HIER SEIT SCHEIBE 5.5 NICHT MEHR GEPRUEFT WIRD - UND WARUM
+       * ======================================================================
+       * Bis 5.4 stand hier `status === 'ACCEPTED'`, `versuche === 0`,
+       * `processedAt === null`. Das war richtig, solange nichts weiter passiert
+       * ist.
+       *
+       * Seit 5.5 stoesst der Controller die Verarbeitung nach der Quittung an,
+       * ohne `await`. Der Zustand ist damit ein bewegliches Ziel: Je nachdem,
+       * wie schnell der Anstoss durchlaeuft, steht hier ACCEPTED oder
+       * PROCESSED. Ein Test darauf waere mal gruen und mal rot - und beides
+       * saehe gleich aus.
+       *
+       * Geprueft wird deshalb nur noch, was DAUERHAFT wahr ist: dass die Zeile
+       * existiert und die richtige Nutzlast traegt. Der Zustandswechsel selbst
+       * wird im Abschnitt "Verarbeitung" geprueft, wo er ausdruecklich
+       * ausgeloest wird statt abgewartet.
+       *
+       * Dieselbe Lehre wie in 5.4, nur andersherum: Wenn eine Bedingung von
+       * einer Uhr abhaengt, wird sie entweder HERGESTELLT oder gar nicht
+       * geprueft. Sie halb zu pruefen ist die schlechteste der drei
+       * Moeglichkeiten.
+       */
     });
 
     it('antwortet auf ping mit pong - aber erst nach der Signaturpruefung', async () => {
@@ -552,6 +576,251 @@ describe('Webhooks (e2e)', () => {
           where: { connectionId: verbindung.id },
         }),
       ).toBe(2);
+    });
+  });
+
+  /**
+   * ==========================================================================
+   * VERARBEITUNG - SCHEIBE 5.5
+   * ==========================================================================
+   * Die Verarbeitung wird im Betrieb nach der Quittung ANGESTOSSEN, ohne
+   * `await`. Hier wird sie ausdruecklich aufgerufen.
+   *
+   * Das ist kein Ausweichen, sondern die Lehre aus 5.4: Ein Test, der darauf
+   * WARTET, dass ein Hintergrundvorgang fertig wird, prueft die Uhr des
+   * Testrechners mit. Er waere mal gruen und mal rot, und beides saehe gleich
+   * aus. Der Anstoss aus dem Controller wird deshalb an anderer Stelle
+   * geprueft - hier geht es um das, was die Verarbeitung TUT.
+   */
+  describe('Verarbeitung', () => {
+    /**
+     * ========================================================================
+     * WARUM DIE ZUSTELLUNG HIER DIREKT ANGELEGT WIRD STATT UEBER DEN ENDPOINT
+     * ========================================================================
+     * Der erste Entwurf ging ueber HTTP. Drei Tests wurden rot, und einer
+     * davon hat einen echten Fehler im Entwurf aufgedeckt: `versuche: 2`.
+     *
+     * Der Grund: Der Controller stoesst die Verarbeitung nach der Quittung
+     * ohne `await` an. Dieser Anstoss und der ausdrueckliche Aufruf im Test
+     * lasen dieselbe offene Zeile, bevor einer von beiden schrieb - die
+     * Zustellung wurde ZWEIMAL verarbeitet. (Behoben durch den Anspruch mit
+     * `status` in der `WHERE`-Bedingung.)
+     *
+     * Fuer die Tests bleibt die Lehre: Ein Test, der einen Hintergrundvorgang
+     * NEBEN sich laufen hat, prueft auch dessen Zeitverhalten mit. Diese
+     * Tests legen die Zeile deshalb direkt an - es geht hier um das, was die
+     * VERARBEITUNG tut, nicht um den Empfang. Der ist eine Etage hoeher
+     * geprueft.
+     */
+    const legeZustellungAn = async (
+      verbindung: VerbindungAntwort,
+      ereignis: string,
+      inhalt: Record<string, unknown>,
+    ) => {
+      await prisma.webhookDelivery.create({
+        data: {
+          connectionId: verbindung.id,
+          eventType: ereignis,
+          deliveryId: randomUUID(),
+          payload: inhalt,
+        },
+      });
+
+      return app.get(WebhookVerarbeitungService).verarbeiteOffene();
+    };
+
+    const push = {
+      ref: 'refs/heads/main',
+      repository: { full_name: 'acme/webshop' },
+      sender: { login: 'octocat' },
+      commits: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    };
+
+    it('macht aus einem Push einen Feed-Eintrag mit Herkunft GITHUB', async () => {
+      const verbindung = await baueVerbindung('push');
+
+      const ergebnis = await legeZustellungAn(verbindung, 'push', push);
+      expect(ergebnis.gescheitert).toBe(0);
+
+      const eintrag = await prisma.activity.findFirstOrThrow({
+        where: { type: 'GITHUB_PUSH' },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      expect(eintrag.source).toBe('GITHUB');
+      // Nachweislich kein Akteur - nicht "unbekannt". Zusammen mit `source`
+      // ist das unterscheidbar von einem geloeschten Konto.
+      expect(eintrag.actorId).toBeNull();
+      expect(eintrag.payload).toMatchObject({
+        repository: 'acme/webshop',
+        branch: 'main',
+        commitCount: 3,
+        githubLogin: 'octocat',
+      });
+
+      const zustellung = await prisma.webhookDelivery.findFirstOrThrow({
+        where: { connectionId: verbindung.id },
+      });
+
+      expect(zustellung.status).toBe('PROCESSED');
+      expect(zustellung.processedAt).not.toBeNull();
+      expect(zustellung.versuche).toBe(1);
+      expect(zustellung.fehlermeldung).toBeNull();
+    });
+
+    it('erscheint im Feed der Organisation', async () => {
+      // Der eigentliche Zweck des Sprints, end-to-end: Ein Push von GitHub
+      // steht in derselben Liste wie eine verschobene Karte.
+      const verbindung = await baueVerbindung('imfeed');
+      await legeZustellungAn(verbindung, 'push', push);
+
+      const eintrag = await prisma.activity.findFirstOrThrow({
+        where: { type: 'GITHUB_PUSH', source: 'GITHUB' },
+        orderBy: { createdAt: 'desc' },
+        select: { organizationId: true, projectId: true },
+      });
+
+      expect(eintrag.organizationId).toBeTruthy();
+      expect(eintrag.projectId).toBeTruthy();
+    });
+
+    it('markiert ein nicht anzeigbares Ereignis als PROCESSED, nicht als FAILED', async () => {
+      const verbindung = await baueVerbindung('star');
+
+      const ergebnis = await legeZustellungAn(verbindung, 'star', {
+        repository: { full_name: 'acme/webshop' },
+        sender: { login: 'octocat' },
+      });
+
+      expect(ergebnis.gescheitert).toBe(0);
+
+      const zustellung = await prisma.webhookDelivery.findFirstOrThrow({
+        where: { connectionId: verbindung.id },
+      });
+
+      // Nichts ist schiefgegangen - es gab nur nichts anzuzeigen. Als FAILED
+      // stuende die Zeile in einer Halde voller Nicht-Fehler, die man
+      // irgendwann nicht mehr ansieht.
+      expect(zustellung.status).toBe('PROCESSED');
+
+      expect(
+        await prisma.activity.count({
+          where: { projectId: { not: null }, source: 'GITHUB' },
+        }),
+      ).toBeGreaterThanOrEqual(0);
+    });
+
+    /**
+     * ========================================================================
+     * DER TEST, DER DIE TRANSAKTION BEWEIST
+     * ========================================================================
+     * Die Nachbildung schreibt den Feed-Eintrag WIRKLICH - mit demselben `tx`
+     * wie im Betrieb - und wirft danach. Genau der Fall, um den es geht:
+     * Zwischen dem Eintrag und dem Zustandswechsel geht etwas schief.
+     *
+     * Ohne Transaktion staende der Eintrag danach da, die Zustellung waere
+     * weiter offen, und der naechste Durchlauf schriebe ihn ein ZWEITES Mal.
+     * Die Idempotenz aus 5.4 hilft dagegen NICHT: Sie schuetzt gegen doppelte
+     * ZUSTELLUNGEN, nicht gegen doppelte VERARBEITUNG derselben Zustellung.
+     */
+    it('rollt den Feed-Eintrag zurueck, wenn der Zustandswechsel scheitert', async () => {
+      const verbindung = await baueVerbindung('rollback');
+      const activities = app.get(ActivitiesService);
+      /**
+       * Die Nachbildung schreibt selbst eine Zeile - mit DEMSELBEN `tx`, den
+       * die echte Methode bekaeme - und wirft danach.
+       *
+       * Bewusst nicht ueber die echte Methode: Sie vor dem Spion festzuhalten
+       * ginge nur ueber das Prototyp-Objekt oder `bind`, und beides ist hier
+       * entweder `any` oder eine losgeloeste Methode. Fuer diesen Test genuegt
+       * es vollkommen, dass INNERHALB der Transaktion geschrieben wurde -
+       * genau das soll ja zurueckgerollt werden.
+       */
+      const spion = jest
+        .spyOn(activities, 'protokolliereVonGitHub')
+        .mockImplementationOnce(async (tx, orgId, ereignis) => {
+          await tx.activity.create({
+            data: {
+              organizationId: orgId,
+              actorId: null,
+              source: 'GITHUB',
+              type: 'GITHUB_PUSH',
+              projectId: ereignis.projektId,
+              payload: { repository: 'acme/rollback' },
+            },
+          });
+
+          throw new Error('Absicht: Fehler nach dem Schreiben');
+        });
+
+      try {
+        const ergebnis = await legeZustellungAn(verbindung, 'push', {
+          ...push,
+          repository: { full_name: 'acme/rollback' },
+        });
+
+        expect(ergebnis.gescheitert).toBe(1);
+      } finally {
+        spion.mockRestore();
+      }
+
+      // Kein Eintrag - obwohl er innerhalb der Transaktion geschrieben wurde.
+      expect(
+        await prisma.activity.count({
+          where: { payload: { path: ['repository'], equals: 'acme/rollback' } },
+        }),
+      ).toBe(0);
+
+      const zustellung = await prisma.webhookDelivery.findFirstOrThrow({
+        where: { connectionId: verbindung.id },
+      });
+
+      // Der Vermerk am Fehlschlag ueberlebt dagegen - er wird ausserhalb der
+      // zurueckgerollten Transaktion geschrieben. Sonst saehe die Zeile aus
+      // wie eine, die nie versucht wurde.
+      expect(zustellung.status).toBe('FAILED');
+      expect(zustellung.versuche).toBe(1);
+      expect(zustellung.fehlermeldung).toContain('Absicht');
+      expect(zustellung.processedAt).toBeNull();
+    });
+
+    it('nimmt eine gescheiterte Zustellung auf Anforderung wieder auf', async () => {
+      const verbindung = await baueVerbindung('wiederaufnahme');
+      const activities = app.get(ActivitiesService);
+
+      const spion = jest
+        .spyOn(activities, 'protokolliereVonGitHub')
+        .mockRejectedValueOnce(new Error('einmaliger Ausfall'));
+
+      try {
+        await legeZustellungAn(verbindung, 'push', {
+          ...push,
+          repository: { full_name: 'acme/wieder' },
+        });
+      } finally {
+        spion.mockRestore();
+      }
+
+      const verarbeitung = app.get(WebhookVerarbeitungService);
+      expect(await verarbeitung.nimmGescheiterteWiederAuf()).toBeGreaterThan(0);
+
+      await verarbeitung.verarbeiteOffene();
+
+      const zustellung = await prisma.webhookDelivery.findFirstOrThrow({
+        where: { connectionId: verbindung.id },
+      });
+
+      expect(zustellung.status).toBe('PROCESSED');
+      // Der Zaehler bleibt stehen und waechst weiter - er ist die einzige
+      // Spur davon, wie oft es schon nicht geklappt hat.
+      expect(zustellung.versuche).toBe(2);
+      expect(zustellung.fehlermeldung).toBeNull();
+
+      expect(
+        await prisma.activity.count({
+          where: { payload: { path: ['repository'], equals: 'acme/wieder' } },
+        }),
+      ).toBe(1);
     });
   });
 

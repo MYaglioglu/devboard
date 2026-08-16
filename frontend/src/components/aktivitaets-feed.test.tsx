@@ -16,6 +16,7 @@ vi.mock('@/lib/aktivitaeten', () => ({
 const eintrag = (ueberschreibung: Partial<FeedEintrag> = {}): FeedEintrag => ({
   id: 'a1',
   type: 'TASK_CREATED',
+  source: 'APP',
   actor: { userId: 'u1', name: 'Murat', email: 'murat@example.com' },
   projectId: 'p1',
   taskId: 't1',

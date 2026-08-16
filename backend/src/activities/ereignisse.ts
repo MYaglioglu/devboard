@@ -96,7 +96,57 @@ export type Ereignis =
    * Der Compiler erzwingt das mit: Wer hier `aufgabenId` uebergeben will,
    * bekommt einen Fehler.
    */
-  | { typ: 'AUFGABE_GELOESCHT'; projektId: string; titel: string };
+  | { typ: 'AUFGABE_GELOESCHT'; projektId: string; titel: string }
+  /**
+   * ==========================================================================
+   * AB HIER: EREIGNISSE VON GITHUB (Sprint 5)
+   * ==========================================================================
+   * Sie stehen in DERSELBEN Union wie die eigenen, und das ist die
+   * Entscheidung, die zaehlt: Der Feed ist EINE Liste. Zwei Unions haetten
+   * zwei Abbildungen, zwei Abfragen und zwei Stellen, an denen `payload`
+   * entsteht - und damit waere die Zusicherung aus dem Kopf dieser Datei
+   * ("payload wird NUR typisiert geschrieben") an einer Stelle zu viel.
+   *
+   * Was sie unterscheidet, ist nicht der Typ, sondern die HERKUNFT. Die steht
+   * in `activities.source` und wird nicht hier gesetzt, sondern von der
+   * Methode, die schreibt - siehe `ActivitiesService`.
+   *
+   * `autor` ist `string | null`, nicht `string`: Der GitHub-Anmeldename kommt
+   * aus fremder Nutzlast. Ihn als Pflichtfeld zu fuehren hiesse, dem Absender
+   * zu glauben, dass er ihn immer mitschickt.
+   */
+  | {
+      typ: 'GITHUB_PUSH';
+      projektId: string;
+      repository: string;
+      zweig: string;
+      anzahlCommits: number;
+      autor: string | null;
+    }
+  | {
+      typ: 'GITHUB_PR_GEOEFFNET';
+      projektId: string;
+      repository: string;
+      nummer: number;
+      titel: string;
+      autor: string | null;
+    }
+  | {
+      typ: 'GITHUB_PR_ZUSAMMENGEFUEHRT';
+      projektId: string;
+      repository: string;
+      nummer: number;
+      titel: string;
+      autor: string | null;
+    }
+  | {
+      typ: 'GITHUB_PR_GESCHLOSSEN';
+      projektId: string;
+      repository: string;
+      nummer: number;
+      titel: string;
+      autor: string | null;
+    };
 
 /**
  * Die Spalten einer Aktivitaets-Zeile, die aus dem Ereignis stammen.
@@ -132,6 +182,34 @@ export interface AktivitaetsZeile {
  * an `niemals` fehl. Der Compiler erinnert daran - nicht ein Feed, in dem der
  * Eintrag spaeter fehlt.
  */
+/**
+ * Die drei Pull-Request-Ereignisse unterscheiden sich NUR im Typ.
+ *
+ * Zusammengefasst, weil dreimal derselbe Rumpf drei Gelegenheiten waeren, ein
+ * Feld zu vergessen. Der Typ bleibt trotzdem ausdruecklich am Aufrufort - er
+ * ist das Einzige, was hier eine Entscheidung ist.
+ */
+const prZeile = (
+  type: ActivityType,
+  ereignis: {
+    projektId: string;
+    repository: string;
+    nummer: number;
+    titel: string;
+    autor: string | null;
+  },
+): AktivitaetsZeile => ({
+  type,
+  projectId: ereignis.projektId,
+  taskId: null,
+  payload: {
+    repository: ereignis.repository,
+    number: ereignis.nummer,
+    title: ereignis.titel,
+    githubLogin: ereignis.autor,
+  },
+});
+
 export const zuZeile = (ereignis: Ereignis): AktivitaetsZeile => {
   switch (ereignis.typ) {
     case 'PROJEKT_ANGELEGT':
@@ -201,6 +279,28 @@ export const zuZeile = (ereignis: Ereignis): AktivitaetsZeile => {
         taskId: null,
         payload: { title: ereignis.titel },
       };
+
+    case 'GITHUB_PUSH':
+      return {
+        type: ActivityType.GITHUB_PUSH,
+        projectId: ereignis.projektId,
+        taskId: null,
+        payload: {
+          repository: ereignis.repository,
+          branch: ereignis.zweig,
+          commitCount: ereignis.anzahlCommits,
+          githubLogin: ereignis.autor,
+        },
+      };
+
+    case 'GITHUB_PR_GEOEFFNET':
+      return prZeile(ActivityType.GITHUB_PULL_REQUEST_OPENED, ereignis);
+
+    case 'GITHUB_PR_ZUSAMMENGEFUEHRT':
+      return prZeile(ActivityType.GITHUB_PULL_REQUEST_MERGED, ereignis);
+
+    case 'GITHUB_PR_GESCHLOSSEN':
+      return prZeile(ActivityType.GITHUB_PULL_REQUEST_CLOSED, ereignis);
   }
 
   // ==========================================================================
