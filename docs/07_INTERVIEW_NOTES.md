@@ -3048,3 +3048,132 @@ könnte jemand später auf ein globales `UNIQUE` umstellen, und alle anderen Tes
 
 Das ist dieselbe Denkweise wie beim fehlenden globalen `UNIQUE` auf `owner/repo`: Mandantentrennung
 steckt nicht nur in Abfragen, sondern auch in Constraints.
+
+### 168. Sie haben die Idempotenz in Scheibe 5.4 nachgewiesen. Warum wurde in 5.5 trotzdem dieselbe Zustellung zweimal verarbeitet?
+
+Weil die Zusage aus 5.4 einen anderen Vorgang meint, und das habe ich zunächst übersehen.
+
+Der `UNIQUE (connectionId, deliveryId)` schützt gegen doppelte **Zustellungen** – GitHub schickt
+dieselbe Nachricht erneut, und wir schreiben sie nur einmal weg. Er sagt nichts über doppelte
+**Verarbeitung** derselben, einmal weggeschriebenen Zeile.
+
+Genau das passierte: Der Anstoß aus dem Controller und ein zweiter Durchlauf lasen dieselbe offene
+Zeile, bevor einer von beiden schrieb. Beide übersetzten sie, der Feed-Eintrag stand doppelt da.
+
+> **Eine Idempotenz-Zusage gilt für genau den Vorgang, für den sie formuliert wurde.** Zwei
+> Vorgänge, die beide „doppelt" heißen, sind deshalb noch lange nicht durch dieselbe Zusage
+> abgedeckt.
+
+Behoben mit derselben Regel wie überall im Projekt: Der Zustandswechsel beansprucht die Zeile über
+`updateMany` mit `status: 'ACCEPTED'` in der Bedingung, **bevor** der Eintrag geschrieben wird.
+`count === 0` heißt: ein anderer war schneller, hier gibt es nichts zu tun.
+
+Die Reihenfolge ist dabei nicht beliebig. Stünde der Anspruch **nach** dem Schreiben, hätte der
+Verlierer des Rennens den Eintrag schon geschrieben und müsste ihn über einen Fehler zurückrollen –
+also über einen Weg, der die Zeile als `FAILED` markiert, obwohl nichts schiefgegangen ist.
+
+Gefunden hat den Fehler ein Test, der ihn gar nicht gesucht hat: Er prüfte den Erfolgspfad und
+nebenbei den Zähler `versuche`. Der stand auf 2.
+
+### 169. Sie schreiben Feed-Eintrag und Zustandswechsel in eine Transaktion. Was wäre so schlimm daran, es nicht zu tun?
+
+Es gäbe zwei Arten, falsch zu liegen, und beide sind unangenehm:
+
+**Eintrag geschrieben, Zustand nicht gesetzt.** Beim nächsten Durchlauf entsteht der Eintrag ein
+zweites Mal – dieselbe Doppelung wie oben, nur mit anderer Ursache.
+
+**Zustand gesetzt, Eintrag nicht geschrieben.** Die Zustellung gilt als erledigt, im Feed steht
+nichts, und sie wird nie wieder angefasst. Das ist der schlimmere Fall: Man sieht nicht, was nicht
+da ist.
+
+Das ist derselbe Gedanke wie in ADR-012, nur mit anderen Beteiligten. Dort waren es die fachliche
+Änderung und ihr Protokolleintrag. Hier sind es der Protokolleintrag und der Zustandswechsel.
+
+> **Konsistenz gehört in die Transaktion.** Was zusammen wahr sein muss, muss zusammen geschrieben
+> werden.
+
+Belegt ist das durch einen Test, der absichtlich **innerhalb** der Transaktion schreibt und danach
+wirft. Ohne Transaktion stünde der Eintrag hinterher da; mit ihr steht dort nichts, und die
+Zustellung ist als `FAILED` vermerkt.
+
+Ein Detail daran ist erklärungsbedürftig: Der Vermerk am Fehlschlag – Status, Zähler, Meldung –
+wird **außerhalb** der zurückgerollten Transaktion geschrieben. Innerhalb wäre er mit zurückgerollt
+worden, und die Zeile sähe hinterher aus wie eine, die nie versucht wurde.
+
+### 170. Ihr Übersetzer liefert `null` für ein `star`-Ereignis, und die Zustellung gilt trotzdem als erfolgreich. Ist das nicht geschönt?
+
+Nein – `FAILED` wäre die Schönfärberei, nur andersherum.
+
+`FAILED` heißt: Hier ist etwas schiefgegangen, sieh es dir an. Bei einem `star` ist nichts
+schiefgegangen; es gab nur nichts anzuzeigen. Dasselbe gilt für `synchronize` an einem Pull Request
+oder einen Push auf ein Tag.
+
+Würde ich die als Fehler führen, füllte sich die Liste der gescheiterten Zustellungen mit
+Nicht-Fehlern. Und eine Liste, die überwiegend aus Nicht-Fehlern besteht, sieht sich irgendwand
+niemand mehr an – dann geht der eine echte Fehler darin unter.
+
+> **Ein Fehlerzustand, der auch für Normalfälle gilt, ist kein Fehlerzustand mehr.**
+
+Die Zustellung ist dabei nicht weg: Sie liegt vollständig in `webhook_deliveries`, mit ihrer
+Rohnutzlast. Stellt sich später heraus, dass wir `star` doch anzeigen wollen, lässt sich die Zeile
+erneut verarbeiten. Genau dafür ist die Tabelle da.
+
+### 171. GitHub schickt für „zusammengeführt" und „verworfen" dasselbe `action: closed`. Warum machen Sie daraus zwei Ereignistypen statt eines mit einem Feld?
+
+Weil es fachlich zwei verschiedene Dinge sind – und weil ein Unterschied, den man nur durch Lesen
+des `payload` erkennt, nicht filterbar ist.
+
+Ein zusammengeführter Pull Request ist ein Erfolg, ein verworfener eine Entscheidung dagegen. Im
+Feed stünde sonst beide Male „hat den Pull Request geschlossen", und wer später „zeig mir alle
+zusammengeführten PRs" will, müsste über `payload->>'merged'` filtern – auf einer `jsonb`-Spalte,
+die die Datenbank nicht prüft und auf der es keinen Index gibt.
+
+Der Preis sind zwei Enum-Werte statt einem, also eine Migration mehr. Das ist der richtige Tausch:
+Der Ereignistyp ist die Spalte, nach der gefiltert und indiziert wird.
+
+Ein Detail, das ich bewusst streng gemacht habe: Unterschieden wird über `merged === true`, nicht
+wahrheitswertig. Ein fehlendes Feld darf nicht als „zusammengeführt" durchgehen – im Zweifel die
+schwächere Behauptung.
+
+### 172. Ihr `uebersetze` bekommt `unknown` und liest jedes Feld einzeln. Ist das nicht übertrieben defensiv?
+
+Es sieht so aus, bis man sich klarmacht, **wo** ein Absturz hier landen würde.
+
+Was ankommt, ist JSON aus dem Internet. Die gültige Signatur sagt, dass der Absender das Geheimnis
+kennt – nicht, dass die Nutzlast die Form hat, die die Dokumentation beschreibt. GitHub kann Felder
+ergänzen, umbenennen, oder ein Ereignis in einer Variante schicken, die ich nicht kenne.
+
+Ein Zugriff wie `nutzlast.repository.full_name` wäre ein `TypeError`, sobald `repository` fehlt. Und
+er träfe die **Verarbeitung** – also die Stelle, an der die Zustellung längst quittiert und sicher
+in der Tabelle liegt. Die Zeile würde als `FAILED` vermerkt, und beim nächsten Versuch scheiterte
+sie genauso.
+
+Neun Unit-Tests schicken deshalb Werte durch, die einen direkten Zugriff zum Absturz brächten –
+`null`, eine Zahl, ein Array, `repository` als Zeichenkette. Alle müssen `null` liefern statt zu
+werfen.
+
+Das ist dieselbe Haltung wie im Frontend bei `payload` (Sprint 4) und dieselbe Regel: **Beim
+Erzeugen mit `never` auf Vollständigkeit prüfen, beim Empfangen nicht.** Deshalb gibt es in
+`uebersetze` auch bewusst keine Vollständigkeitsprüfung über die GitHub-Ereignistypen – die Liste
+gehört nicht mir, sie wächst ohne mein Zutun.
+
+### 173. Sie haben keinen Scheduler. Was passiert mit einer gescheiterten Zustellung?
+
+Sie bleibt liegen, bis die nächste Zustellung eintrifft – und das steht so im Code, nicht nur hier.
+
+Angestoßen wird die Verarbeitung nach der Quittung des Endpoints. Jeder Durchlauf nimmt **alle**
+offenen Zeilen auf, nicht nur die gerade eingetroffene. Eine liegengebliebene wird also von der
+nächsten Zustellung mitgenommen.
+
+Kommt keine weitere Zustellung, passiert nichts. Für ein Aktivitätsprotokoll ist das vertretbar; für
+eine Zahlung wäre es das nicht.
+
+Der Grund gegen `@nestjs/schedule` war Zurückhaltung, keine Bequemlichkeit: eine weitere
+Abhängigkeit und ein Zeitgeber, der in jedem E2E-Lauf mitläuft und dort Tests von der Uhr abhängig
+macht – nach den Erfahrungen aus Scheibe 5.4 wollte ich das nicht ohne Not.
+
+Vorgemerkt ist es für Sprint 6, wo mit dem Deployment ohnehin die Frage aufkommt, was regelmäßig
+laufen soll. Bis dahin gibt es `nimmGescheiterteWiederAuf()` – bewusst als Entscheidung, nicht als
+Automatik: Eine Zeile, die zuverlässig scheitert, erzeugt sonst bei jedem Durchlauf denselben Fehler
+und flutet das Protokoll. Ein erneuter Versuch gehört nach einer Korrektur am Code, nicht nach einer
+Weile.

@@ -830,3 +830,92 @@ durchzureichen.
 
 Und der Satz, den ich mir für das Gespräch merke: Ein Nebenläufigkeitstest, der nie rot wird, ist
 kein Nebenläufigkeitstest. Er ist ein Erfolgspfad mit einem irreführenden Namen.
+
+---
+
+## 2026-08-16 – Dieselbe Zustellung zweimal verarbeitet
+
+**Ein echter Entwurfsfehler, gefunden von einem Test, der eigentlich etwas anderes prüfen sollte.**
+
+### Was passiert ist
+
+Scheibe 5.5 übersetzt angenommene Zustellungen in Feed-Einträge. Der Controller stößt die
+Verarbeitung nach der Quittung an – ohne `await`, weil GitHub binnen zehn Sekunden eine Antwort
+erwartet.
+
+Der E2E-Test schickte eine Zustellung über HTTP und rief danach die Verarbeitung ausdrücklich auf.
+Erwartet war `versuche: 1`. Tatsächlich stand da **`versuche: 2`**.
+
+### Die Ursache
+
+Der Anstoß aus dem Controller und der ausdrückliche Aufruf im Test lasen **dieselbe offene Zeile**,
+bevor einer von beiden schrieb:
+
+```
+Durchlauf A: SELECT ... WHERE status = 'ACCEPTED'   -> findet Zeile X
+Durchlauf B: SELECT ... WHERE status = 'ACCEPTED'   -> findet Zeile X ebenfalls
+Durchlauf A: schreibt Feed-Eintrag, setzt X auf PROCESSED
+Durchlauf B: schreibt Feed-Eintrag NOCH EINMAL, setzt X wieder auf PROCESSED
+```
+
+Der Feed-Eintrag stünde doppelt da. In der Anwendung wäre das kein Testartefakt: Zwei Zustellungen,
+die kurz nacheinander eintreffen, lösen zwei überlappende Durchläufe aus.
+
+### Warum die Idempotenz aus Scheibe 5.4 nicht hilft
+
+Das ist der Teil, den ich mir merke. Der `UNIQUE (connectionId, deliveryId)` schützt gegen doppelte
+**Zustellungen** – GitHub schickt dieselbe Nachricht noch einmal. Er sagt nichts über doppelte
+**Verarbeitung** derselben Zustellung.
+
+> **Eine Idempotenz-Zusage gilt für genau den Vorgang, für den sie formuliert wurde.** Zwei
+> Vorgänge, die beide „doppelt" heißen, sind deshalb noch lange nicht durch dieselbe Zusage
+> abgedeckt.
+
+### Die Behebung
+
+Der Zustandswechsel beansprucht die Zeile, **bevor** der Eintrag geschrieben wird – und zwar mit
+dem alten Zustand in der Bedingung:
+
+```ts
+const beansprucht = await tx.webhookDelivery.updateMany({
+  where: { id: zustellung.id, status: 'ACCEPTED' },   // <- die Bedingung
+  data: { status: 'PROCESSED', ... },
+});
+
+if (beansprucht.count === 0) {
+  return false;      // ein anderer Durchlauf war schneller
+}
+```
+
+`updateMany` statt `update`, weil nur `updateMany` eine Bedingung neben der ID erlaubt und über
+`count` sagt, ob sie zutraf.
+
+Die Reihenfolge ist nicht beliebig: Der Anspruch steht **vor** dem Schreiben. Andersherum hätte der
+Verlierer des Rennens den Eintrag bereits geschrieben und müsste ihn über einen Fehler zurückrollen
+– also über einen Weg, der die Zeile als `FAILED` markiert, obwohl nichts schiefgegangen ist.
+
+### Zum fünften Mal dieselbe Regel
+
+> **Die Bedingung gehört ins `WHERE`, nicht in ein `if` davor.**
+
+| Stelle | Bedingung im `WHERE` |
+|---|---|
+| ADR-010, Board | `version` beim Verschieben |
+| ADR-012, Protokoll | `count` statt vorher gelesener Wert |
+| Scheibe 5.2 | `create` mit abgefangenem P2002 statt `findFirst` |
+| Scheibe 5.3/5.4 | `UNIQUE (connectionId, deliveryId)` |
+| Scheibe 5.5 | `status: 'ACCEPTED'` beim Beanspruchen |
+
+Es ist im Kern immer dieselbe Frage: **Kann sich zwischen meinem Lesen und meinem Schreiben etwas
+ändern?** Wenn ja, muss die Bedingung mit ins Schreiben.
+
+### Und eine Lehre über Tests
+
+Der Test hat den Fehler gefunden, obwohl er ihn nicht gesucht hat – er prüfte den Erfolgspfad der
+Verarbeitung. Gefunden hat er ihn nur, weil er `versuche` mitgeprüft hat, also ein Feld, das nicht
+zur eigentlichen Frage gehörte.
+
+Danach wurde er umgebaut: Die Verarbeitungstests legen die Zeile jetzt **direkt** an, statt über den
+Endpoint zu gehen. Ein Test, der einen Hintergrundvorgang neben sich laufen hat, prüft dessen
+Zeitverhalten mit – und das ist genau die Sorte Test, die in Scheibe 5.4 auf die harte Tour
+besichtigt wurde.
