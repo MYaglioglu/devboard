@@ -757,3 +757,68 @@ Für diesen Sprint ist der Reverse Proxy von Hand aber der Lerninhalt. Vermerkt 
   TLS-Erneuerung. Ohne Uptime-Wächter erfährt niemand von einem Ausfall (Scheibe 6.7).
 - **Negativ:** Die Trennung erzwingt abwärtskompatible Migrationen. Das ist gute Praxis, aber ab
   jetzt eine Pflicht und keine Empfehlung.
+
+---
+
+## ADR-017: Caddy als Reverse Proxy statt nginx
+
+**Status:** Angenommen (21.08.2026)
+
+### Kontext
+Vor dem Backend muss ein Reverse Proxy stehen. Er nimmt als Einziger Verkehr aus dem Internet
+entgegen, beendet TLS und leitet intern weiter. Das Backend selbst lauscht nur im Docker-Netz.
+
+Die Roadmap nannte **nginx**. Die Frage vor der Umsetzung war, ob das noch die richtige Wahl ist –
+nicht aus Geschmack, sondern weil sich der Sprint an einer Stelle entscheidet: **Zertifikate laufen
+alle 90 Tage ab.** Was dabei kaputtgeht, geht still kaputt und fällt erst auf, wenn ein Besucher
+eine Zertifikatswarnung sieht.
+
+### Entscheidung
+**Caddy 2.**
+
+Ausschlaggebend ist, wie beide mit TLS umgehen:
+
+- **nginx** kann selbst keine Zertifikate beschaffen. Man setzt **certbot** daneben, das per Timer
+  erneuert und nginx danach neu lädt. Drei bewegliche Teile, die zusammenpassen müssen.
+- **Caddy** hat ACME eingebaut. Ein Domainname in der Konfiguration genügt: anfordern, einbauen,
+  vor Ablauf erneuern. Es gibt keinen Schalter dafür, weil HTTPS der Normalfall ist und nicht der
+  Zusatz.
+
+Die vollständige Konfiguration für DevBoard sind **fünf wirksame Zeilen**. Dieselbe Aufgabe in nginx
+sind rund 40 Zeilen plus certbot-Einrichtung.
+
+Das ist dieselbe Abwägung wie bei Neon in ADR-016: **Was unbemerkt ausfallen kann und dessen Ausfall
+teuer ist, wird automatisiert** – nicht, weil Handarbeit falsch wäre, sondern weil sie hier niemand
+regelmäßig kontrollieren wird.
+
+### Alternativen
+**nginx mit certbot**, wie ursprünglich geplant. Der ehrliche Nachteil der getroffenen Entscheidung
+steckt genau hier: **In Stellenanzeigen steht nginx, nicht Caddy.** nginx ist verbreiteter, und
+Erfahrung damit ist unmittelbar verwertbar.
+
+Zwei Gründe haben trotzdem dagegen entschieden. Erstens ist das, was man an nginx lernt und was in
+einem Gespräch zählt, nicht die Konfigurationssyntax, sondern das **Konzept**: Was ein Reverse Proxy
+tut, warum das Backend nicht selbst am Internet hängt, wie TLS beendet wird. Das lernt man mit Caddy
+genauso. Zweitens ist „warum nicht nginx?" eine Frage, die man beantworten kann – und eine begründete
+Antwort ist mehr wert als die unreflektierte Standardwahl.
+
+**Traefik.** Verworfen. Es konfiguriert sich über Docker-Labels statt über eine Datei, was bei
+vielen dynamischen Diensten stark ist. Bei zwei Containern ist es Mehraufwand, und die Konfiguration
+wäre über die Compose-Datei verstreut statt an einer Stelle lesbar.
+
+**Kein Proxy, Backend direkt auf Port 443.** Verworfen. Die Anwendung müsste dann selbst TLS
+beenden und Zertifikate erneuern – Aufgaben, die nichts mit ihrer Fachlichkeit zu tun haben. Und in
+6.5 gäbe es keine Stelle, an der zwischen alter und neuer Fassung umgeschaltet werden kann.
+
+### Konsequenzen
+- **Positiv:** Zertifikate erneuern sich selbst. Der wahrscheinlichste stille Ausfall entfällt.
+- **Positiv:** Die Konfiguration passt auf einen Bildschirm und ist ohne Handbuch lesbar.
+- **Positiv:** HTTP/3 und HTTP→HTTPS-Umleitung sind ohne Zutun aktiv.
+- **Negativ:** Weniger verbreitet als nginx. Für DevOps-lastige Stellen ist das ein echter Punkt,
+  und die Antwort darauf muss sitzen.
+- **Negativ:** Bei sehr spezieller Anforderung ist nginx besser dokumentiert – schlicht, weil mehr
+  Menschen dieselben Probleme schon hatten.
+- **Achtung im Betrieb:** Das Volumen `caddy-data` enthält Zertifikate und private Schlüssel. Geht
+  es verloren, werden alle Zertifikate neu angefordert – und Let's Encrypt begrenzt das auf fünf
+  gleiche Zertifikate pro Woche. Ein unbedachtes `docker compose down -v` sperrt die Domain für
+  Tage aus.

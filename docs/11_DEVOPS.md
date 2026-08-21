@@ -225,3 +225,150 @@ gh api -X PUT repos/MYaglioglu/devboard/branches/main/protection/enforce_admins
 - Secrets nicht aus `.env`-Dateien, sondern aus dem Secret-Store der Umgebung.
 - Backup-Strategie für das Volume (`pg_dump` im Cronjob, plus Hetzner-Snapshots).
 - Multi-Stage-Dockerfiles für Backend und Frontend (Sprint 6).
+
+---
+
+# Der Produktionsserver (Sprint 6)
+
+**`devboard-prod`** · Hetzner CX23 (2 vCPU, 4 GB, x86) · Nürnberg · Ubuntu 24.04 LTS
+
+Warum **CX** und nicht das gleich teure **CAX**: CAX ist ARM. Das Image wird von GitHub Actions
+gebaut, und deren Runner sind x86. Ein Image ist an die Architektur gebunden – ARM hätte
+Cross-Building erzwungen, also eine Baustelle ohne Lerngewinn.
+
+Warum **keine Hetzner-Backups**: Auf dem Server liegt nichts Unersetzliches. Die Daten sind bei
+Neon, der Code auf GitHub, das Image entsteht aus dem Code. Der Server ist ersetzbar – und genau das
+ist der Sinn von Containern.
+
+## Die Einrichtung – als Befehlsfolge, nicht als Erinnerung
+
+Jeder Schritt ist einzeln nachvollziehbar. Wer den Server neu aufsetzen muss, arbeitet diese Liste
+ab; niemand muss sich erinnern, was damals geklickt wurde.
+
+### 1. Erste Anmeldung
+
+```bash
+ssh -i ~/.ssh/devboard root@167.233.151.172
+```
+
+### 2. System aktualisieren
+
+```bash
+apt update && apt upgrade -y
+```
+
+Das ist keine Formalität. Ein frisches Image ist so alt wie sein Erstellungsdatum – dazwischen
+liegen Sicherheitsupdates.
+
+### 3. Einen Benutzer anlegen, der nicht root ist
+
+```bash
+adduser --disabled-password --gecos "" devboard
+usermod -aG sudo devboard
+rsync --archive --chown=devboard:devboard ~/.ssh /home/devboard
+```
+
+`--disabled-password` heißt: Dieser Benutzer hat **kein** Passwort, mit dem man sich anmelden
+könnte – nur den SSH-Schlüssel. `rsync` überträgt den hinterlegten Schlüssel, sonst wäre der neue
+Benutzer ausgesperrt.
+
+Warum überhaupt: Als root ist jeder Tippfehler endgültig. Als normaler Benutzer braucht ein
+gefährlicher Befehl ein bewusstes `sudo` davor – eine Sekunde Nachdenken an genau der richtigen
+Stelle.
+
+### 4. Prüfen, BEVOR root abgeschaltet wird
+
+**Zweite Sitzung öffnen, die erste offen lassen.** Wer sich hier aussperrt, kommt nur noch über die
+Web-Konsole bei Hetzner hinein.
+
+```bash
+ssh -i ~/.ssh/devboard devboard@167.233.151.172
+```
+
+### 5. SSH härten
+
+In `/etc/ssh/sshd_config`:
+
+```
+PermitRootLogin no
+PasswordAuthentication no
+```
+
+Dann neu laden:
+
+```bash
+sudo systemctl reload ssh
+```
+
+`PasswordAuthentication no` ist der wirksamste Einzelschritt auf diesem Server: Ab hier laufen alle
+automatisierten Anmeldeversuche ins Leere, weil es nichts mehr zu raten gibt.
+
+### 6. Firewall auf dem Server
+
+```bash
+sudo ufw allow OpenSSH && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw --force enable
+```
+
+Zweite Schicht hinter der Hetzner-Firewall. Nicht doppelt gemoppelt, sondern **Verteidigung in der
+Tiefe**: Ein Fehlgriff im Hetzner-Dashboard öffnet dann nicht sofort alles.
+
+### 7. Docker installieren
+
+Aus dem offiziellen Docker-Repository, **nicht** `apt install docker.io` – das Ubuntu-Paket hinkt
+regelmäßig mehrere Hauptversionen hinterher.
+
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+```
+
+```bash
+sudo usermod -aG docker devboard
+```
+
+Danach einmal ab- und wieder anmelden, sonst greift die Gruppe nicht.
+
+> Ein Skript aus dem Netz in eine Shell zu leiten, ist normalerweise genau das, was man nicht tut.
+> Hier ist es das offizielle Installationsskript von Docker über HTTPS von deren eigener Domain –
+> vertretbar, aber es bleibt eine bewusste Vertrauensentscheidung und keine Selbstverständlichkeit.
+
+### 8. Repository und Konfiguration
+
+```bash
+git clone https://github.com/MYaglioglu/devboard.git && cd devboard
+```
+
+```bash
+cp .env.produktion.example .env.produktion && chmod 600 .env.produktion
+```
+
+Dann `.env.produktion` ausfüllen. **Alle Geheimnisse neu erzeugen**, nichts vom
+Entwicklungsrechner kopieren:
+
+```bash
+openssl rand -base64 48
+```
+
+```bash
+openssl rand -hex 32
+```
+
+### 9. Starten
+
+```bash
+docker compose -f docker-compose.produktion.yml up -d --build
+```
+
+### 10. Nachweis
+
+```bash
+curl -i https://api.DEINE-DOMAIN.de/health
+```
+
+Erwartet: `200` mit `{"status":"ok","checks":{"database":"up"}}` und ein gültiges Zertifikat.
+
+## Was auf diesem Server bewusst NICHT läuft
+
+- **PostgreSQL.** Liegt bei Neon (ADR-016). Deshalb ist Port 5432 nirgends offen.
+- **Node.** Nur im Container. Auf dem Wirt ist kein Node installiert und wird keins gebraucht.
+- **Ein zweiter Weg zum Backend.** Das Backend benutzt `expose`, nicht `ports` – es ist aus dem
+  Internet nicht erreichbar, weil es keinen Weg dorthin gibt, nicht weil eine Regel ihn verbietet.
