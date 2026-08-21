@@ -1,0 +1,43 @@
+# =============================================================================
+# Caddy - Reverse Proxy fuer DevBoard (ADR-017)
+# =============================================================================
+#
+# Das ist die vollstaendige Konfiguration. Sie ist deshalb so kurz, weil Caddy
+# HTTPS nicht als Zusatz behandelt, sondern als Normalfall: Zertifikat
+# anfordern, einbauen, vor Ablauf erneuern - ohne dass es hier steht.
+#
+# Zum Vergleich: Dieselbe Aufgabe in nginx sind rund 40 Zeilen plus certbot als
+# zweites Werkzeug mit eigener Erneuerung. Die Begruendung fuer diese Wahl
+# steht in ADR-017.
+# =============================================================================
+
+# Globale Einstellungen.
+{
+	# Kontaktadresse fuer Let's Encrypt. Dorthin geht eine Warnung, falls eine
+	# Erneuerung scheitert - die einzige Nachricht, die man in dem Fall
+	# ueberhaupt bekommt.
+	email {$ACME_EMAIL}
+}
+
+# Der Domainname kommt aus der Umgebung, nicht aus dieser Datei. So gilt
+# dieselbe Datei in 6.3 auch fuer Staging - nur mit anderer Variable.
+#
+# ALLEIN DASS HIER EIN NAME STEHT, LOEST DAS ZERTIFIKAT AUS: Caddy sieht einen
+# oeffentlichen Namen, fordert bei Let's Encrypt ein Zertifikat an und erneuert
+# es selbsttaetig. Es gibt keinen Schalter dafuer.
+#
+# Voraussetzung dafuer ist, dass der DNS-Eintrag bereits auf diesen Server
+# zeigt - Let's Encrypt prueft ueber Port 80, ob wir diese Domain wirklich
+# kontrollieren. Zeigt der Name noch woandershin, scheitert die Anforderung.
+{$API_DOMAIN} {
+	# Antworten komprimieren. zstd zuerst, gzip als Rueckfall fuer aeltere
+	# Clients - Caddy waehlt aus, was der Browser anbietet.
+	encode zstd gzip
+
+	# Weiterleiten an den Container `backend` auf Port 3000.
+	#
+	# `backend` ist keine erfundene Adresse: Docker loest Dienstnamen innerhalb
+	# des Netzes auf. Deshalb steht hier kein `localhost` und keine IP - eine
+	# IP koennte sich bei jedem Neustart aendern.
+	reverse_proxy backend:3000
+}
