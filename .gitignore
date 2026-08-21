@@ -11,9 +11,14 @@ out/
 *.tsbuildinfo
 
 # Secrets - NIEMALS committen
+# Geheimnisse. Die Regel ist bewusst breit:
+# `.env` allein traf NUR die Datei mit genau diesem Namen - `.env.produktion`
+# waere mitcommittet worden. Aufgefallen in Scheibe 6.2, bevor die Datei
+# angelegt wurde. Beispieldateien sind ausdruecklich ausgenommen.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.*.example
 *.pem
 *.key
 
