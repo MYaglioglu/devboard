@@ -285,23 +285,84 @@ Web-Konsole bei Hetzner hinein.
 ssh -i ~/.ssh/devboard devboard@167.233.151.172
 ```
 
+### 4b. Ein Passwort für `sudo` vergeben
+
+```bash
+passwd devboard
+```
+
+Klingt wie ein Widerspruch zu `--disabled-password`, ist aber keiner. Zwei verschiedene Dinge:
+
+- **SSH-Anmeldung per Passwort** – die wird gleich abgeschaltet.
+- **Lokale Authentisierung für `sudo`** – die braucht ein Passwort, sonst kann der Benutzer nach
+  dem Abschalten des Root-Zugangs nichts Administratives mehr tun.
+
+Ein mit `--disabled-password` angelegtes Konto hat ein *gesperrtes* Passwortfeld. `sudo` fragt dann
+nach etwas, das es nicht gibt, und scheitert. Aufgefallen ist das erst, als klar wurde, dass alle
+bisherigen `sudo`-Aufrufe als root liefen – dort fragt sudo gar nicht.
+
+Gegenprobe als `devboard`:
+
+```bash
+sudo whoami
+```
+
+Muss `root` ausgeben.
+
 ### 5. SSH härten
 
-In `/etc/ssh/sshd_config`:
+**Erst messen, was überhaupt gilt.** Ein `grep` in `/etc/ssh/sshd_config` ist nicht die Wahrheit:
+Ubuntu 24.04 hat dort ganz oben ein `Include /etc/ssh/sshd_config.d/*.conf`, und bei OpenSSH gilt
+für jedes Schlüsselwort der **zuerst** gefundene Wert. Was in einer Include-Datei steht, überstimmt
+also die Hauptdatei – nicht umgekehrt.
 
+Die tatsächlich wirksame Konfiguration rechnet `sshd -T` zusammen:
+
+```bash
+sudo sshd -T | grep -E "^permitrootlogin|^passwordauthentication|^pubkeyauthentication"
 ```
-PermitRootLogin no
+
+Bei `devboard-prod` war das Ergebnis: `permitrootlogin prohibit-password` (root nur per Schlüssel,
+Hetzner-Vorgabe), `pubkeyauthentication yes`, **`passwordauthentication yes`** – und
+`/etc/ssh/sshd_config.d/` war leer.
+
+Die Änderung kommt als **eigene Datei** dorthin, nicht in `sshd_config`: Ein Paketupdate kann die
+Hauptdatei ersetzen, eine eigene Datei bleibt. Der Name beginnt mit `01`, weil der erste Wert
+gewinnt – die Datei muss alphabetisch vor allem stehen, was Ubuntu später dort ablegt.
+
+```bash
+printf 'PermitRootLogin no
 PasswordAuthentication no
+KbdInteractiveAuthentication no
+' | sudo tee /etc/ssh/sshd_config.d/01-devboard-haertung.conf
 ```
 
-Dann neu laden:
+`KbdInteractiveAuthentication` gehört dazu: Es ist ein zweiter Weg, über den Passwörter abgefragt
+werden. Wer nur `PasswordAuthentication` schließt, lässt die Nebentür offen.
+
+**Syntax prüfen, bevor neu geladen wird.** Eine kaputte Konfiguration heißt, dass der Dienst nicht
+mehr startet – und dann kommt man nur noch über die Web-Konsole hinein:
+
+```bash
+sudo sshd -t
+```
+
+Keine Ausgabe bedeutet: in Ordnung. Erst dann:
 
 ```bash
 sudo systemctl reload ssh
 ```
 
-`PasswordAuthentication no` ist der wirksamste Einzelschritt auf diesem Server: Ab hier laufen alle
-automatisierten Anmeldeversuche ins Leere, weil es nichts mehr zu raten gibt.
+Und die Gegenprobe, dass es wirkt – dreimal `no`:
+
+```bash
+sudo sshd -T | grep -E "^permitrootlogin|^passwordauthentication|^kbdinteractive"
+```
+
+> **Die bestehende Sitzung bleibt offen.** `reload` wirft laufende Verbindungen nicht raus, deshalb
+> merkt man einen Fehler erst beim nächsten Anmelden. Der Beweis gehört in ein **neues** Fenster:
+> `ssh devboard` muss funktionieren, `ssh devboard-root` muss mit `Permission denied (publickey)`
+> scheitern. Das Scheitern ist hier das Prüfergebnis, nicht der Fehler.
 
 ### 6. Firewall auf dem Server
 
