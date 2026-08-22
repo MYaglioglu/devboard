@@ -3324,3 +3324,62 @@ nicht aus und `$disconnect()` bleibt liegen. Das Signal kommt an, es wird nur no
 Ich habe das beim Schreiben des Dockerfiles gefunden und für die Zero-Downtime-Scheibe notiert,
 statt es stillschweigend mitzuerledigen – es ist ein eigener Gedanke und gehört in einen eigenen
 Commit.
+
+### 182. Ihr Backend veröffentlicht keinen einzigen Port. Wie kommt dann eine Anfrage dorthin?
+
+Durch den Reverse Proxy – und **nur** durch ihn, weil es keinen zweiten Weg gibt.
+
+In der Compose-Datei steht beim Backend `expose: "3000"` und nicht `ports: "3000:3000"`. Der
+Unterschied ist der ganze Punkt:
+
+- `ports` bindet den Port an die Netzwerkschnittstelle des **Servers**. Er wäre aus dem Internet
+  erreichbar, und dass ihn niemand erreicht, hinge an einer Firewallregel.
+- `expose` macht ihn nur im Docker-Netz sichtbar. Erreichbar ausschließlich für andere Container im
+  selben Netz.
+
+Caddy liegt in diesem Netz und leitet an `backend:3000` weiter – ein Name, kein `localhost` und
+keine IP, denn Docker löst Dienstnamen selbst auf und eine IP könnte sich beim Neustart ändern.
+
+Mir ist die Unterscheidung wichtig, weil sie zwei verschiedene Arten von Sicherheit sind: Eine
+Firewall **verbietet** einen Weg, der existiert. `expose` sorgt dafür, dass der Weg gar nicht
+entsteht. Das Zweite kann man nicht versehentlich abschalten. Wir haben trotzdem beides – die
+Hetzner-Firewall und `ufw` –, aber als zusätzliche Schichten, nicht als tragende.
+
+### 183. Ihre Datenbankverbindung benutzt `sslmode=verify-full`. Warum nicht einfach `require`, wie der Anbieter es vorgibt?
+
+Weil `require` nicht das bedeutet, wonach es klingt. Es heißt „verschlüssele" – nicht „prüfe, mit
+wem du sprichst".
+
+| Modus | verschlüsselt | prüft Zertifikat | prüft Hostname |
+|---|---|---|---|
+| `require` | ja | nein | nein |
+| `verify-ca` | ja | ja | nein |
+| `verify-full` | ja | ja | ja |
+
+Mit `require` ist die Verbindung gegen Mitlesen geschützt, aber nicht gegen jemanden, der sich
+dazwischenschaltet und ein eigenes Zertifikat vorzeigt. Meine Datenbank liegt bei einem Anbieter und
+wird über das offene Internet erreicht – da ist genau das der Fall, auf den es ankommt.
+
+Aufgefallen ist es mir durch eine Warnung im Log beim ersten Produktionsstart: Der Treiber legt
+`require` derzeit noch streng aus und kündigte an, das in der nächsten Hauptversion zu ändern. Meine
+Verbindung war also sicher, aber nur, weil eine Bibliothek großzügig war. **Ein `npm update` hätte
+sie stillschweigend abgeschwächt.** Deshalb steht die strenge Variante jetzt ausgeschrieben – damit
+sie eine Entscheidung ist und kein Zufall.
+
+### 184. Was genau beweist bei Ihnen der Container-Status `healthy`?
+
+Vier Dinge auf einmal, und deshalb ist es mein Abnahmekriterium statt eines `docker ps`.
+
+Der `HEALTHCHECK` im Image ruft `/health` auf. Der Endpoint fragt die Datenbank mit `SELECT 1` und
+antwortet mit `503`, wenn sie fehlt – ein Health-Check, der immer `200` liefert, wäre wertlos.
+Steht also `healthy`, dann gilt:
+
+1. Der Prozess läuft – und zwar das gebaute Artefakt, nicht der Quelltext.
+2. NestJS ist vollständig hochgefahren, der Modulgraph steht.
+3. Die Datenbank ist erreichbar und antwortet tatsächlich, nicht nur „Verbindung besteht".
+4. Die Konfiguration ist vollständig – die Prüfung der Umgebungsvariablen hätte den Start sonst
+   verweigert.
+
+`running` hätte nichts davon gesagt. Das ist dieselbe Unterscheidung wie bei einem grünen Build, der
+beweist, dass der Compiler zufrieden war – aber nicht, dass das Ergebnis startet. Genau daran bin
+ich in der Scheibe davor gescheitert.
