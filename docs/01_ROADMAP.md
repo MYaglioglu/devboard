@@ -320,8 +320,12 @@ SSH-Schlüssel und eine Domain. Beides blockiert ab 6.2.
       Registrierungs- und Login-Durchlauf, nicht nur mit `/health`. Dabei zwei Fehler gefunden:
       `npm run start:prod` war seit Sprint 1 kaputt, und `--omit=optional` entfernt die native
       argon2-Binärdatei (16.08.2026)
-- [ ] 6.2 Server aufsetzen: SSH gehärtet, Firewall, Docker, Reverse Proxy mit automatischem TLS,
-      Backend hinter der Domain, Neon angebunden
+- [x] 6.2 Server aufsetzen: SSH gehärtet (`sshd -T` als Nachweis, nicht `grep`), Firewall in zwei
+      Schichten, Docker, Neon angebunden, Caddy mit automatischem TLS. Von außen geprüft: `200` mit
+      gültigem Let's-Encrypt-Zertifikat, `308` von HTTP auf HTTPS, Port 3000 geschlossen. Zwei
+      Funde: `sslmode=require` prüft weder Zertifikat noch Hostname, und ein doppelter
+      `DATABASE_URL`-Eintrag ließ die Produktionsmigration still gegen `localhost` laufen
+      (22.08.2026)
 - [ ] 6.3 Staging als zweite Umgebung – eigene Subdomain, eigener Neon-Branch, getrennte Geheimnisse
 - [ ] 6.4 Deploy aus GitHub Actions: Image bauen, in die Registry, Server zieht. Migration in der
       Pipeline. **Ein Schritt, der das gebaute Image startet und `/health` abfragt** – der Fehler
