@@ -37,7 +37,7 @@ Was unwiederbringlich ist – die Daten – liegt bei jemandem mit Backups.
 | Scheibe | Inhalt | Status |
 |---|---|---|
 | 6.1 | Produktions-Image für das Backend | **fertig** (16.08.2026) |
-| 6.2 | Server, Reverse Proxy, TLS, Neon angebunden | offen |
+| 6.2 | Server, Neon angebunden, Backend laeuft | **fertig bis auf TLS** (22.08.2026) |
 | 6.3 | Staging als zweite Umgebung | offen |
 | 6.4 | Deploy aus GitHub Actions, Migrationen | offen |
 | 6.5 | Zero-Downtime, Health-Gate, Rollback | offen |
@@ -129,6 +129,64 @@ Kein „startet vermutlich". Gegen das lokale PostgreSQL geprüft:
 Registrierung und Login stehen bewusst in der Liste: Der Health-Check hasht kein Passwort. Ohne sie
 wäre die argon2-Binärdatei nur *vorhanden* gewesen, nicht *nachweislich funktionsfähig* – und genau
 darin bestand der Fehler des zweiten Entwurfs.
+
+---
+
+## 6.2 – Der Server, die Datenbank und der erste Produktionsstart
+
+**Stand 22.08.2026:** Das Backend läuft auf `devboard-prod` und spricht mit Neon. Es fehlt allein
+der Reverse Proxy – nicht aus technischen Gründen, sondern weil die frisch registrierte Domain
+`devboard.info` noch nicht aufgelöst wird und Let's Encrypt ohne DNS kein Zertifikat ausstellt.
+
+### Was auf dem Server steht
+
+| | |
+|---|---|
+| Server | Hetzner CX23, Nürnberg, Ubuntu 24.04 LTS |
+| Härtung | eigener Benutzer, `PermitRootLogin no`, `PasswordAuthentication no`, `ufw` (22/80/443, v4 **und** v6) |
+| Docker | 29.7.2, aus dem offiziellen Repository |
+| Datenbank | Neon, Region Frankfurt, Branch `production`, 8 Migrationen angewendet |
+
+Die Einrichtung als abarbeitbare Befehlsfolge steht in `11_DEVOPS.md`.
+
+### Der Nachweis
+
+```
+[PrismaService] Datenbankverbindung hergestellt
+[NestApplication] Nest application successfully started
+```
+
+Und formal über den Health-Status des Containers. **`healthy` ist hier keine Formalie, sondern der
+kompakteste mögliche Beweis** – es sagt in einem Wort:
+
+- Das mehrstufige Image aus 6.1 läuft nicht nur lokal, sondern auf einem fremden Rechner
+- Der Container erreicht Neon in Frankfurt von Nürnberg aus, über eine geprüfte TLS-Verbindung
+- Das Schema passt – der Check fragt die Datenbank mit `SELECT 1`
+- Die Konfiguration ist vollständig; die Fail-Fast-Prüfung hätte den Start sonst verweigert
+
+Ein `docker ps` mit Status `running` hätte nichts davon belegt.
+
+### Zwei Funde beim ersten Start
+
+**`sslmode=require` prüft nichts.** Der Verbindungsstring aus dem Neon-Dashboard kommt mit
+`sslmode=require`, und der Treiber warnte beim Start, dass dieser Modus künftig nach
+libpq-Bedeutung ausgelegt wird – dann verschlüsselt er, prüft aber weder Zertifikat noch Hostname.
+Umgestellt auf `verify-full`. Ausführlich in `17_MISTAKES_AND_LESSONS.md`.
+
+**Ein doppelter `DATABASE_URL`-Eintrag in der lokalen `.env`** hat dazu geführt, dass die
+Produktionsmigration gegen `localhost` lief und Neon leer blieb – ohne jede Fehlermeldung. Ebenfalls
+dort protokolliert, samt der Frage, was passiert wäre, wenn statt der Migration ein `test:e2e`
+gelaufen wäre.
+
+### Was noch aussteht
+
+- **DNS.** `api.devboard.info` löst noch nicht auf. Danach startet Caddy mit
+  `docker compose -f docker-compose.produktion.yml up -d` – ohne Dienstnamen, dann kommt der Proxy
+  dazu – und holt selbsttätig das Zertifikat.
+- **`CORS_ORIGIN`** zeigt vorläufig auf die Domain; der richtige Wert ist die Vercel-Adresse des
+  Frontends (Scheibe 6.6).
+- **Der Server baut das Image selbst.** Vorläufig, siehe Kommentar in
+  `docker-compose.produktion.yml`. Ab 6.4 baut GitHub Actions und der Server zieht nur noch.
 
 ---
 

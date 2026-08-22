@@ -1011,3 +1011,94 @@ nachinstalliert, sonst könnte im Image eine andere Version landen als die getes
 `app.enableShutdownHooks()` fehlt. Ohne den Aufruf läuft `onModuleDestroy` beim Herunterfahren nicht
 – `$disconnect()` bleibt liegen und Verbindungen hängen im Pool. Kein Fehler dieses Sprints, aber
 einer, den erst das Nachdenken über SIGTERM sichtbar gemacht hat.
+
+---
+
+## 2026-08-22 – Ein doppelter Eintrag in der `.env`, der beinahe die Produktionsdaten gekostet hätte
+
+**Was passiert ist.** Für die Migrationen gegen Neon war ein einmalig gesetzter Umgebungswert
+vorgesehen. Stattdessen wurde die Neon-Adresse direkt in die lokale `.env` geschrieben – neben die
+bereits vorhandene Zeile für die Entwicklungsdatenbank. Die Datei enthielt danach `DATABASE_URL`
+**zweimal**:
+
+```
+Zeile 27  →  ep-fragrant-wind-...neon.tech
+Zeile 31  →  localhost:5432
+```
+
+`prisma migrate deploy` meldete anschließend „Database schema is up to date!" – und das stimmte
+sogar. Nur eben für `localhost`. **In Neon stand weiterhin nichts.**
+
+**Die Ursache.** Bei `.env`-Dateien gewinnt der **letzte** Eintrag. Kein Syntaxfehler, keine
+Warnung, kein Hinweis – eine stille Überschreibung. Der Fehler war ausschließlich an einer Zeile der
+Ausgabe zu erkennen:
+
+```
+Datasource "db": PostgreSQL database "devboard", schema "public" at "localhost:5432"
+```
+
+**Warum das gefährlicher war, als es aussieht.** Der falsche Zielort der Migration wäre lästig
+gewesen, mehr nicht. Das eigentliche Risiko war die Zeile selbst: Solange eine Produktions-URL in
+der lokalen `.env` steht, trifft sie **jeden** lokalen Befehl. `npm run test:e2e` räumt zwischen den
+Tests Tabellen leer. Ein einziger Testlauf hätte die Produktionsdatenbank ausgeräumt – ohne
+Rückfrage, in Sekunden.
+
+Dass nichts passiert ist, lag daran, dass zufällig der *harmlose* der beiden Einträge gewonnen hat.
+Kein Verdienst, sondern Glück.
+
+**Das Learning.**
+
+> **Produktionszugangsdaten kommen nie in eine Datei, die bei jedem Befehl gelesen wird.** Für einen
+> einmaligen Produktionsbefehl wird der Wert für genau diesen Aufruf gesetzt und danach vergessen.
+
+Und, allgemeiner: **Wenn ein Werkzeug sagt, wohin es sich verbindet, ist das keine Zierde.** Prisma
+schreibt die Datenquelle in die erste Zeile seiner Ausgabe. Wer sie liest, findet diesen Fehler in
+zwei Sekunden; wer sie überliest, glaubt an eine erfolgreiche Migration, die nie stattgefunden hat.
+
+**Was sich geändert hat.** Die Neon-Zeile wurde aus der lokalen `.env` entfernt, die Migration lief
+mit einem nur für diesen Aufruf gesetzten Wert, und der Nachweis war diesmal die Zieladresse in der
+Ausgabe – `...aws.neon.tech`, nicht `localhost`.
+
+---
+
+## 2026-08-22 – `sslmode=require` verschlüsselt, aber es prüft nichts
+
+**Was passiert ist.** Beim ersten Produktionsstart stand unter den Startmeldungen eine Warnung des
+PostgreSQL-Treibers:
+
+> *The SSL modes 'prefer', 'require', and 'verify-ca' are treated as aliases for 'verify-full'. In
+> the next major version these modes will adopt standard libpq semantics, which have weaker security
+> guarantees.*
+
+Der Verbindungsstring kam so aus dem Neon-Dashboard und enthielt `sslmode=require`. Die Anwendung
+lief einwandfrei – es war kein Fehler, nur eine Warnung.
+
+**Was dahintersteckt.** `require` bedeutet bei PostgreSQL nicht „sichere Verbindung", sondern nur
+„verschlüssele":
+
+| Modus | verschlüsselt | prüft Zertifikat | prüft Hostname |
+|---|---|---|---|
+| `require` | ja | **nein** | **nein** |
+| `verify-ca` | ja | ja | nein |
+| `verify-full` | ja | ja | ja |
+
+Eine Verbindung mit `require` schützt gegen Mitlesen, aber nicht gegen jemanden, der sich
+dazwischenschaltet und einfach ein eigenes Zertifikat vorzeigt. Bei einer Datenbank, die über das
+offene Internet erreicht wird, ist das der Fall, auf den es ankommt.
+
+Der Treiber `pg` legt `require` derzeit noch streng aus – die Verbindung war also tatsächlich
+geprüft. Ab der nächsten Hauptversion nicht mehr.
+
+**Das Learning.**
+
+> **Ein `npm update` hätte diese Verbindung stillschweigend abgeschwächt.** Sicherheitsverhalten,
+> das nur aus der großzügigen Auslegung einer Bibliothek folgt, ist nicht abgesichert – es muss
+> ausgeschrieben werden, damit es eine Entscheidung ist und kein Zufall.
+
+Dieselbe Lehre wie an mehreren Stellen zuvor, nur an anderem Material: Was nicht ausdrücklich
+dasteht, gilt nicht verlässlich.
+
+**Was sich geändert hat.** `DATABASE_URL` benutzt in Produktion `sslmode=verify-full`. Nach dem
+Neustart war die Warnung weg und die Verbindung stand unverändert. Die Vorlage
+`.env.produktion.example` schreibt die strenge Variante samt Begründung vor, damit der Wert aus dem
+Neon-Dashboard nicht unbesehen übernommen wird.
