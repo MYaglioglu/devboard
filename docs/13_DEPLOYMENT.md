@@ -37,7 +37,7 @@ Was unwiederbringlich ist – die Daten – liegt bei jemandem mit Backups.
 | Scheibe | Inhalt | Status |
 |---|---|---|
 | 6.1 | Produktions-Image für das Backend | **fertig** (16.08.2026) |
-| 6.2 | Server, Neon angebunden, Backend laeuft | **fertig bis auf TLS** (22.08.2026) |
+| 6.2 | Server, Neon, Backend, Caddy mit TLS | **fertig** (22.08.2026) |
 | 6.3 | Staging als zweite Umgebung | offen |
 | 6.4 | Deploy aus GitHub Actions, Migrationen | offen |
 | 6.5 | Zero-Downtime, Health-Gate, Rollback | offen |
@@ -178,11 +178,22 @@ Produktionsmigration gegen `localhost` lief und Neon leer blieb – ohne jede Fe
 dort protokolliert, samt der Frage, was passiert wäre, wenn statt der Migration ein `test:e2e`
 gelaufen wäre.
 
-### Was noch aussteht
+### Öffentlich erreichbar seit dem 22.08.2026
 
-- **DNS.** `api.devboard.info` löst noch nicht auf. Danach startet Caddy mit
-  `docker compose -f docker-compose.produktion.yml up -d` – ohne Dienstnamen, dann kommt der Proxy
-  dazu – und holt selbsttätig das Zertifikat.
+Caddy hat das Zertifikat ohne weiteres Zutun geholt. Von außen geprüft, am eigenen DNS-Cache vorbei:
+
+| Prüfung | Ergebnis |
+|---|---|
+| `GET https://api.devboard.info/health` | `200` · `{"status":"ok","checks":{"database":"up"}}` |
+| Zertifikatsprüfung | `0` – gültig, Kette vollständig |
+| Aussteller / Gültigkeit | Let's Encrypt · 22.08. bis 20.11.2026 |
+| `http://` | `308` auf `https://` – von niemandem konfiguriert |
+| Port 3000 von außen | geschlossen |
+
+Der vollständige Weg dorthin – jeder Befehl, jede Entscheidung, jeder Fehler – steht als Protokoll
+in `11_DEVOPS.md`.
+
+### Was noch aussteht
 - **`CORS_ORIGIN`** zeigt vorläufig auf die Domain; der richtige Wert ist die Vercel-Adresse des
   Frontends (Scheibe 6.6).
 - **Der Server baut das Image selbst.** Vorläufig, siehe Kommentar in
