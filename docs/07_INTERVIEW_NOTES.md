@@ -3383,3 +3383,39 @@ Steht also `healthy`, dann gilt:
 `running` hätte nichts davon gesagt. Das ist dieselbe Unterscheidung wie bei einem grünen Build, der
 beweist, dass der Compiler zufrieden war – aber nicht, dass das Ergebnis startet. Genau daran bin
 ich in der Scheibe davor gescheitert.
+
+### 185. Sie betreiben Staging und Produktion auf demselben Server. Ist das nicht genau das, was man nicht tun soll?
+
+Doch – in einer Firma wäre ein zweiter Server die richtige Antwort. Bei einem Portfolio-Projekt habe
+ich die Kosten gegen den Nutzen gestellt und die Schwachstelle bewusst benannt, statt sie zu
+übersehen.
+
+Geteilt wird genau **eine** Sache, und zwar weil sie sich nicht teilen lässt: der Reverse Proxy.
+Port 443 existiert nur einmal. Alles andere ist getrennt – eigener Container, eigene
+Umgebungsdatei, eigener Datenbank-Branch, eigene Domain, eigene Geheimnisse.
+
+Der Preis steht in ADR-018: Der Proxy ist ein **gemeinsamer Ausfallpunkt**. Fällt er, sind beide
+Umgebungen weg. Was ich dafür bekommen habe, ist die Trennung an der Stelle, an der sie zählt – ein
+Fehler in Staging kann keine Produktionsdaten anfassen.
+
+Wichtig war mir außerdem die **Richtung der Abhängigkeit**. Zuerst lag der Proxy im
+Produktions-Stapel; dann hätte ein `docker compose down` für einen Staging-Versuch die Produktion
+mitgenommen. Jetzt ist der Proxy ein eigener Stapel, der das Netz definiert, und die Anwendungen
+binden es als `external` ein. Sie hängen am Proxy, der Proxy hängt an keiner von ihnen.
+
+### 186. Warum bekommt Staging ein eigenes `JWT_SECRET`? Die Datenbank ist doch schon getrennt.
+
+Weil sonst **ein in Staging ausgestelltes Token in Produktion gültig wäre**.
+
+Ein JWT wird nicht nachgeschlagen, sondern nachgerechnet: Der Server prüft die Signatur mit seinem
+Geheimnis, und wenn sie stimmt, glaubt er dem Inhalt. Er weiß nicht, wer den Token ausgestellt hat.
+Bei gleichem Geheimnis akzeptiert die Produktion also anstandslos, was Staging signiert hat.
+
+Und Staging ist die schwächere Umgebung – dort läuft ungeprüfter Code, dort wird mehr ausprobiert,
+dort haben mehr Leute Zugang. Wer sich dort ein Token für eine beliebige Benutzer-ID ausstellen
+kann, hätte damit die Produktion offen. Die getrennte Datenbank hilft dagegen nicht: Die
+Zugriffsprüfung findet ja in der Produktion statt, mit deren Daten.
+
+Dasselbe gilt für `WEBHOOK_ENCRYPTION_KEY`. Die Regel dahinter: **Ein Geheimnis gehört genau einer
+Vertrauenszone.** Sobald zwei Umgebungen mit unterschiedlichem Schutzniveau dasselbe benutzen, gilt
+für beide das niedrigere.

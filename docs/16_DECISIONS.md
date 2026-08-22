@@ -822,3 +822,97 @@ beenden und Zertifikate erneuern – Aufgaben, die nichts mit ihrer Fachlichkeit
   es verloren, werden alle Zertifikate neu angefordert – und Let's Encrypt begrenzt das auf fünf
   gleiche Zertifikate pro Woche. Ein unbedachtes `docker compose down -v` sperrt die Domain für
   Tage aus.
+
+---
+
+## ADR-018: Staging teilt sich den Reverse Proxy – und sonst nichts
+
+**Status:** Angenommen (22.08.2026)
+
+### Kontext
+Scheibe 6.3 stellt neben die Produktion eine Testumgebung. Beide sollen auf demselben Server
+laufen – ein zweiter Server wäre für ein Portfolio-Projekt nicht zu rechtfertigen.
+
+Eine Sache lässt sich dabei nicht doppeln: **Port 443 existiert nur einmal.** Zwei Reverse Proxys
+können ihn sich nicht teilen. Es muss also genau einen gemeinsamen Eingang geben, und die Frage ist
+nur, wo der wohnt und was sonst noch geteilt wird.
+
+Nach Scheibe 6.2 lag Caddy im Produktions-Stapel. Käme Staging einfach dazu, entstünde eine
+Abhängigkeit in die falsche Richtung: Ein `docker compose down` für einen Staging-Versuch hätte den
+Proxy mitgenommen – und damit die Produktion vom Netz. **Eine Testumgebung, die die Produktion
+umwerfen kann, ist keine Testumgebung.**
+
+### Entscheidung
+Drei unabhängige Stapel an einem gemeinsamen Netz:
+
+```
+docker-compose.proxy.yml        Caddy + Netz `devboard-web`   ← definiert das Netz
+docker-compose.produktion.yml   backend           → Neon Branch `production`
+docker-compose.staging.yml      backend-staging   → Neon Branch `staging`
+```
+
+Die beiden Anwendungs-Stapel binden das Netz als `external` ein – sie **erwarten** es, legen es
+aber nicht an. Damit ist die Abhängigkeit umgekehrt und schwach: Die Backends hängen am Proxy, der
+Proxy an keinem von ihnen. Fällt ein Backend aus, antwortet Caddy für das andere weiter.
+
+Caddy unterscheidet die Umgebungen über **namensbasiertes Routing**: Er liest den Hostnamen aus der
+Anfrage – bei HTTPS aus der SNI-Erweiterung des TLS-Handshakes, also bevor die Verbindung
+verschlüsselt steht – und leitet an `backend:3000` oder `backend-staging:3000` weiter.
+
+Dass beide Backends intern auf demselben Port lauschen, ist kein Problem, weil keiner von beiden
+einen Port am Server veröffentlicht. **Die Entscheidung `expose` statt `ports` aus Scheibe 6.2
+zahlt hier zum zweiten Mal aus** – mit `ports` ließe sich Staging gar nicht danebenstellen, der
+Port wäre belegt.
+
+### Was ausdrücklich NICHT geteilt wird
+
+| | Produktion | Staging |
+|---|---|---|
+| Container | eigener | eigener |
+| Umgebungsdatei | `.env.produktion` | `.env.staging` |
+| Datenbank | Neon-Branch `production` | Neon-Branch `staging` |
+| `JWT_SECRET` | eigenes | eigenes |
+| `WEBHOOK_ENCRYPTION_KEY` | eigenes | eigenes |
+| Domain | `api.devboard.info` | `staging-api.devboard.info` |
+
+Die Datenbank ist der offensichtliche Punkt: Ein Test, der in echte Daten schreibt, ist schlimmer
+als gar kein Staging – er erzeugt Vertrauen, das nicht gedeckt ist.
+
+Der weniger offensichtliche ist `JWT_SECRET`. Ein gemeinsamer Signierschlüssel hieße: **Ein in
+Staging ausgestelltes Token wird in Produktion akzeptiert.** In Staging wird bewusst mehr
+ausprobiert, dort haben mehr Leute Zugang, dort läuft ungeprüfter Code. Wer sich dort ein Token
+ausstellen kann, hätte damit die Produktion offen.
+
+### Alternativen
+**Ein Stapel mit drei Diensten.** Einfacher, eine Datei weniger. Verworfen wegen der Kopplung: Jedes
+`down` und jedes `up` ohne Dienstnamen beträfe beide Umgebungen. Der Unterschied zeigt sich genau
+dann, wenn man ihn braucht – unter Zeitdruck bei einem Fehler.
+
+**Zweiter Server für Staging.** Die sauberste Trennung, und in einer Firma die richtige Antwort.
+Hier verworfen: verdoppelte Kosten und verdoppelte Pflege für eine Umgebung, die stundenweise
+benutzt wird. Der geteilte Proxy ist die bewusst in Kauf genommene Schwachstelle – fällt er aus,
+sind beide Umgebungen weg.
+
+**Staging mit Passwortschutz abschirmen** (HTTP Basic Auth im Proxy). Verworfen, weil Staging sich
+verhalten soll wie Produktion – ein zusätzlicher Authentisierungsschritt davor testet etwas
+anderes. Der Schutz liegt darin, dass dort keine echten Daten stehen.
+
+**Ein Neon-Projekt mit zwei Datenbanken** statt zwei Branches. Verworfen: Branches sind bei Neon
+genau dafür gedacht, kosten im Free-Tarif nichts (zehn sind erlaubt) und haben eigene Hostnamen –
+die beiden Verbindungsstrings lassen sich damit nicht verwechseln.
+
+### Konsequenzen
+- **Positiv:** Staging lässt sich stoppen, neu bauen und wegwerfen, ohne die Produktion zu berühren.
+- **Positiv:** Eine neue Umgebung kostet einen DNS-Eintrag, einen Neon-Branch und eine Compose-Datei.
+- **Positiv:** Der Proxy ist der einzige Dienst mit Kontakt zum Internet – eine Stelle, an der TLS,
+  Protokollierung und künftig Sicherheitskopfzeilen zu pflegen sind, nicht zwei.
+- **Negativ:** Der Proxy ist ein **gemeinsamer Ausfallpunkt**. Fällt er, sind beide Umgebungen weg.
+  Bewusst in Kauf genommen; die Alternative wäre ein zweiter Server.
+- **Negativ:** Die Startreihenfolge ist jetzt vorgegeben – der Proxy muss zuerst laufen, weil er das
+  Netz definiert. Compose sagt das mit einer klaren Meldung, aber man muss es wissen.
+- **Negativ:** Beide Umgebungen teilen sich Arbeitsspeicher und CPU eines CX23. Bei vier Gigabyte und
+  je etwa 300 MB pro Container unkritisch, aber keine Umgebung für Lasttests.
+- **Achtung beim Umstellen:** Der Proxy bekommt eigene Volumen (`devboard-caddy-data`). Die
+  Zertifikate aus dem alten Produktions-Stapel liegen unter einem anderen Namen und werden **einmal
+  neu angefordert**. Let's Encrypt erlaubt fünf gleiche Zertifikate pro Woche – einmal ist
+  unkritisch, wiederholtes Herumprobieren sperrt die Domain für Tage.

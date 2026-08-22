@@ -38,7 +38,7 @@ Was unwiederbringlich ist – die Daten – liegt bei jemandem mit Backups.
 |---|---|---|
 | 6.1 | Produktions-Image für das Backend | **fertig** (16.08.2026) |
 | 6.2 | Server, Neon, Backend, Caddy mit TLS | **fertig** (22.08.2026) |
-| 6.3 | Staging als zweite Umgebung | offen |
+| 6.3 | Staging als zweite Umgebung | Dateien fertig, Ausrollen offen |
 | 6.4 | Deploy aus GitHub Actions, Migrationen | offen |
 | 6.5 | Zero-Downtime, Health-Gate, Rollback | offen |
 | 6.6 | Frontend auf Vercel, CORS, Webhook-URL | offen |

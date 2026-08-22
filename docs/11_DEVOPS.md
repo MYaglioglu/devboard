@@ -1063,6 +1063,156 @@ existiert also nur im Docker-Netz.
 
 ---
 
+# Teil 10 – Staging danebenstellen (Scheibe 6.3)
+
+Nach Scheibe 6.2 lief alles in einem Stapel. Für die zweite Umgebung wird das aufgeteilt – die
+Begründung steht in **ADR-018**, hier stehen die Handgriffe.
+
+```
+docker-compose.proxy.yml        Caddy + Netz devboard-web   ← muss zuerst laufen
+docker-compose.produktion.yml   backend           → api.devboard.info
+docker-compose.staging.yml      backend-staging   → staging-api.devboard.info
+```
+
+## 10.1 DNS-Eintrag für Staging
+
+Beim Registrar, zusätzlich zum bestehenden:
+
+| Typ | Hostname | Wert |
+|---|---|---|
+| A | `staging-api` | `167.233.151.172` |
+
+Dieselbe IP-Adresse wie die Produktion. Zwei Namen, ein Server – Caddy unterscheidet sie am
+Hostnamen der Anfrage.
+
+Prüfen, bevor es weitergeht (der Nameserver direkt, am eigenen Zwischenspeicher vorbei):
+
+```
+nslookup staging-api.devboard.info ns1073.ui-dns.org
+```
+
+## 10.2 Neon-Branch für Staging
+
+Im Neon-Dashboard unter **Branches** einen Branch `staging` vom Branch `production` abzweigen.
+
+Ein Branch bei Neon ist eine **eigenständige Datenbank mit eigenem Hostnamen**, kein Schema im
+selben Cluster. Er übernimmt beim Anlegen den Stand des Ursprungs – das Schema ist also sofort da,
+die acht Migrationen müssen nicht erneut laufen. Im Free-Tarif sind zehn Branches erlaubt.
+
+Zwei Adressen kopieren, wie in Teil 5:
+
+- **pooled** (mit `-pooler`) → kommt in `.env.staging`
+- **direkt** → für spätere Migrationen gegen Staging
+
+## 10.3 Umstellen auf dem Server
+
+Der alte Stapel heißt `devboard-prod` und enthält noch Backend **und** Caddy. Er wird ersetzt.
+
+```
+cd devboard && git pull
+```
+
+Alten Stapel anhalten – **ohne `-v`**, sonst wären auch die Volumen weg:
+
+```
+docker compose -f docker-compose.produktion.yml -p devboard-prod down
+```
+
+> **Nie `docker compose down -v` auf diesem Server.** Das `-v` löscht die Volumen, darunter die
+> Zertifikate. Sie würden neu angefordert, und Let's Encrypt begrenzt das auf fünf gleiche
+> Zertifikate pro Woche.
+
+## 10.4 Die drei Umgebungsdateien
+
+```
+cp .env.proxy.example .env.proxy && chmod 600 .env.proxy && nano .env.proxy
+```
+
+Darin `ACME_EMAIL`, `API_DOMAIN` und `STAGING_DOMAIN`. Die bestehende `.env.produktion` bleibt
+liegen – daraus können `API_DOMAIN` und `ACME_EMAIL` entfallen, sie stören aber auch nicht.
+
+```
+cp .env.staging.example .env.staging && chmod 600 .env.staging && nano .env.staging
+```
+
+Und hier gilt die Regel aus ADR-018: **Kein Wert darf mit dem aus `.env.produktion`
+übereinstimmen.** Also neue Geheimnisse erzeugen, nicht kopieren:
+
+```
+openssl rand -base64 48
+```
+
+```
+openssl rand -hex 32
+```
+
+Der Grund ist nicht Pedanterie. Ein gemeinsames `JWT_SECRET` hieße: Ein in Staging ausgestelltes
+Token wird in Produktion akzeptiert. In Staging wird bewusst mehr ausprobiert – wer sich dort ein
+Token ausstellen kann, hätte damit die Produktion offen.
+
+## 10.5 Starten – Reihenfolge zählt
+
+Zuerst der Proxy, denn er definiert das Netz:
+
+```
+docker compose -f docker-compose.proxy.yml up -d
+```
+
+Dann die beiden Anwendungen:
+
+```
+docker compose -f docker-compose.produktion.yml up -d --build
+```
+
+```
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+Startet man eine Anwendung vor dem Proxy, verweigert Compose den Dienst mit einer klaren Meldung
+über das fehlende Netz. Das ist gewollt: besser ein Fehlschlag als ein laufendes Backend, das
+niemand erreichen kann.
+
+Beim ersten Start des neuen Proxy-Stapels fordert Caddy die Zertifikate **neu** an – die alten
+liegen im Volumen des früheren Stapels unter anderem Namen. Für `staging-api.devboard.info` ist es
+ohnehin das erste.
+
+## 10.6 Nachweis
+
+```
+docker ps --format "table {{.Names}}\t{{.Status}}"
+```
+
+Erwartet: drei Container, die beiden Backends `(healthy)`.
+
+```
+curl -sS -o /dev/null -w "prod    %{http_code}\n" https://api.devboard.info/health
+curl -sS -o /dev/null -w "staging %{http_code}\n" https://staging-api.devboard.info/health
+```
+
+Zweimal `200`.
+
+### Der eigentliche Nachweis ist ein anderer
+
+Dass beide antworten, zeigt nur, dass das Routing stimmt. Zu beweisen ist, dass sie **getrennt**
+sind. Dafür registriert man in Staging ein Konto und prüft, dass es in Produktion nicht existiert –
+oder umgekehrt:
+
+```
+curl -sS -X POST https://staging-api.devboard.info/auth/register -H "Content-Type: application/json" -d '{"email":"trennungstest@example.com","password":"EinSicheresPasswort123!","name":"Trennungstest"}'
+```
+
+```
+curl -sS -o /dev/null -w "%{http_code}\n" -X POST https://api.devboard.info/auth/login -H "Content-Type: application/json" -d '{"email":"trennungstest@example.com","password":"EinSicheresPasswort123!"}'
+```
+
+Erwartet: `201` beim ersten, **`401`** beim zweiten. Die `401` ist das Ergebnis – sie zeigt, dass
+die Produktion dieses Konto nicht kennt, die Datenbanken also tatsächlich verschieden sind.
+
+Ein Staging, dessen Trennung nur behauptet und nie geprüft wurde, ist genau die Sorte Annahme, die
+in diesem Projekt schon zweimal falsch war.
+
+---
+
 # Teil 9 – Betrieb im Alltag
 
 ```
