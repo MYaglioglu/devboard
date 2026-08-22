@@ -422,7 +422,7 @@ docker compose -f docker-compose.produktion.yml up -d --build
 ### 10. Nachweis
 
 ```bash
-curl -i https://api.DEINE-DOMAIN.de/health
+curl -i https://api.devboard.info/health
 ```
 
 Erwartet: `200` mit `{"status":"ok","checks":{"database":"up"}}` und ein gültiges Zertifikat.
