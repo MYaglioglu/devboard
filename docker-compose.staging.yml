@@ -1,0 +1,50 @@
+# =============================================================================
+# DevBoard - Staging (Scheibe 6.3)
+# =============================================================================
+#
+# Dieselbe Anwendung wie in Produktion, aber vollstaendig getrennt:
+#
+#   eigener Stapel          -> laesst sich stoppen, ohne die Produktion zu
+#                              beruehren
+#   eigener Container       -> eigener Prozess, eigener Speicher
+#   eigene .env.staging     -> eigene Geheimnisse
+#   eigener Neon-Branch     -> eigene Daten
+#   eigene Subdomain        -> staging-api.devboard.info
+#
+# GEMEINSAM ist nur der Reverse Proxy - der muss gemeinsam sein, weil Port 443
+# nur einmal existiert.
+#
+# DIE REGEL, DIE MAN LEICHT BRICHT: Staging und Produktion teilen sich KEINE
+# Datenbank und KEINE Geheimnisse. Ein Test, der in echte Daten schreibt, ist
+# schlimmer als gar kein Staging - er erzeugt Vertrauen, das nicht gedeckt ist.
+#
+# Starten:
+#   docker compose -f docker-compose.staging.yml up -d --build
+# =============================================================================
+
+name: devboard-staging
+
+services:
+  # Der Dienstname ist zugleich der Name, unter dem Caddy diesen Container im
+  # Netz findet. Er MUSS sich deshalb von `backend` unterscheiden - sonst
+  # gaebe es im Netz `devboard-web` zwei Container mit demselben Namen, und
+  # welchen Caddy erwischt, waere Zufall.
+  backend-staging:
+    build:
+      context: ./backend
+    image: devboard-backend:staging
+
+    restart: unless-stopped
+
+    env_file: .env.staging
+
+    expose:
+      - "3000"
+
+    networks:
+      - web
+
+networks:
+  web:
+    name: devboard-web
+    external: true

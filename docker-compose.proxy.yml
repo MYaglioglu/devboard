@@ -1,0 +1,77 @@
+# =============================================================================
+# DevBoard - Reverse Proxy (Scheibe 6.3)
+# =============================================================================
+#
+# Der einzige Dienst auf diesem Server mit Kontakt zum Internet. Er liegt
+# bewusst in einem EIGENEN Stapel und nicht mehr bei der Produktion.
+#
+# WARUM DIE TRENNUNG
+#
+# Es kann nur einen Proxy geben - zwei Container koennen sich Port 443 nicht
+# teilen. Produktion und Staging brauchen also einen gemeinsamen Eingang.
+#
+# Laege er weiterhin im Produktions-Stapel, haette Staging an der Produktion
+# gehangen: Ein `docker compose down` fuer einen Staging-Versuch haette den
+# Proxy mitgenommen und damit auch die Produktion vom Netz. Eine Testumgebung,
+# die die Produktion umwerfen kann, ist keine Testumgebung.
+#
+# So ist die Abhaengigkeit umgedreht und schwach: Die Backends haengen am Netz
+# des Proxys, der Proxy an keinem von ihnen. Faellt ein Backend aus, antwortet
+# Caddy fuer die uebrigen weiter.
+#
+# Starten:
+#   docker compose -f docker-compose.proxy.yml up -d
+# =============================================================================
+
+name: devboard-proxy
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+
+    ports:
+      - "80:80"
+      - "443:443"
+      # HTTP/3 laeuft ueber UDP. Ohne diese Zeile faellt Caddy still auf
+      # HTTP/2 zurueck - kein Fehler, aber auch kein HTTP/3.
+      - "443:443/udp"
+
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+    # Enthaelt ACME_EMAIL und die beiden Domainnamen. Bewusst eine eigene
+    # Datei: Der Proxy hat mit den Geheimnissen der Anwendungen nichts zu tun
+    # und soll sie auch nicht lesen koennen.
+    env_file: .env.proxy
+
+    networks:
+      - web
+
+volumes:
+  # ACHTUNG BEIM UMSTELLEN: Diese Volumen heissen anders als die des frueheren
+  # Produktions-Stapels (dort `devboard-prod_caddy-data`). Caddy findet die
+  # alten Zertifikate also nicht wieder und fordert sie EINMAL neu an.
+  #
+  # Das ist eingeplant und unkritisch - Let's Encrypt erlaubt fuenf gleiche
+  # Zertifikate pro Woche, und bisher wurde eines ausgestellt. Wer aber beim
+  # Herumprobieren mehrfach neu anfordert, sperrt sich fuer Tage aus.
+  #
+  # Die Namen sind hier ausdruecklich gesetzt, damit sie nicht mehr vom
+  # Stapelnamen abhaengen und eine kuenftige Umbenennung sie nicht erneut
+  # verwaist zuruecklaesst.
+  caddy-data:
+    name: devboard-caddy-data
+  caddy-config:
+    name: devboard-caddy-config
+
+networks:
+  # Hier wird das gemeinsame Netz DEFINIERT. Die beiden Anwendungs-Stapel
+  # binden es als `external` ein - sie erwarten es also, legen es aber nicht an.
+  #
+  # Reihenfolge daraus: Der Proxy muss zuerst laufen. Das ist keine Schwaeche,
+  # sondern die Abhaengigkeit, die wir haben wollen.
+  web:
+    name: devboard-web

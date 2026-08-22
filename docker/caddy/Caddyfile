@@ -2,42 +2,56 @@
 # Caddy - Reverse Proxy fuer DevBoard (ADR-017)
 # =============================================================================
 #
-# Das ist die vollstaendige Konfiguration. Sie ist deshalb so kurz, weil Caddy
-# HTTPS nicht als Zusatz behandelt, sondern als Normalfall: Zertifikat
-# anfordern, einbauen, vor Ablauf erneuern - ohne dass es hier steht.
+# Zwei Umgebungen hinter einer IP-Adresse. Das Verfahren heisst
+# NAMENSBASIERTES ROUTING: Caddy liest den Hostnamen aus der Anfrage und
+# entscheidet danach, an welchen Container er weiterreicht.
 #
-# Zum Vergleich: Dieselbe Aufgabe in nginx sind rund 40 Zeilen plus certbot als
-# zweites Werkzeug mit eigener Erneuerung. Die Begruendung fuer diese Wahl
-# steht in ADR-017.
+#                           ┌── api.devboard.info ─────────→ backend:3000
+#   Internet ──→ Caddy ─────┤
+#                           └── staging-api.devboard.info ─→ backend-staging:3000
+#
+# Beide Backends lauschen intern auf 3000. Das kollidiert nicht, weil keiner
+# von beiden einen Port am Server veroeffentlicht - genau deshalb steht dort
+# `expose` und nicht `ports`.
+#
+# Bei HTTPS liest Caddy den Namen aus der SNI-Erweiterung des TLS-Handshakes,
+# also noch BEVOR die Verbindung verschluesselt steht. Anders ginge es nicht:
+# Ohne den Namen wuesste er nicht, welches Zertifikat er vorzeigen soll.
 # =============================================================================
 
-# Globale Einstellungen.
 {
-	# Kontaktadresse fuer Let's Encrypt. Dorthin geht eine Warnung, falls eine
+	# Kontaktadresse fuer Let's Encrypt. Dorthin geht die Warnung, falls eine
 	# Erneuerung scheitert - die einzige Nachricht, die man in dem Fall
 	# ueberhaupt bekommt.
 	email {$ACME_EMAIL}
 }
 
-# Der Domainname kommt aus der Umgebung, nicht aus dieser Datei. So gilt
-# dieselbe Datei in 6.3 auch fuer Staging - nur mit anderer Variable.
+# --- Produktion --------------------------------------------------------------
 #
 # ALLEIN DASS HIER EIN NAME STEHT, LOEST DAS ZERTIFIKAT AUS: Caddy sieht einen
-# oeffentlichen Namen, fordert bei Let's Encrypt ein Zertifikat an und erneuert
-# es selbsttaetig. Es gibt keinen Schalter dafuer.
+# oeffentlichen Namen, fordert bei Let's Encrypt eines an und erneuert es
+# selbsttaetig. Es gibt keinen Schalter dafuer.
 #
-# Voraussetzung dafuer ist, dass der DNS-Eintrag bereits auf diesen Server
-# zeigt - Let's Encrypt prueft ueber Port 80, ob wir diese Domain wirklich
-# kontrollieren. Zeigt der Name noch woandershin, scheitert die Anforderung.
+# Voraussetzung ist, dass der DNS-Eintrag bereits auf diesen Server zeigt -
+# Let's Encrypt prueft ueber Port 80, ob wir die Domain kontrollieren.
 {$API_DOMAIN} {
-	# Antworten komprimieren. zstd zuerst, gzip als Rueckfall fuer aeltere
-	# Clients - Caddy waehlt aus, was der Browser anbietet.
 	encode zstd gzip
-
-	# Weiterleiten an den Container `backend` auf Port 3000.
-	#
-	# `backend` ist keine erfundene Adresse: Docker loest Dienstnamen innerhalb
-	# des Netzes auf. Deshalb steht hier kein `localhost` und keine IP - eine
-	# IP koennte sich bei jedem Neustart aendern.
 	reverse_proxy backend:3000
+}
+
+# --- Staging -----------------------------------------------------------------
+#
+# Ein zweiter Block, ein zweites Zertifikat, ein anderes Ziel. Sonst identisch.
+#
+# Bewusst NICHT durch einen Passwortschutz abgeschirmt: Staging soll sich
+# verhalten wie Produktion, sonst testet es etwas anderes. Der Schutz liegt
+# darin, dass dort keine echten Daten stehen - eigener Neon-Branch, eigene
+# Geheimnisse.
+#
+# Was hier allerdings fehlt und in 6.7 nachkommt: ein `X-Robots-Tag`, damit
+# Suchmaschinen die Testumgebung nicht indizieren. Sonst steht sie irgendwann
+# neben der Produktion in den Suchergebnissen.
+{$STAGING_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy backend-staging:3000
 }

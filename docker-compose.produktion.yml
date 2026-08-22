@@ -1,125 +1,64 @@
 # =============================================================================
-# DevBoard - Produktion (Hetzner)
+# DevBoard - Produktion
 # =============================================================================
 #
-# Diese Datei beschreibt, was auf dem Server laeuft. Sie gehoert bewusst INS
-# REPOSITORY: Ein Server, dessen Zustand nur in der Erinnerung des Betreibers
-# existiert, ist nicht wiederherstellbar. Wer diese Datei hat, kann die
-# Umgebung nachbauen.
+# Nur noch das Backend. Der Reverse Proxy ist seit Scheibe 6.3 ein eigener
+# Stapel (docker-compose.proxy.yml) - Begruendung steht dort.
 #
 # Was hier NICHT drinsteht: die Datenbank. Sie liegt bei Neon (ADR-016).
-# Deshalb gibt es hier keinen Postgres-Dienst und kein Datenvolumen fuer ihn.
 #
-# Starten (auf dem Server, im Repository-Verzeichnis):
+# Starten (Proxy muss laufen, er definiert das Netz):
 #   docker compose -f docker-compose.produktion.yml up -d --build
 #
 # Logs:
 #   docker compose -f docker-compose.produktion.yml logs -f
 # =============================================================================
 
-name: devboard-prod
+name: devboard-produktion
 
 services:
-  # ---------------------------------------------------------------------------
-  # Das Backend. Von aussen NICHT erreichbar.
-  # ---------------------------------------------------------------------------
   backend:
-    # In dieser Scheibe wird auf dem Server gebaut. Das ist der einfachste
-    # Weg zu einem laufenden Stand und braucht keine Registry.
-    #
-    # Scheibe 6.4 ersetzt diesen Block durch `image: ghcr.io/...` - dann baut
-    # GitHub Actions, und der Server zieht nur noch das fertige Image. Das ist
-    # der bessere Endzustand: Ein Server, der selbst baut, braucht Bauwerkzeug,
-    # Speicher und Zeit - und baut im Zweifel etwas anderes als die CI geprueft
-    # hat.
+    # In dieser Scheibe wird auf dem Server gebaut. Scheibe 6.4 ersetzt das
+    # durch `image: ghcr.io/...` - dann baut GitHub Actions, und der Server
+    # zieht nur noch das geprueft gebaute Image.
     build:
       context: ./backend
     image: devboard-backend:aktuell
 
-    # `unless-stopped` statt `always`: Nach einem Neustart des Servers faehrt
-    # der Container wieder hoch - aber wenn ich ihn absichtlich gestoppt habe,
-    # bleibt er gestoppt. `always` wuerde ihn auch dann wieder starten und mir
-    # bei der Fehlersuche in den Ruecken fallen.
+    # `unless-stopped` statt `always`: Nach einem Serverneustart faehrt der
+    # Container wieder hoch - aber wenn ich ihn absichtlich gestoppt habe,
+    # bleibt er gestoppt. `always` wuerde ihn auch dann starten und mir bei
+    # der Fehlersuche in den Ruecken fallen.
     restart: unless-stopped
 
     env_file: .env.produktion
 
-    # `expose` und NICHT `ports`. Das ist der wichtigste Unterschied in dieser
-    # Datei:
+    # `expose` und NICHT `ports`:
     #
-    #   ports:  "3000:3000"  -> Port ist am SERVER offen, aus dem Internet
-    #                           erreichbar. Die Hetzner-Firewall haelt ihn zwar
-    #                           zu, aber dann haengt die Sicherheit an einer
-    #                           Einstellung ausserhalb dieser Datei.
-    #   expose: "3000"       -> Port ist nur im Docker-Netz sichtbar. Erreichbar
-    #                           ausschliesslich fuer andere Container.
+    #   ports:  "3000:3000"  -> Port am SERVER offen, aus dem Internet
+    #                           erreichbar. Die Sicherheit haengt dann an einer
+    #                           Firewallregel ausserhalb dieser Datei.
+    #   expose: "3000"       -> nur im Docker-Netz sichtbar.
     #
-    # Damit gibt es genau EINEN Weg von aussen zum Backend: durch Caddy. Nicht
-    # weil eine Regel es verbietet, sondern weil es keinen zweiten Weg gibt.
+    # Damit gibt es genau EINEN Weg von aussen: durch Caddy. Nicht weil eine
+    # Regel es verbietet, sondern weil es keinen zweiten Weg gibt.
+    #
+    # Ab dieser Scheibe kommt ein zweiter Grund dazu: Mit `ports` koennte
+    # Staging gar nicht danebenlaufen - der Port waere belegt.
     expose:
       - "3000"
 
     networks:
-      - intern
+      - web
 
-    # Kein healthcheck-Block: Der steht im Image (siehe backend/Dockerfile) und
-    # gilt automatisch. Ihn hier zu wiederholen waere eine zweite Wahrheit.
-
-  # ---------------------------------------------------------------------------
-  # Der Reverse Proxy. Der einzige Dienst mit Kontakt zum Internet.
-  # ---------------------------------------------------------------------------
-  caddy:
-    # Version festgenagelt auf die Hauptversion. `caddy:latest` koennte ueber
-    # Nacht eine neue Hauptversion werden und die Konfiguration brechen.
-    image: caddy:2-alpine
-    restart: unless-stopped
-
-    ports:
-      - "80:80"
-      - "443:443"
-      # HTTP/3 laeuft ueber UDP. Ohne diese Zeile faellt Caddy still auf
-      # HTTP/2 zurueck - kein Fehler, aber auch kein HTTP/3.
-      - "443:443/udp"
-
-    volumes:
-      # :ro - der Proxy darf seine eigene Konfiguration nicht veraendern.
-      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-
-      # DAS WICHTIGSTE VOLUMEN AUF DEM SERVER.
-      #
-      # Hier liegen die TLS-Zertifikate und die privaten Schluessel dazu. Geht
-      # es verloren, muss Caddy alle Zertifikate neu anfordern - und Let's
-      # Encrypt hat eine Mengenbegrenzung (5 gleiche Zertifikate pro Woche).
-      # Wer beim Herumprobieren mehrfach `docker compose down -v` aufruft,
-      # sperrt sich fuer Tage aus.
-      - caddy-data:/data
-
-      - caddy-config:/config
-
-    # Caddy liest {$API_DOMAIN} und {$ACME_EMAIL} zur Laufzeit aus der
-    # Umgebung. Bewusst ueber env_file und NICHT ueber ${...} in dieser Datei:
-    # Compose wuerde ${...} aus einer Datei namens `.env` ersetzen, nicht aus
-    # `.env.produktion`. Es gaebe also zwei Quellen fuer Konfiguration. So
-    # gibt es eine.
-    env_file: .env.produktion
-
-    # Erst starten, wenn das Backend GESUND ist - nicht nur gestartet.
-    # `service_started` wuerde reichen, dass der Prozess laeuft; dann nimmt
-    # Caddy Anfragen an, waehrend NestJS noch seinen Modulgraphen aufbaut, und
-    # die ersten Aufrufe laufen in einen Fehler.
-    depends_on:
-      backend:
-        condition: service_healthy
-
-    networks:
-      - intern
-
-volumes:
-  caddy-data:
-  caddy-config:
+    # Kein healthcheck-Block: Der steht im Image (backend/Dockerfile) und gilt
+    # automatisch. Ihn hier zu wiederholen waere eine zweite Wahrheit.
 
 networks:
-  # Ein eigenes Netz statt des Standardnetzes: Nur wer hier drin ist, kann das
-  # Backend erreichen. Container anderer Compose-Projekte auf demselben Server
-  # koennen es nicht - das wird relevant, sobald in 6.3 Staging danebensteht.
-  intern:
+  # `external: true` heisst: Dieses Netz wird hier ERWARTET, nicht angelegt.
+  # Es entsteht im Proxy-Stapel. Laeuft der nicht, verweigert Compose hier den
+  # Start mit einer klaren Meldung - besser als ein Backend, das lauft und
+  # das niemand erreichen kann.
+  web:
+    name: devboard-web
+    external: true
