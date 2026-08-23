@@ -916,3 +916,77 @@ die beiden Verbindungsstrings lassen sich damit nicht verwechseln.
   Zertifikate aus dem alten Produktions-Stapel liegen unter einem anderen Namen und werden **einmal
   neu angefordert**. Let's Encrypt erlaubt fünf gleiche Zertifikate pro Woche – einmal ist
   unkritisch, wiederholtes Herumprobieren sperrt die Domain für Tage.
+
+---
+
+## ADR-019: Das Frontend läuft unter der eigenen Domain, nicht unter `*.vercel.app`
+
+**Status:** Angenommen (22.08.2026)
+
+### Kontext
+Scheibe 6.6 stellt das Next.js-Frontend auf Vercel. Vercel vergibt dafür kostenlos eine Adresse der
+Form `devboard.vercel.app`. Naheliegend wäre, sie einfach zu benutzen – eine Domain ist ja schon
+vergeben, und `devboard.info` zeigt bisher auf die Parkseite des Registrars.
+
+Beim Nachsehen im Code stellte sich heraus, dass das die Anmeldung zerstören würde.
+
+DevBoard legt das Refresh-Token in ein Cookie:
+
+```
+httpOnly: true, secure: true, sameSite: 'lax', path: '/auth'
+```
+
+Und das Frontend ruft das Backend mit `credentials: 'include'` auf.
+
+**`SameSite=Lax` bezieht sich auf die Site, nicht auf die Herkunft.** „Site" meint die registrierbare
+Domain – bei uns `devboard.info`. Daraus folgt:
+
+| Frontend | Backend | Verhältnis | Cookie |
+|---|---|---|---|
+| `devboard.vercel.app` | `api.devboard.info` | **cross-site** | wird weder gesetzt noch gesendet |
+| `devboard.info` | `api.devboard.info` | cross-origin, aber **same-site** | funktioniert |
+
+Der zweite Fall ist der interessante: Die beiden Adressen sind *verschiedene Herkünfte* – deshalb
+braucht es weiterhin CORS – aber *dieselbe Site*, und genau darauf schaut `SameSite`.
+
+Der Fehler wäre besonders unangenehm gewesen, weil er **halb** aussieht: Der Login-Aufruf antwortet
+mit `200` und einem Access-Token, die Anwendung wirkt angemeldet. Erst beim Neuladen oder nach 15
+Minuten fällt auf, dass es kein Refresh-Token gibt und die Sitzung weg ist.
+
+### Entscheidung
+Das Frontend wird von Beginn an unter **`devboard.info`** ausgeliefert, das Backend bleibt unter
+`api.devboard.info`. Die `vercel.app`-Adresse bleibt bestehen, ist aber nicht die genannte Adresse
+der Anwendung.
+
+Damit bleibt `SameSite=Lax`, und die Entscheidung aus Sprint 1 muss nicht angefasst werden.
+
+### Alternativen
+**`SameSite=None; Secure` setzen.** Der technisch mögliche Weg, um die `vercel.app`-Adresse zu
+benutzen. Verworfen, und zwar nicht knapp: Safari blockiert solche Cookies durch ITP von sich aus,
+Firefox ebenfalls in der Standardeinstellung, und Chrome baut Drittanbieter-Cookies ab. Man würde
+eine heute funktionierende Entscheidung gegen eine auslaufende tauschen – und das für eine Adresse,
+die man ohnehin nicht in den Lebenslauf schreibt.
+
+**Das Refresh-Token im Browserspeicher halten** statt im Cookie. Verworfen. Damit wäre es für
+JavaScript lesbar, und der ganze Sinn von `httpOnly` – dass ein XSS-Fund nicht gleich die Sitzung
+kostet – wäre dahin. Das war in Sprint 1 eine bewusste Entscheidung und bleibt es.
+
+**Das Frontend hinter denselben Reverse Proxy hängen**, also selbst ausliefern statt Vercel. Dann
+wäre alles gleiche Herkunft und CORS entfiele sogar. Verworfen wegen ADR-016: Statische Auslieferung
+ist der Teil, den Vercel besser und kostenlos macht, und er lehrt nichts, was der Server nicht schon
+zeigt.
+
+### Konsequenzen
+- **Positiv:** `SameSite=Lax` bleibt. Kein Drittanbieter-Cookie, keine Abhängigkeit von einer
+  Browsereinstellung, die gerade abgebaut wird.
+- **Positiv:** Die genannte Adresse der Anwendung ist die eigene Domain – für ein Portfolio der
+  Unterschied zwischen „ein Projekt" und „ein Produkt".
+- **Negativ, und das ist echt:** Die **Vorschau-Bereitstellungen** von Vercel pro Pull Request laufen
+  unter wechselnden `*.vercel.app`-Adressen. Dort ist die Anmeldung aus demselben Grund nicht
+  benutzbar. Vorschauen taugen also für Layout und öffentliche Seiten, nicht für angemeldete
+  Ansichten. Wer das ändern will, braucht Vorschau-Adressen unterhalb der eigenen Domain – ein
+  bezahltes Merkmal.
+- **Negativ:** `CORS_ORIGIN` muss gepflegt werden. Kommt später `www.devboard.info` dazu, gehört sie
+  in die Liste, sonst blockiert der Browser die Antworten.
+- **Zu beachten:** Der DNS-Eintrag für `@` zeigt bisher auf die Parkseite des Registrars und muss auf
+  Vercel umgestellt werden. `api` bleibt unberührt – zwei Namen, zwei Ziele.

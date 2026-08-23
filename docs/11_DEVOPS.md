@@ -1213,6 +1213,124 @@ in diesem Projekt schon zweimal falsch war.
 
 ---
 
+# Teil 11 – Das Frontend auf Vercel (Scheibe 6.6)
+
+Der Schritt, nach dem DevBoard nicht mehr eine API ist, sondern eine Anwendung.
+
+**Die Randbedingung vorweg** (ADR-019): Das Frontend läuft unter `devboard.info`, **nicht** unter
+der `vercel.app`-Adresse. Grund ist das Refresh-Cookie mit `SameSite=Lax` – es wird nur zwischen
+Adressen derselben registrierbaren Domain gesetzt und gesendet. `devboard.info` und
+`api.devboard.info` erfüllen das, `devboard.vercel.app` und `api.devboard.info` nicht.
+
+## 11.1 Vercel-Projekt anlegen
+
+1. Auf `vercel.com` mit dem GitHub-Konto anmelden.
+2. **Add New → Project**, das Repository `devboard` importieren.
+3. **Root Directory** auf `frontend` setzen. Das ist der Schritt, den fast jeder beim Monorepo
+   vergisst – ohne ihn sucht Vercel im Wurzelverzeichnis eine `package.json` und scheitert.
+4. Framework wird als Next.js erkannt, Build-Befehle unverändert lassen.
+5. Unter **Environment Variables** eintragen:
+
+   ```
+   NEXT_PUBLIC_API_URL = https://api.devboard.info
+   ```
+
+   Für alle drei Umgebungen (Production, Preview, Development).
+
+6. **Deploy.**
+
+Der erste Build läuft, danach ist die Anwendung unter `<name>.vercel.app` erreichbar – noch mit
+nicht funktionierender Anmeldung, siehe oben. Das ist erwartet und wird mit dem nächsten Schritt
+behoben.
+
+## 11.2 Die eigene Domain zuweisen
+
+Im Vercel-Projekt unter **Settings → Domains** `devboard.info` hinzufügen. Vercel nennt daraufhin
+die DNS-Werte, die einzutragen sind – üblicherweise ein `A`-Eintrag für `@` und ein `CNAME` für
+`www`. **Die von Vercel angezeigten Werte gelten**, nicht die hier abgeschriebenen.
+
+Beim Registrar dann:
+
+| Typ | Hostname | Wert | Bemerkung |
+|---|---|---|---|
+| A | `@` | von Vercel genannt | **ersetzt** den bisherigen Eintrag auf die Parkseite |
+| CNAME | `www` | von Vercel genannt | optional |
+| A | `api` | `167.233.151.172` | **bleibt unverändert** |
+
+Der bestehende `AAAA`-Eintrag auf `@` muss weg oder angepasst werden – zeigt er weiter auf die
+Parkseite, landen Besucher mit IPv6 dort, während alle anderen die Anwendung sehen. Solche Fehler
+sind besonders unangenehm, weil sie nur einen Teil der Nutzer treffen.
+
+`api` wird **nicht** angefasst. Zwei Namen, zwei Ziele, ein Registrar.
+
+## 11.3 CORS auf dem Backend nachziehen
+
+Auf dem Server in `.env.produktion`:
+
+```
+CORS_ORIGIN=https://devboard.info,https://www.devboard.info
+```
+
+```
+docker compose -f docker-compose.produktion.yml up -d backend
+```
+
+Kein Neubau nötig – nur die Konfiguration ändert sich.
+
+**Warum das überhaupt nötig ist, obwohl beide zur selben Site gehören:** CORS und SameSite prüfen
+zwei verschiedene Dinge.
+
+| | fragt | Ebene |
+|---|---|---|
+| **CORS** | Darf diese *Herkunft* die Antwort lesen? | Herkunft (Schema + Host + Port) |
+| **SameSite** | Wird das Cookie mitgeschickt? | registrierbare Domain |
+
+`devboard.info` und `api.devboard.info` sind **dieselbe Site**, aber **verschiedene Herkünfte**. Es
+braucht also beides: die Domain-Wahl für das Cookie und den CORS-Eintrag für die Antwort. Wer nur
+eines von beidem hat, bekommt zwei sehr verschiedene Fehlerbilder – ohne CORS blockiert der Browser
+sichtbar mit einer Konsolenmeldung, ohne SameSite verschwindet still die Sitzung.
+
+Kein `origin: '*'`: Mit `credentials: true` verbietet die Spezifikation den Platzhalter ohnehin, und
+er erlaubte jeder beliebigen Webseite Anfragen im Namen angemeldeter Nutzer.
+
+## 11.4 Die Webhook-URL umstellen
+
+`PUBLIC_BASE_URL` steht bereits auf `https://api.devboard.info`. Damit zeigt DevBoard die richtige
+Webhook-Adresse an, und **GitHub kann zum ersten Mal ohne Tunnel zustellen** – bisher ging das nur
+über `gh webhook forward` oder ngrok.
+
+Bestehende Repository-Verbindungen aus der lokalen Entwicklung funktionieren in Produktion nicht:
+Ihre Geheimnisse sind mit dem lokalen `WEBHOOK_ENCRYPTION_KEY` verschlüsselt und hier unlesbar. Sie
+müssen neu angelegt werden – genau die Konsequenz aus ADR-014.
+
+## 11.5 Nachweis
+
+Nicht „die Seite lädt". Der Durchstich durch alle drei Anbieter:
+
+1. `https://devboard.info` aufrufen – die Anwendung erscheint (Vercel).
+2. **Registrieren** – ein Konto anlegen (Vercel → Hetzner → Neon).
+3. **Neu laden.** Man muss angemeldet bleiben. *Das* ist der Beweis, dass das Refresh-Cookie gesetzt
+   wurde und mitgeschickt wird – der Punkt, an dem eine `vercel.app`-Adresse gescheitert wäre.
+4. Ein Projekt anlegen, eine Aufgabe erstellen, sie auf dem Board verschieben.
+5. Im Aktivitäts-Feed prüfen, ob die Ereignisse erscheinen.
+
+Punkt 3 ist der eigentliche Test. Die Schritte davor und danach würden auch mit kaputtem Cookie
+funktionieren, solange man die Seite nicht neu lädt.
+
+### Wenn die Anmeldung nach dem Neuladen weg ist
+
+In den Entwicklerwerkzeugen des Browsers unter **Application → Cookies** nachsehen, ob
+`devboard_refresh` überhaupt existiert.
+
+- **Cookie fehlt:** Das Setzen wurde blockiert – Frontend läuft unter einer fremden Site (siehe
+  ADR-019) oder die Verbindung ist nicht HTTPS (`secure`).
+- **Cookie da, wird aber nicht gesendet:** Pfad prüfen. Es ist auf `path=/auth` beschränkt und geht
+  absichtlich nur an die Anmelde-Endpoints mit.
+- **Konsolenfehler zu CORS:** `CORS_ORIGIN` stimmt nicht – Schema, Host und Port müssen exakt
+  passen, `https://devboard.info` ist etwas anderes als `http://devboard.info`.
+
+---
+
 # Teil 9 – Betrieb im Alltag
 
 ```
