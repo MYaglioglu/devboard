@@ -5,11 +5,16 @@
 Eine SaaS-Plattform für Entwicklerteams – Projekte, Aufgaben, Kanban-Board und Aktivitäts-Feed,
 mit Organisationen und rollenbasiertem Zugriff.
 
-> **Status (14.08.2026):** Sprint 0 bis 4 abgeschlossen – **494 Tests**, CI grün, `main` geschützt.
-> Auth, Mandantentrennung, Projekte, Kanban-Board, Dashboard und Aktivitäts-Feed laufen.
-> Als Nächstes folgt Sprint 5 (GitHub-Integration über Webhooks).
+### 🚀 Live: **[devboard.info](https://devboard.info)**
+
+API-Health: [api.devboard.info/health](https://api.devboard.info/health)
+
+> **Status (23.08.2026):** Sprint 0 bis 5 abgeschlossen, Sprint 6 (Deployment) läuft –
+> **642 Tests**, CI grün, `main` geschützt.
+> Die Anwendung ist seit dem 22.08.2026 unter eigener Domain öffentlich erreichbar.
+> Offen in Sprint 6: automatisiertes Deployment, Zero-Downtime und Monitoring.
 > Details in [`docs/01_ROADMAP.md`](docs/01_ROADMAP.md) und
-> [`docs/15_CHANGELOG.md`](docs/15_CHANGELOG.md).
+> [`docs/13_DEPLOYMENT.md`](docs/13_DEPLOYMENT.md).
 
 | | Umgesetzt |
 |---|---|
@@ -17,6 +22,8 @@ mit Organisationen und rollenbasiertem Zugriff.
 | **Mandanten** | Organisationen, Rollen (`OWNER`/`ADMIN`/`MEMBER`), Einladungen per gehashtem Token. Autorisierung auf **Datenebene** – der Mandant steht in der `WHERE`-Bedingung |
 | **Board** | Projekte und Aufgaben, Sortierung per fractional indexing auf `numeric(65,30)`, optimistisches Sperren mit `409`, Drag & Drop mit Tastaturbedienung |
 | **Dashboard** | Kennzahlen per `groupBy` unter `REPEATABLE READ`, Aktivitäts-Feed mit Cursor-Paginierung |
+| **GitHub** | Webhooks mit HMAC-Signaturprüfung (`timingSafeEqual`), Idempotenz über ein `UNIQUE` auf der Delivery-ID, Geheimnisse AES-256-verschlüsselt statt gehasht |
+| **Betrieb** | Mehrstufiges Docker-Image (390 MB, Nicht-root), Caddy mit automatischem TLS, gehärteter Server, Datenbank bei Neon mit `sslmode=verify-full` |
 
 **Was dieses Projekt von einem Tutorial-Klon unterscheidet** – die Stellen, an denen nachgemessen
 statt behauptet wird:
@@ -29,7 +36,7 @@ statt behauptet wird:
   **Mutationsprobe** – Schutz entfernen, Tests laufen lassen, zurückbauen. Die Tabelle steht in
   [`docs/12_TESTING.md`](docs/12_TESTING.md), samt der Probe, die *nichts* rot machte und damit
   einen eigenen Test überführte.
-- **Zwölf ADRs** mit Alternativen und Preis in [`docs/16_DECISIONS.md`](docs/16_DECISIONS.md), und
+- **Neunzehn ADRs** mit Alternativen und Preis in [`docs/16_DECISIONS.md`](docs/16_DECISIONS.md), und
   ein [Fehlerprotokoll](docs/17_MISTAKES_AND_LESSONS.md) mit den eigenen Fehlern – inklusive der
   zwei Commits, die an einem verketteten `push && merge` verlorengingen.
 
@@ -39,7 +46,7 @@ statt behauptet wird:
 
 DevBoard ist ein Lern- und Referenzprojekt auf dem Weg vom Frontend- zum Fullstack-Entwickler. Es
 soll sich wie ein Produkt anfühlen, nicht wie ein Tutorial: mit Tests, Docker, CI-Pipeline,
-Staging-Umgebung und dokumentierten Architekturentscheidungen.
+echtem Betrieb unter eigener Domain und dokumentierten Architekturentscheidungen.
 
 Parallel zum Code entsteht unter [`docs/`](docs/) ein Entwicklerhandbuch – Architektur,
 Datenbankdesign, API, Security, DevOps, Glossar und ein Fehlerprotokoll.
@@ -52,7 +59,8 @@ Datenbankdesign, API, Security, DevOps, Glossar und ein Fehlerprotokoll.
 |---|---|
 | **Frontend** | Next.js, TypeScript, Tailwind, shadcn/ui, TanStack Query, React Hook Form, Zod |
 | **Backend** | NestJS, Prisma, PostgreSQL 18 |
-| **Infrastruktur** | Docker, Docker Compose, GitHub Actions, nginx |
+| **Infrastruktur** | Docker, Docker Compose, GitHub Actions, Caddy |
+| **Betrieb** | Vercel (Frontend), Hetzner Cloud (Backend), Neon (PostgreSQL) |
 
 Warum TypeScript statt Java und warum NestJS statt Express: siehe ADR-001 und ADR-002 in
 [`docs/16_DECISIONS.md`](docs/16_DECISIONS.md).
@@ -74,6 +82,49 @@ Monitoring, Datei-Uploads, Volltextsuche, Benachrichtigungen und ein Administrat
 [`docs/06_BACKLOG.md`](docs/06_BACKLOG.md) und ADR-003.
 
 Der Grund für den Schnitt: Vier fertige Features belegen mehr als zwölf angefangene.
+
+---
+
+## Betrieb
+
+Drei Anbieter, aufgeteilt nach **Schadenshöhe** – was nur eine Wiederholung kostet, wird selbst
+betrieben; was unwiederbringlich ist, liegt bei jemandem mit Backups (ADR-016).
+
+```
+Browser
+   │
+   ├──→ devboard.info ────────→ Vercel            Next.js
+   │                                                 │
+   └──→ api.devboard.info ────→ Hetzner CX23         │  HTTPS
+                                   │                 │
+                                   ├── Caddy  ←──────┘   TLS, Reverse Proxy
+                                   └── NestJS            nur im Docker-Netz
+                                         │
+                                         └──→ Neon        PostgreSQL (Frankfurt)
+```
+
+Das Backend veröffentlicht **keinen** Port. In der Compose-Datei steht `expose` statt `ports` – der
+einzige Weg von außen führt durch Caddy, nicht weil eine Regel es vorschreibt, sondern weil es
+keinen zweiten gibt.
+
+Warum das Frontend unter der eigenen Domain läuft und nicht unter `*.vercel.app`: Das Refresh-Token
+liegt in einem Cookie mit `SameSite=Lax`, und `SameSite` bezieht sich auf die registrierbare Domain.
+`devboard.vercel.app` und `api.devboard.info` wären für den Browser verschiedene Sites – das Cookie
+würde weder gesetzt noch gesendet, und die Anmeldung überstünde kein Neuladen (ADR-019).
+
+Der vollständige Weg von einem leeren Server bis zum TLS-Zertifikat steht als abarbeitbares
+Protokoll in [`docs/11_DEVOPS.md`](docs/11_DEVOPS.md) – jeder Befehl mit Begründung, und die Fehler
+an der Stelle, an der sie passiert sind.
+
+### Was für einen echten Betrieb noch fehlt
+
+Ehrlich benannt, statt „production ready" zu behaupten:
+
+- **Automatisiertes Deployment** – wird von Hand ausgerollt (Scheibe 6.4)
+- **Graceful Shutdown** – `enableShutdownHooks()` fehlt, beim Deploy bleiben Datenbankverbindungen
+  hängen (6.5)
+- **Monitoring** – fällt der Server nachts aus, erfährt es niemand (6.7)
+- **Ein Server, ein Proxy** – ein einzelner Ausfallpunkt
 
 ---
 
@@ -188,7 +239,7 @@ backend/        NestJS-Anwendung
   test/         E2E-Tests
 frontend/       Next.js-Anwendung
 scripts/        Handbuch-Erzeugung
-docker/         Dockerfiles und nginx-Konfiguration (Sprint 6)
+docker/caddy/   Caddy-Konfiguration (Reverse Proxy, TLS)
 docs/           Entwicklerhandbuch
 .github/        CI-Workflows
 ```
