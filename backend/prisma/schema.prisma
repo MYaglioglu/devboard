@@ -26,6 +26,20 @@ datasource db {
 /// Ein Benutzerkonto.
 model User {
   id    String  @id @default(uuid()) @db.Uuid
+
+  /// Kennzeichnet ein Wegwerf-Konto aus dem Demo-Zugang.
+  ///
+  /// WARUM DAS FELD AUCH HIER STEHT, obwohl die Organisation schon eines hat:
+  /// Ein Nutzer haengt nicht per Cascade an einer Organisation - er hat nur
+  /// eine Mitgliedschaft darin. Wird die Demo-Organisation geloescht, bliebe
+  /// das Konto sonst als Waise zurueck, und die Nutzertabelle wuechse
+  /// unbegrenzt.
+  ///
+  /// Die Alternative waere gewesen, Demo-Konten an ihrer E-Mail-Adresse zu
+  /// erkennen. Verworfen: Eine Loeschung, die auf einem Namensmuster beruht,
+  /// trifft irgendwann das Falsche. Ein ausdrueckliches Feld kann man nicht
+  /// versehentlich treffen.
+  isDemo Boolean @default(false)
   /// Immer kleingeschrieben gespeichert - siehe AuthService.
   /// Sonst waeren "Max@example.com" und "max@example.com" zwei Konten.
   email String  @unique
@@ -85,6 +99,18 @@ enum Role {
 model Organization {
   id   String @id @default(uuid()) @db.Uuid
   name String
+
+  /// Kennzeichnet eine Wegwerf-Organisation aus dem Demo-Zugang.
+  ///
+  /// Beim Aufraeumen wird die Organisation geloescht; Mitgliedschaften,
+  /// Projekte, Aufgaben und Aktivitaeten verschwinden per Cascade mit.
+  ///
+  /// Bewusst KEIN eigenes Ablaufdatum daneben: Die Frist ergibt sich aus
+  /// `createdAt` plus einer Konstanten im Code. Ein zweites Feld waere eine
+  /// zweite Wahrheit, die beim Anlegen falsch gesetzt werden koennte -
+  /// dieselbe Ueberlegung wie bei der Aufbewahrungsfrist der
+  /// Webhook-Zustellungen.
+  isDemo Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
