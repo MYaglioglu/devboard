@@ -133,3 +133,167 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # ===========================================================================
+  # AUSROLLEN
+  # ===========================================================================
+  # Bewusst ein Job in DIESEM Workflow und kein eigener:
+  #
+  # `needs` garantiert, dass Backend und Frontend gruen waren. Ein separater
+  # Workflow muesste ueber `workflow_run` an die CI gekoppelt werden - das ist
+  # umstaendlicher und kann im Fehlerfall einen ungetesteten Stand ausrollen.
+  # Die Abhaengigkeit soll hart sein, nicht abgeleitet.
+  deploy:
+    name: Deploy
+    needs: [backend, frontend]
+    # Nur bei einem Push auf main. Pull Requests bauen und testen, rollen aber
+    # nichts aus - auch nicht aus einem Fork, wo jemand eine eigene
+    # Workflow-Datei mitliefern koennte.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    # Eigene Sperre OHNE `cancel-in-progress`. Der Workflow oben bricht
+    # laufende Durchlaeufe ab, sobald neue Commits kommen - fuer Tests richtig,
+    # fuer ein Deployment gefaehrlich: Ein mitten im Umschalten abgebrochener
+    # Lauf hinterlaesst einen halben Zustand. Deployments warten also
+    # aufeinander, statt sich gegenseitig abzuschiessen.
+    concurrency:
+      group: deploy-produktion
+      cancel-in-progress: false
+
+    permissions:
+      contents: read
+      # Zum Schieben in die GitHub-Registry. Ohne diese Zeile darf der
+      # mitgelieferte GITHUB_TOKEN nur lesen.
+      packages: write
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------------
+      # 1. Image bauen und in die Registry schieben
+      # ---------------------------------------------------------------------
+      - name: An der Registry anmelden
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Kein eigenes Geheimnis noetig: GitHub stellt jedem Lauf ein Token
+          # aus, das nur fuer dieses Repository gilt und mit dem Lauf ablaeuft.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Buildx einrichten
+        uses: docker/setup-buildx-action@v3
+
+      - name: Image bauen und schieben
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          # Zwei Tags: Die Commit-Kennung ist die Wahrheit, `latest` nur die
+          # Bequemlichkeit fuer Aufrufe von Hand.
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/devboard-backend:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/devboard-backend:latest
+          # Ohne Cache baut jeder Lauf die Abhaengigkeiten neu.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Ausdruecklich x86, passend zum Server. Ein Image ist an die
+          # Architektur gebunden; ein ARM-Server braeuchte einen zweiten Bau.
+          platforms: linux/amd64
+
+      # ---------------------------------------------------------------------
+      # 2. Migrationen - VOR dem Umschalten
+      # ---------------------------------------------------------------------
+      # Die Reihenfolge ist der Kern von ADR-016: Migration und neuer Code
+      # werden zu verschiedenen Zeitpunkten wirksam. Zuerst die Datenbank, dann
+      # der Code - dann laeuft fuer einen Moment die ALTE Anwendung gegen das
+      # NEUE Schema, und das ist der harmlose der beiden Zustaende. Andersherum
+      # waere die Anwendung zwischen beiden Schritten kaputt.
+      #
+      # Daraus folgt die Pflicht, die ab jetzt fuer jede Migration gilt: Sie
+      # muss abwaertskompatibel sein. Spalte hinzufuegen ja, Spalte umbenennen
+      # nur in zwei Schritten.
+      #
+      # Das geht nur, weil die Datenbank bei Neon liegt und vom Runner aus
+      # erreichbar ist. Laege sie hinter der Firewall des Servers, braeuchte es
+      # ein eigenes Migrations-Image.
+      - name: Node einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Migrationswerkzeug installieren
+        working-directory: backend
+        run: npm ci
+
+      - name: Migrationen gegen die Produktionsdatenbank anwenden
+        working-directory: backend
+        env:
+          # Die DIREKTE Adresse, nicht die gepoolte: Migrationen halten Sperren
+          # ueber mehrere Anweisungen hinweg und brauchen eine durchgehende
+          # Sitzung. Ein Pooler darf zwischendurch eine andere Verbindung
+          # unterschieben - dann sind die Sperren weg.
+          DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+        run: npx prisma migrate deploy
+
+      # ---------------------------------------------------------------------
+      # 3. Auf dem Server umschalten
+      # ---------------------------------------------------------------------
+      - name: SSH vorbereiten
+        env:
+          SCHLUESSEL: ${{ secrets.DEPLOY_SSH_KEY }}
+          BEKANNTE_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SCHLUESSEL" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          # Der Fingerabdruck des Servers kommt aus einem Geheimnis, NICHT aus
+          # `ssh-keyscan`. Wer den Schluessel in dem Moment abfragt, in dem er
+          # ihm vertrauen soll, prueft nichts - er glaubt dem, der gerade
+          # antwortet.
+          printf '%s\n' "$BEKANNTE_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Neue Fassung ausrollen
+        env:
+          ZIEL: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+          TAG: ${{ github.sha }}
+        run: |
+          ssh -i ~/.ssh/deploy -o BatchMode=yes "$ZIEL" \
+            "set -euo pipefail; \
+             cd devboard; \
+             git fetch --quiet origin main; \
+             git reset --hard --quiet origin/main; \
+             export DEVBOARD_TAG=$TAG; \
+             docker compose -f docker-compose.produktion.yml pull backend; \
+             docker compose -f docker-compose.produktion.yml up -d backend; \
+             docker image prune --force --filter 'until=168h'"
+
+      # ---------------------------------------------------------------------
+      # 4. Nachweis
+      # ---------------------------------------------------------------------
+      # Ein Deployment, das nur "erfolgreich" meldet, weil kein Befehl
+      # fehlgeschlagen ist, sagt nichts ueber die laufende Anwendung. Deshalb
+      # wird von AUSSEN geprueft - ueber dieselbe Adresse wie ein Besucher,
+      # samt Reverse Proxy und TLS.
+      - name: Warten, bis die neue Fassung gesund antwortet
+        env:
+          BASIS: ${{ secrets.DEPLOY_BASE_URL }}
+        run: |
+          for versuch in $(seq 1 20); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 10 "$BASIS/health" || echo 000)
+            if [ "$code" = "200" ] && grep -q '"database":"up"' /tmp/health.json; then
+              echo "Gesund nach Versuch $versuch:"
+              cat /tmp/health.json
+              exit 0
+            fi
+            echo "Versuch $versuch: HTTP $code"
+            sleep 5
+          done
+          echo "Die neue Fassung ist nicht gesund geworden."
+          exit 1

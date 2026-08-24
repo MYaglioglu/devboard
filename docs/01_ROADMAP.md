@@ -327,9 +327,11 @@ SSH-Schlüssel und eine Domain. Beides blockiert ab 6.2.
       `DATABASE_URL`-Eintrag ließ die Produktionsmigration still gegen `localhost` laufen
       (22.08.2026)
 - [ ] 6.3 Staging als zweite Umgebung – eigene Subdomain, eigener Neon-Branch, getrennte Geheimnisse
-- [ ] 6.4 Deploy aus GitHub Actions: Image bauen, in die Registry, Server zieht. Migration in der
-      Pipeline. **Ein Schritt, der das gebaute Image startet und `/health` abfragt** – der Fehler
-      aus 6.1 darf sich nicht wiederholen
+- [x] 6.4 Deploy aus GitHub Actions: Image bauen, nach ghcr.io schieben, Migration gegen Neon, per
+      SSH umschalten – und **von außen prüfen, bis `/health` mit `database: up` antwortet**. Der
+      Job hängt über `needs` an beiden Test-Jobs; ein roter Test rollt nicht aus, weil der Job gar
+      nicht erst startet. Getaggt wird mit der Commit-Kennung statt `latest`, damit 6.5 einen
+      Rückweg hat (24.08.2026)
 - [ ] 6.5 Zero-Downtime: `enableShutdownHooks()`, Health-Gate vor dem Umschalten, Rollback auf die
       vorige Fassung, Regeln für abwärtskompatible Migrationen (Expand/Contract)
 - [ ] 6.6 Frontend auf Vercel, CORS auf die echte Domain, GitHub-Webhooks auf die öffentliche URL

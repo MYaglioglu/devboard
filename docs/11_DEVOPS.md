@@ -1063,6 +1063,148 @@ existiert also nur im Docker-Netz.
 
 ---
 
+# Teil 12 – Automatisches Deployment (Scheibe 6.4)
+
+Was bis hierher von Hand lief – migrieren, ziehen, bauen, umschalten – erledigt ab jetzt GitHub
+Actions bei jedem Merge auf `main`.
+
+```
+Merge auf main
+   │
+   ├─ Backend-Tests  ─┐
+   ├─ Frontend-Tests ─┤  beide gruen?
+   │                  ↓
+   └─────────────→ Deploy
+                     ├─ 1. Image bauen, nach ghcr.io schieben
+                     ├─ 2. Migrationen gegen Neon
+                     ├─ 3. per SSH: Image ziehen, umschalten
+                     └─ 4. von aussen pruefen: /health == 200
+```
+
+Der Deploy-Job hängt über `needs` an beiden Test-Jobs. **Ein roter Test rollt nicht aus** – nicht
+weil eine Regel es verbietet, sondern weil der Job dann gar nicht startet.
+
+## 12.1 Was einmalig einzurichten ist
+
+### Einen eigenen Deploy-Schlüssel erzeugen
+
+**Nicht** den persönlichen Schlüssel verwenden. Ein Automat braucht einen eigenen, ohne Passphrase –
+er kann keine tippen – und dafür einen, der nur diesen einen Zweck hat und einzeln zurückziehbar
+ist.
+
+Auf dem eigenen Rechner:
+
+```
+ssh-keygen -t ed25519 -f $env:USERPROFILE\.ssh\devboard-deploy -C "github-actions" -N '""'
+```
+
+Den **öffentlichen** Teil auf dem Server hinterlegen:
+
+```
+ssh devboard "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys" < $env:USERPROFILE\.ssh\devboard-deploy.pub
+```
+
+### Den Fingerabdruck des Servers holen
+
+```
+ssh-keyscan -t ed25519 167.233.151.172
+```
+
+Die Ausgabe wird gleich zum Geheimnis `DEPLOY_KNOWN_HOSTS`.
+
+> **Warum das nicht im Workflow selbst passiert:** Ein `ssh-keyscan` unmittelbar vor der Verbindung
+> prüft nichts – er glaubt dem, der gerade antwortet. Die Prüfung hat nur dann Wert, wenn der
+> erwartete Fingerabdruck **vorher** festgelegt wurde. Vergleich ihn deshalb einmal mit dem, den dir
+> deine eigene `known_hosts` schon nennt.
+
+### Die Geheimnisse im Repository setzen
+
+**Settings → Secrets and variables → Actions → New repository secret:**
+
+| Name | Wert |
+|---|---|
+| `DEPLOY_SSH_KEY` | Inhalt von `devboard-deploy` (der **private** Teil, inklusive der BEGIN/END-Zeilen) |
+| `DEPLOY_KNOWN_HOSTS` | Ausgabe von `ssh-keyscan` |
+| `DEPLOY_USER` | `devboard` |
+| `DEPLOY_HOST` | `167.233.151.172` |
+| `DEPLOY_BASE_URL` | `https://api.devboard.info` |
+| `MIGRATION_DATABASE_URL` | Neon-Adresse **ohne** `-pooler` |
+
+Für die Registry braucht es **kein** Geheimnis: GitHub stellt jedem Lauf einen `GITHUB_TOKEN` aus,
+der nur für dieses Repository gilt und mit dem Lauf abläuft.
+
+### Das Image-Paket sichtbar machen
+
+Nach dem ersten Lauf erscheint unter **Packages** das Paket `devboard-backend`. Es ist zunächst
+**privat** – der Server könnte es also nicht ziehen.
+
+Unter **Package settings → Change visibility → Public** umstellen.
+
+Das ist vertretbar, weil das Repository ohnehin öffentlich ist und im Image nachweislich keine
+Geheimnisse liegen (siehe `.dockerignore` und Scheibe 6.1). Die Alternative wäre, sich auf dem
+Server mit einem lesenden Token an der Registry anzumelden – dann läge ein weiteres langlebiges
+Geheimnis auf der Maschine, für nichts, was nicht ohnehin einsehbar ist.
+
+## 12.2 Was sich am Server ändert
+
+**Er baut nicht mehr.** In `docker-compose.produktion.yml` steht kein `build:` mehr, sondern:
+
+```yaml
+image: ghcr.io/myaglioglu/devboard-backend:${DEVBOARD_TAG:-latest}
+```
+
+Der Tag ist die **Commit-Kennung**, nicht `latest`. `latest` ist ein beweglicher Zeiger: Man weiß
+hinterher nicht, was läuft, und ein Rücksprung auf die vorige Fassung ist unmöglich. Mit der Kennung
+ist beides eindeutig – und Scheibe 6.5 kann darauf einen Rollback bauen.
+
+Der Deploy-Schritt setzt sie:
+
+```
+DEVBOARD_TAG=<commit> docker compose -f docker-compose.produktion.yml up -d backend
+```
+
+Von Hand starten geht weiterhin – dann greift der Rückfall auf `latest`.
+
+## 12.3 Die Reihenfolge im Job, und warum sie so ist
+
+**Erst bauen, dann migrieren, dann umschalten.**
+
+Das Bauen zuerst, damit ein Fehler im Bau die Datenbank gar nicht erst erreicht. Die Migration vor
+dem Umschalten, weil der Zwischenzustand dann der harmlose ist: Für einen Moment läuft die **alte**
+Anwendung gegen das **neue** Schema.
+
+Andersherum – neuer Code, altes Schema – wäre die Anwendung zwischen beiden Schritten kaputt.
+
+Daraus folgt eine Regel, die ab jetzt für jede Migration gilt: **Sie muss abwärtskompatibel sein.**
+Spalte hinzufügen ist unkritisch. Spalte umbenennen geht nur in zwei Schritten über zwei Deployments
+(neue Spalte anlegen, beide schreiben, umstellen, alte entfernen). Das nennt sich Expand/Contract.
+
+## 12.4 Der Nachweis gehört dazu
+
+Der letzte Schritt fragt `https://api.devboard.info/health` **von außen** ab, bis `200` mit
+`"database":"up"` kommt – höchstens hundert Sekunden lang.
+
+Ohne diesen Schritt hieße „Deployment erfolgreich" nur, dass kein Befehl fehlgeschlagen ist. Der
+Container kann laufen und trotzdem nicht antworten; er kann antworten und die Datenbank nicht
+erreichen. Geprüft wird deshalb über dieselbe Adresse wie bei einem Besucher – samt Reverse Proxy
+und TLS.
+
+**Was dieser Schritt noch nicht tut:** zurückrollen. Er meldet den Fehlschlag, die kaputte Fassung
+läuft aber weiter. Der Rückweg ist Scheibe 6.5 – und er ist erst dadurch möglich, dass jedes Image
+unter seiner Commit-Kennung liegt.
+
+## 12.5 Wenn etwas schiefgeht
+
+| Meldung | Ursache |
+|---|---|
+| `Host key verification failed` | `DEPLOY_KNOWN_HOSTS` fehlt oder passt nicht zum Server |
+| `Permission denied (publickey)` | Der öffentliche Deploy-Schlüssel liegt nicht in `authorized_keys` |
+| `denied: ... pull access` beim `pull` | Das Paket ist noch privat (siehe 12.1) |
+| `migrate deploy` scheitert | `MIGRATION_DATABASE_URL` zeigt auf die gepoolte statt die direkte Adresse |
+| Health-Check läuft in die Zeitgrenze | `docker compose logs backend` auf dem Server – meist eine fehlende Umgebungsvariable |
+
+---
+
 # Teil 9 – Betrieb im Alltag
 
 ```
