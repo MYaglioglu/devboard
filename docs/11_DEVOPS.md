@@ -1210,6 +1210,7 @@ unter seiner Commit-Kennung liegt.
 
 | Meldung | Ursache |
 |---|---|
+| `repository name must be lowercase` | Der Kontoname enthält Großbuchstaben. Registry-Namen müssen klein sein – siehe den Schritt „Image-Namen bilden" |
 | `Host key verification failed` | `DEPLOY_KNOWN_HOSTS` fehlt oder passt nicht zum Server |
 | `Permission denied (publickey)` | Der öffentliche Deploy-Schlüssel liegt nicht in `authorized_keys` |
 | `denied: ... pull access` beim `pull` | Das Paket ist noch privat (siehe 12.1) |

@@ -1187,3 +1187,49 @@ Mutationsprobe: Ohne den Fix fällt genau der Test „deutet einen leeren Körpe
 **Nebenbei behoben:** Der `+`-Knopf im Board ist jetzt gesperrt, solange der Titel zu kurz ist.
 Vorher brach das Absenden still ab – ein Klick tat nichts, ohne jede Rückmeldung. Genau diese
 Stille hat den Nutzer die fremde Fehlermeldung falsch zuordnen lassen.
+
+---
+
+## 2026-08-24 – Die Pipeline war syntaktisch gültig und trotzdem falsch
+
+**Was passiert ist.** Der allererste Lauf des automatischen Deployments scheiterte nach neun
+Sekunden:
+
+```
+ERROR: invalid tag "ghcr.io/MYaglioglu/devboard-backend:6b2ffd8…":
+       repository name must be lowercase
+```
+
+Der Workflow benutzte `github.repository_owner`. Das liefert den Kontonamen in der Schreibweise, in
+der er angelegt wurde – **`MYaglioglu`**, mit zwei Großbuchstaben. Registry-Namen müssen nach der
+OCI-Spezifikation aber kleingeschrieben sein.
+
+In der Compose-Datei stand von Hand `ghcr.io/myaglioglu/...`, also klein. Genau die eine Stelle, an
+der GitHub den Namen selbst einsetzt, war übersehen worden.
+
+**Was vorher geprüft worden war – und warum es nicht gereicht hat.** Vor dem Merge lief:
+
+- YAML mit `yaml.safe_load` geparst, Struktur und Abhängigkeiten kontrolliert
+- `docker compose config` gegen die Produktionsdatei, mit und ohne gesetzte Kennung
+- der Deploy-Schlüssel gegen den Server, mit `BatchMode=yes` wie in der Pipeline
+
+Alles grün. **Keine dieser Prüfungen konnte den Fehler finden**, weil er erst entsteht, wenn GitHub
+seine eigenen Variablen einsetzt – und das passiert nur in einem echten Lauf.
+
+**Das Learning.**
+
+> **Eine Pipeline lässt sich nicht trockenüben.** Man kann ihre Syntax prüfen, ihre Struktur und
+> jede Voraussetzung einzeln – der erste echte Lauf bleibt trotzdem der erste Test.
+
+Damit steht zum vierten Mal dieselbe Lehre, nur auf einer neuen Ebene: In Sprint 2 wurde die
+Anwendung nicht gestartet, in Sprint 5 das Layout nicht angesehen, in Sprint 6.1 das Bauergebnis nie
+ausgeführt – und hier die Pipeline nie laufen gelassen. Jedes Mal war das Geprüfte grün und die
+Ebene darüber ungeprüft.
+
+Der praktische Schluss ist nicht „mehr prüfen", sondern: **Beim ersten Lauf zuschauen.** Ein
+Deployment, das man startet und nicht beobachtet, ist kein Deployment, sondern eine Hoffnung.
+
+**Was sich geändert hat.** Der Name wird einmal in einem eigenen Schritt gebildet und
+kleingeschrieben (`${GITHUB_REPOSITORY_OWNER,,}`), statt an zwei Stellen abgeschrieben zu werden –
+eine davon würde beim nächsten Mal vergessen. Die Fehlermeldung steht jetzt in der Fehlertabelle in
+`11_DEVOPS.md`.
