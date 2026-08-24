@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { DemoService } from './demo.service';
 import { PasswordService } from './password.service';
 import { RefreshTokenService } from './refresh-token.service';
 import { TokenService } from './token.service';
@@ -40,7 +41,13 @@ import type { Env } from '../config/env.schema';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, PasswordService, TokenService, RefreshTokenService],
+  providers: [
+    AuthService,
+    DemoService,
+    PasswordService,
+    TokenService,
+    RefreshTokenService,
+  ],
   exports: [PasswordService, TokenService],
 })
 export class AuthModule {}
