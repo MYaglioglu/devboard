@@ -107,7 +107,33 @@ export async function api<T>(
     return undefined as T;
   }
 
-  return (await antwort.json()) as T;
+  /*
+   * ==========================================================================
+   * EIN LEERER KOERPER IST NICHT NUR BEI 204 MOEGLICH
+   * ==========================================================================
+   * Frueher stand hier direkt `antwort.json()`. Das ging so lange gut, bis ein
+   * Endpoint zum ersten Mal `null` zurueckgab: `GET .../repository` antwortet
+   * mit `null`, wenn ein Projekt kein Repository verbunden hat.
+   *
+   * NestJS serialisiert `null` NICHT als die vier Zeichen "null", sondern
+   * sendet einen 200 mit LEEREM Koerper. `json()` wirft daraufhin
+   * "Unexpected end of JSON input" - und React Query wertet das als Fehler.
+   *
+   * Sichtbar war das als rotes Banner "Die Repository-Verbindung konnte nicht
+   * geladen werden" auf JEDER Projektseite ohne GitHub-Verbindung, also im
+   * Normalfall. Kein Test hat es bemerkt, weil die Attrappen brav `null` als
+   * JSON lieferten - der Unterschied zwischen "null" und "" entsteht erst auf
+   * der Leitung.
+   *
+   * Deshalb wird der Koerper als Text gelesen und erst dann geparst. Leer
+   * heisst leer, nicht kaputt.
+   */
+  const text = await antwort.text();
+  if (text.length === 0) {
+    return null as T;
+  }
+
+  return JSON.parse(text) as T;
 }
 
 export async function fetchHealth(): Promise<HealthStatus> {

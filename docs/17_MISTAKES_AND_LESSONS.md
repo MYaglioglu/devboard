@@ -1137,3 +1137,53 @@ Test einen Mauszeiger hat.
 
 Damit steht dieselbe Lehre wie in Sprint 5 zum dritten Mal: **Die Anwendung wird angesehen, nicht
 nur getestet.** Dort war es eine Seitenleiste, die auf 68 Pixel zusammenfiel.
+
+---
+
+## 2026-08-24 – Ein rotes Banner auf jeder Projektseite, gemeldet als Aufgaben-Fehler
+
+**Was passiert ist.** Beim Ausprobieren der frisch veröffentlichten Demo meldete der Nutzer: „Wenn
+ich eine leere Aufgabe erstellen will, kommt eine rote Fehlermeldung." Auf dem Bildschirmfoto stand:
+
+> Die Repository-Verbindung konnte nicht geladen werden.
+
+Die Meldung hatte mit Aufgaben nichts zu tun. Gemessen gegen die Live-API ergab sich:
+
+| Aufruf | Antwort |
+|---|---|
+| `GET .../repository` | `200` mit **leerem Körper** |
+| `POST` leere Aufgabe | `400`, „Der Titel muss mindestens 2 Zeichen lang sein" |
+
+Der Server machte beides richtig. Und das Board bricht bei weniger als zwei Zeichen ab, **bevor**
+eine Anfrage rausgeht – beim Klick auf `+` passierte also schlicht gar nichts.
+
+**Die eigentliche Ursache.** `api.ts` behandelte `204 No Content` gesondert, einen `200` mit leerem
+Körper aber nicht. NestJS serialisiert ein zurückgegebenes `null` **nicht** als die vier Zeichen
+`"null"`, sondern sendet einen leeren Körper. `antwort.json()` wirft daraufhin
+`Unexpected end of JSON input`, React Query wertet das als Fehler – und das Banner erschien auf
+**jeder** Projektseite ohne GitHub-Verbindung. Also im Normalfall, seit es die Verbindung gibt.
+
+**Warum 211 Tests es nicht bemerkt haben.** Die Attrappen der Komponententests lieferten brav den
+Wert `null` zurück. Der Unterschied zwischen dem Wert `null` und einem leeren Körper entsteht erst
+**auf der Leitung** – und dort hatte niemand hingesehen.
+
+**Zwei Learnings, und das zweite ist das wichtigere.**
+
+> **Eine Fehlermeldung sagt, was schiefging – nicht, wodurch sie ausgelöst wurde.** Der Nutzer
+> verband sie mit seiner letzten Handlung, weil sie zeitlich zusammenfielen. Der erste Schritt war
+> deshalb nicht, den Code zum Anlegen von Aufgaben zu lesen, sondern **beide Aufrufe einzeln zu
+> messen**. Danach war klar, dass zwei unabhängige Dinge vorlagen.
+
+> **Eine Attrappe, die den Wert liefert statt der Antwort, prüft die Schicht darunter nicht mit.**
+> `mockResolvedValue(null)` und ein leerer HTTP-Körper sind zwei verschiedene Dinge. Der neue Test
+> in `api.test.ts` setzt deshalb an der Antwort an, nicht am Wert.
+
+**Was sich geändert hat.** `api.ts` liest den Körper als Text und deutet einen leeren als `null`.
+Fünf neue Tests, darunter der Grenzfall, dass auch ein *Fehler*status ohne Körper sauber wirft –
+sonst verdeckt ein Parserfehler die eigentliche Ursache.
+
+Mutationsprobe: Ohne den Fix fällt genau der Test „deutet einen leeren Körper als null".
+
+**Nebenbei behoben:** Der `+`-Knopf im Board ist jetzt gesperrt, solange der Titel zu kurz ist.
+Vorher brach das Absenden still ab – ein Klick tat nichts, ohne jede Rückmeldung. Genau diese
+Stille hat den Nutzer die fremde Fehlermeldung falsch zuordnen lassen.
