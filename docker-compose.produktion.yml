@@ -24,17 +24,26 @@ services:
   # Das Backend. Von aussen NICHT erreichbar.
   # ---------------------------------------------------------------------------
   backend:
-    # In dieser Scheibe wird auf dem Server gebaut. Das ist der einfachste
-    # Weg zu einem laufenden Stand und braucht keine Registry.
+    # Seit Scheibe 6.4 wird hier NICHT mehr gebaut. GitHub Actions baut das
+    # Image, schiebt es in die Registry, der Server zieht nur noch.
     #
-    # Scheibe 6.4 ersetzt diesen Block durch `image: ghcr.io/...` - dann baut
-    # GitHub Actions, und der Server zieht nur noch das fertige Image. Das ist
-    # der bessere Endzustand: Ein Server, der selbst baut, braucht Bauwerkzeug,
-    # Speicher und Zeit - und baut im Zweifel etwas anderes als die CI geprueft
-    # hat.
-    build:
-      context: ./backend
-    image: devboard-backend:aktuell
+    # WARUM DAS BESSER IST ALS `build:` AUF DEM SERVER
+    #
+    # Vorher baute der Server selbst. Das lief, hatte aber drei Nachteile: Er
+    # braucht Bauwerkzeug, Speicher und Zeit - und vor allem baut er ein Image,
+    # das so noch nie geprueft wurde. Die CI testet den Quelltext, der Server
+    # baute daraus etwas Eigenes. Jetzt ist das Artefakt, das getestet wurde,
+    # dasselbe, das laeuft.
+    #
+    # DER TAG IST DIE COMMIT-KENNUNG, NICHT `latest`.
+    # `latest` ist ein beweglicher Zeiger: Man weiss hinterher nicht, was
+    # laeuft, und ein Ruecksprung auf die vorige Fassung ist unmoeglich. Mit
+    # der Kennung ist beides eindeutig - und Scheibe 6.5 kann darauf einen
+    # Rollback bauen.
+    #
+    # Der Rueckfall auf `latest` greift nur, wenn jemand von Hand startet, ohne
+    # eine Kennung zu setzen.
+    image: ghcr.io/myaglioglu/devboard-backend:${DEVBOARD_TAG:-latest}
 
     # `unless-stopped` statt `always`: Nach einem Neustart des Servers faehrt
     # der Container wieder hoch - aber wenn ich ihn absichtlich gestoppt habe,
