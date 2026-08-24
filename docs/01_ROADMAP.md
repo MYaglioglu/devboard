@@ -348,6 +348,27 @@ Teil ab, der hier der Lerninhalt ist. Vermerkt im Backlog.
 README mit Screenshots und Architekturdiagramm, Doku-Export als PDF, Aufräumen,
 Interviewfragen aus `07_INTERVIEW_NOTES.md` durchgehen.
 
+**Teilweise vorgezogen auf den 23./24.08.2026.** Grund: Sobald die Anwendung öffentlich erreichbar
+war, war die erste Seite das Wichtigste am ganzen Projekt – und sie zeigte eine
+Systemstatus-Anzeige. Gemessen am Ziel (ein Recruiter sieht die Arbeit) war das dringender als die
+verbleibenden Betriebsscheiben 6.4, 6.5 und 6.7.
+
+- [x] 7.1 Startseite: was die Anwendung kann, wie sie gebaut ist, woraus sie besteht. Statisch
+      vorgerendert, der Live-Status wandert in die Fußzeile (23.08.2026)
+- [x] 7.2 README mit Live-Adresse, Betriebsarchitektur und einem Abschnitt, was für einen echten
+      Betrieb noch fehlt (23.08.2026)
+- [x] 7.3 Demo-Zugang: `POST /auth/demo` legt je Besucher eine eigene, gefüllte Organisation an und
+      meldet sofort darin an. Aufgeräumt wird ohne Zeitplaner beim nächsten Start (ADR-020).
+      Mutationsprobe bestätigt, dass die `isDemo`-Bedingung bewacht ist (24.08.2026)
+- [ ] 7.4 Screenshots im README – jetzt möglich, weil es eine Demo mit Daten gibt
+- [ ] 7.5 Hinweisband in der Anwendung: „Demo-Umgebung, wird nach 24 Stunden gelöscht". Braucht
+      `isDemo` im Token oder in `GET /auth/me`
+- [ ] 7.6 Interviewfragen durchgehen, Handbuch bauen
+
+**Weiterhin offen aus Sprint 6:** 6.3 (Staging, Dateien fertig, Ausrollen vertagt), 6.4
+(Deployment aus GitHub Actions), 6.5 (`enableShutdownHooks`, Zero-Downtime, Rollback), 6.7
+(Uptime-Wächter, Backup-Probe).
+
 ---
 
 ## Nicht in dieser Roadmap

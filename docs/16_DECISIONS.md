@@ -822,3 +822,75 @@ beenden und Zertifikate erneuern – Aufgaben, die nichts mit ihrer Fachlichkeit
   es verloren, werden alle Zertifikate neu angefordert – und Let's Encrypt begrenzt das auf fünf
   gleiche Zertifikate pro Woche. Ein unbedachtes `docker compose down -v` sperrt die Domain für
   Tage aus.
+
+---
+
+## ADR-020: Der Demo-Zugang legt je Besucher eine eigene Umgebung an
+
+**Status:** Angenommen (24.08.2026)
+
+### Kontext
+DevBoard läuft seit dem 22.08. unter eigener Domain. Damit stellte sich eine Frage, die vorher
+keine war: **Was sieht jemand, der die Adresse aus einer Bewerbung anklickt?**
+
+Bis dahin: eine Anmeldemaske. Niemand legt sich ein Konto an, um ein Bewerbungsprojekt anzusehen.
+Alles, was in sechs Sprints entstanden ist – Board, Dashboard, Feed, Mandantentrennung – lag damit
+hinter einer Tür, die kein Besucher öffnet.
+
+Ein Demo-Zugang war also nötig. Die Frage war nur, welcher.
+
+### Entscheidung
+`POST /auth/demo` legt **je Aufruf eine eigene Organisation samt Konto** an, füllt sie mit
+Beispieldaten und meldet den Besucher sofort darin an. Kein Formular, keine Adresse, kein Passwort.
+
+Die Umgebung wird nach **24 Stunden** gelöscht. Aufgeräumt wird **beim nächsten Demo-Start**, nicht
+durch einen Zeitplaner.
+
+### Warum nicht ein gemeinsames Demo-Konto
+Das war der naheliegende und deutlich billigere Weg: ein Konto anlegen, Zugangsdaten auf die
+Startseite schreiben, fertig.
+
+Verworfen wegen des Ausfallmodus. Ein gemeinsames Konto heißt, dass **alle Besucher in dieselben
+Daten schreiben**. Wer die Demo ausprobiert, benennt ein Projekt um, verschiebt Aufgaben, löscht
+etwas – genau dafür ist sie da. Nur sieht der **nächste** Besucher das Ergebnis.
+
+Und der nächste ist mit etwas Pech derjenige, auf den es ankommt. Man erfährt nie, dass er ein
+leeres Board gesehen hat.
+
+Dagegen hilft nur regelmäßiges Zurücksetzen – also derselbe Aufräum-Aufwand wie hier, nur mit dem
+schlechteren Ergebnis.
+
+Mit einer eigenen Organisation je Besucher kann die Demo **nicht** kaputtgehen. Nicht weil sie
+geschützt wäre, sondern weil niemand die Daten eines anderen sieht. Dieselbe Denkweise wie bei
+`expose` statt `ports` in ADR-018: Ein Weg, den es nicht gibt, muss man nicht bewachen.
+
+Der Nebeneffekt ist der wertvollste Teil: **Die Demo ist der Beleg für die Mandantentrennung.** Zwei
+Browser, zwei Organisationen, keiner sieht den anderen – das lässt sich in einem Gespräch vorführen.
+
+### Weitere verworfene Alternativen
+**Ein schreibgeschützter Demo-Zugang.** Kein Vandalismus, kein Aufräumen. Verworfen, weil der
+Besucher dann genau das nicht tun kann, was am meisten hermacht – eine Karte über das Board ziehen.
+Eine Demo, in der man nichts anfassen darf, ist ein Screenshot mit zusätzlichen Schritten.
+
+**Ein Zeitplaner fürs Aufräumen** (`@nestjs/schedule`). Verworfen: Es wäre der erste Scheduler im
+Projekt, für genau eine Aufgabe. Der Aufruf des Endpoints ist ein Auslöser, den es ohnehin gibt.
+
+**Demo-Konten am Muster der E-Mail-Adresse erkennen**, statt ein Feld zu setzen. Verworfen: Eine
+Löschung, die auf einem Namensmuster beruht, trifft irgendwann das Falsche. Ein ausdrückliches Feld
+kann man nicht versehentlich treffen.
+
+### Konsequenzen
+- **Positiv:** Ein Besucher steht in zehn Sekunden in einer gefüllten Anwendung, ohne Registrierung.
+- **Positiv:** Die Demo ist unzerstörbar, ohne dass etwas gesperrt werden müsste.
+- **Positiv:** Kein Zeitplaner, kein Hintergrundprozess, keine neue Betriebskomponente.
+- **Negativ, und das ist der Preis:** Ein **öffentlicher Endpoint, der Datensätze anlegt**. Ohne
+  Drosselung ließe sich damit die Datenbank füllen; bei Neons 0,5 GB ist das keine Theorie. Deshalb
+  dieselbe strenge Grenze wie bei Anmeldung und Registrierung – und die Frist allein reicht als
+  Schutz ausdrücklich nicht, sie räumt nur nachträglich auf.
+- **Negativ:** Kommt monatelang niemand vorbei, bleibt die letzte Demo liegen. Harmlos, aber es ist
+  kein Aufräumen mit Garantie, sondern eines mit Auslöser.
+- **Negativ:** Zwei zusätzliche Spalten (`isDemo` an Organisation und Nutzer) im Datenmodell, die
+  mit der Fachlichkeit nichts zu tun haben.
+- **Zu beachten:** Der Nutzer hängt **nicht** per Cascade an der Organisation. Beide Löschungen
+  gehören deshalb in eine Transaktion – sonst blieben Waisenkonten zurück, die durch nichts mehr
+  auffindbar wären.
