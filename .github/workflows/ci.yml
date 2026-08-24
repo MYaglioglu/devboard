@@ -209,6 +209,20 @@ jobs:
       - name: Buildx einrichten
         uses: docker/setup-buildx-action@v3
 
+      # Registry-Namen muessen KLEINGESCHRIEBEN sein - das ist eine Regel der
+      # OCI-Spezifikation, keine Eigenart von GitHub. `github.repository_owner`
+      # liefert den Kontonamen aber in der Schreibweise, in der er angelegt
+      # wurde ("MYaglioglu"), und daran ist der allererste Lauf gescheitert:
+      #
+      #   ERROR: invalid tag "ghcr.io/MYaglioglu/devboard-backend:...":
+      #          repository name must be lowercase
+      #
+      # `${VAR,,}` ist die Kleinschreibung der Bash. Der Name wird einmal
+      # gebildet und danach ueberall benutzt, statt ihn an zwei Stellen
+      # abzuschreiben - eine davon wuerde beim naechsten Mal vergessen.
+      - name: Image-Namen bilden
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/devboard-backend" >> "$GITHUB_ENV"
+
       - name: Image bauen und schieben
         uses: docker/build-push-action@v6
         with:
@@ -217,8 +231,8 @@ jobs:
           # Zwei Tags: Die Commit-Kennung ist die Wahrheit, `latest` nur die
           # Bequemlichkeit fuer Aufrufe von Hand.
           tags: |
-            ghcr.io/${{ github.repository_owner }}/devboard-backend:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/devboard-backend:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
           # Ohne Cache baut jeder Lauf die Abhaengigkeiten neu.
           cache-from: type=gha
           cache-to: type=gha,mode=max
