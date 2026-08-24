@@ -3383,3 +3383,67 @@ Steht also `healthy`, dann gilt:
 `running` hätte nichts davon gesagt. Das ist dieselbe Unterscheidung wie bei einem grünen Build, der
 beweist, dass der Compiler zufrieden war – aber nicht, dass das Ergebnis startet. Genau daran bin
 ich in der Scheibe davor gescheitert.
+
+## Sprint 7 – Portfolio
+
+### 187. Ihr Demo-Zugang legt bei jedem Klick ein Konto und eine Organisation an. Ist das nicht verschwenderisch?
+
+Doch, gemessen an Datensätzen. Gemessen am Zweck ist es die einzige Variante, die funktioniert.
+
+Die Alternative wäre ein festes Demo-Konto gewesen. Dann schreiben alle Besucher in dieselben Daten
+– und das ist kein Missbrauch, sondern genau das, wofür eine Demo da ist: ausprobieren, verschieben,
+löschen. Nur sieht der **nächste** Besucher das Ergebnis. Bei einem Bewerbungsprojekt ist der
+nächste Besucher womöglich derjenige, auf den es ankommt, und ich erfahre nie, dass er ein leeres
+Board gesehen hat.
+
+Mit einer eigenen Organisation je Besucher kann die Demo nicht kaputtgehen – nicht weil sie
+geschützt wäre, sondern weil niemand die Daten eines anderen sieht.
+
+Die Kosten sind überschaubar: ein Konto, eine Organisation, zwei Projekte, neun Aufgaben, ein Dutzend
+Feed-Einträge. Wenige Kilobyte, nach 24 Stunden weg.
+
+### 188. Sie räumen ohne Scheduler auf. Wie soll das gehen?
+
+Jeder Demo-Start löscht zuerst die abgelaufenen Umgebungen der Vorgänger. Die Arbeit hängt an einem
+Auslöser, den es ohnehin gibt, statt an einem, den ich erfinden müsste.
+
+Der Grund ist Zurückhaltung: Ein Zeitplaner wäre die erste Hintergrundkomponente im ganzen Projekt
+gewesen – für genau eine Aufgabe. Das hieße ein Modul mehr, ein Betriebsverhalten mehr und die
+Frage, was passiert, wenn zwei Instanzen laufen.
+
+Den Preis benenne ich mit: Es ist **kein Aufräumen mit Garantie**. Kommt monatelang niemand vorbei,
+bleibt die letzte Umgebung liegen. Das ist vertretbar, weil ohne Nutzung auch nichts wächst – die
+Menge ist durch die Nutzung selbst begrenzt.
+
+Bei einer Aufbewahrungsfrist mit rechtlicher Bedeutung wäre die Antwort eine andere. Dann müsste
+gelöscht werden, weil die Frist abläuft, nicht weil jemand vorbeikommt.
+
+### 189. Ein öffentlicher Endpoint, der Datensätze anlegt – ist das nicht gefährlich?
+
+Ja, und es ist der einzige im Projekt. Deshalb hat er dieselbe strenge Drosselung wie Anmeldung und
+Registrierung.
+
+Der Unterschied zu `register` ist wichtig: Dort muss immerhin eine noch unbenutzte E-Mail-Adresse
+geliefert werden. Beim Demo-Endpoint genügt ein leerer POST. Ohne Grenze könnte jemand in einer
+Schleife die Datenbank füllen – und meine Datenbank hat im kostenlosen Tarif 0,5 GB.
+
+Was ausdrücklich **nicht** als Schutz zählt, ist die Aufbewahrungsfrist. Sie räumt nachträglich auf.
+Zwischen dem Vollschreiben und dem nächsten Aufräumen liegt aber ein Zeitraum, in dem die Anwendung
+steht. Ein nachträgliches Aufräumen ist kein Zugriffsschutz.
+
+### 190. Wie haben Sie geprüft, dass Ihr Aufräumen nicht zu viel löscht?
+
+Mit einer Mutationsprobe. Der gefährlichste denkbare Fehler ist eine Bedingung ohne `isDemo` – die
+würde alle alten Organisationen löschen, also genau die echten.
+
+Ich habe `isDemo` aus der Bedingung entfernt und die Tests laufen lassen. Genau **ein** Test wurde
+rot: „räumt keine regulären Konten weg, auch wenn sie älter sind". Nach dem Rückbau waren wieder
+alle acht grün.
+
+Das ist die Aussage, die ich haben wollte – nicht „die Tests sind grün", sondern „dieser Test bewacht
+genau diesen Schutz". Ein zu breites Rot wäre übrigens genauso verdächtig gewesen: Dann hätte der
+Test etwas anderes gemessen als gedacht.
+
+Dazu kommt die zweite Hälfte des Beweises: Ein Test prüft, dass Abgelaufenes verschwindet, ein
+zweiter, dass Nichtabgelaufenes **bleibt**. Ein Aufräumen, das schlicht alles löscht, bestünde die
+erste Hälfte mühelos.

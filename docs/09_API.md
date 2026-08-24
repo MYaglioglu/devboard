@@ -1443,3 +1443,75 @@ Projekt selbst mitführen, und „höchstens eines je Projekt" wäre nicht mehr 
 | 3 | `GET/POST/PATCH/DELETE /projects`, `/tasks`, `PATCH /tasks/:id/position` |
 | 4 | ~~`GET …/activity`~~, ~~`GET …/dashboard/stats`~~ – **beide umgesetzt** |
 | 5 | ~~`POST/GET/DELETE …/projects/:projectId/repository`~~ – **umgesetzt** · `POST /webhooks/github/:connectionId` – Scheibe 5.3 |
+
+---
+
+## `POST /auth/demo`
+
+Legt eine vollständige, eigene Demo-Umgebung an und meldet den Aufrufer darin an.
+
+### Anfrage
+
+Kein Körper. Keine Zugangsdaten. Ein leerer `POST` genügt.
+
+### Antwort · 201 Created
+
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIuLi4ifQ.4f2b9c...",
+  "user": {
+    "id": "9c1e...",
+    "email": "demo-3f0a...@demo.devboard.info",
+    "name": "Demo-Besucher"
+  }
+}
+```
+
+Dazu wie beim Login das Refresh-Cookie `devboard_refresh` (`HttpOnly`, `Secure`, `SameSite=Lax`,
+`Path=/auth`).
+
+**201, nicht 200:** Anders als beim Login entsteht hier tatsächlich etwas – ein Konto, eine
+Organisation, zwei Projekte, neun Aufgaben und ein Dutzend Feed-Einträge.
+
+### Was angelegt wird
+
+| | |
+|---|---|
+| Konto | zufällige Adresse unter `@demo.devboard.info`, `isDemo = true` |
+| Organisation | `Demo-Organisation`, Aufrufer ist `OWNER` |
+| Projekte | „Website-Relaunch" und „Mobile App" |
+| Aufgaben | über alle drei Spalten verteilt – ein Board mit nur einer Spalte zeigt nichts |
+| Feed | Anlagen **und** Verschiebungen, sonst sähe er aus wie ein Importprotokoll |
+
+Alles in **einer Transaktion**. Eine halb angelegte Demo – Konto ohne Organisation, Projekt ohne
+Aufgaben – wäre schlimmer als gar keine: Der Besucher sähe eine leere Anwendung und hielte sie für
+kaputt.
+
+### Antwort · 429 Too Many Requests
+
+Derselbe strenge Grenzwert wie bei `login` und `register`.
+
+**Warum die Drosselung hier nicht verhandelbar ist:** Das ist der einzige öffentliche Endpoint des
+Projekts, der **ohne jede Angabe des Aufrufers Datensätze anlegt**. Bei `register` muss immerhin
+eine noch unbenutzte Adresse geliefert werden; hier genügt ein leerer POST. Ohne Grenze könnte
+jemand in einer Schleife die Datenbank füllen – bei Neons 0,5 GB im kostenlosen Tarif keine graue
+Theorie.
+
+Die Aufbewahrungsfrist allein reicht als Schutz **nicht**: Sie räumt nachträglich auf, verhindert
+aber nicht, dass die Datenbank zwischendurch vollläuft.
+
+### Aufbewahrung und Aufräumen
+
+Jede Demo-Umgebung wird nach **24 Stunden** entfernt – Organisation und Konto.
+
+Aufgeräumt wird **ohne Zeitplaner**: Jeder Aufruf dieses Endpoints löscht zuerst die abgelaufenen
+Umgebungen der Vorgänger. Die Arbeit hängt am einzigen Auslöser, den es ohnehin gibt.
+
+Der Preis ist benannt: Kommt monatelang niemand vorbei, bleibt die letzte Demo liegen. Das ist
+unschön, aber harmlos – es entsteht kein Wachstum ohne Nutzung.
+
+### Warum jeder eine eigene Umgebung bekommt
+
+Siehe **ADR-020**. Kurz: Ein gemeinsames Demo-Konto hieße, dass alle Besucher in dieselben Daten
+schreiben. Wer ausprobiert, benennt um und löscht – dafür ist eine Demo da. Nur sieht der *nächste*
+Besucher das Ergebnis, und der ist im Zweifel derjenige, auf den es ankommt.
