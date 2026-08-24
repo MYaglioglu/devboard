@@ -14,6 +14,7 @@ import type { Request, Response } from 'express';
 
 import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { AuthService } from './auth.service';
+import { DemoService } from './demo.service';
 import { REFRESH_COOKIE, refreshCookieOptions } from './cookie';
 import { AktuellerNutzer } from './decorators/current-user.decorator';
 import { Oeffentlich } from './decorators/public.decorator';
@@ -44,8 +45,44 @@ interface AuthAntwort {
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
+    private readonly demoService: DemoService,
     private readonly config: ConfigService<Env, true>,
   ) {}
+
+  /**
+   * POST /auth/demo
+   *
+   * Legt eine eigene, gefuellte Demo-Umgebung an und meldet den Besucher darin
+   * an. Kein Formular, keine E-Mail-Adresse, kein Passwort - ein Klick.
+   *
+   * 201, nicht 200: Anders als beim Login entsteht hier tatsaechlich etwas.
+   *
+   * ==========================================================================
+   * WARUM DIE DROSSELUNG HIER NICHT VERHANDELBAR IST
+   * ==========================================================================
+   * Das ist der einzige oeffentliche Endpoint des Projekts, der ohne jede
+   * Angabe des Aufrufers DATENSAETZE ANLEGT - ein Konto, eine Organisation,
+   * zwei Projekte, neun Aufgaben und ein Dutzend Aktivitaeten pro Aufruf.
+   *
+   * Bei `register` muss immerhin eine noch unbenutzte E-Mail-Adresse geliefert
+   * werden. Hier genuegt ein leerer POST. Ohne Grenze koennte jemand in einer
+   * Schleife die Datenbank fuellen; bei Neons 0,5 GB im kostenlosen Tarif ist
+   * das keine graue Theorie.
+   *
+   * Deshalb dieselbe strenge Grenze wie bei Anmeldung und Registrierung. Die
+   * Aufbewahrungsfrist allein reicht als Schutz NICHT: Sie raeumt nachtraeglich
+   * auf, verhindert aber nicht, dass die Datenbank zwischendurch volllaeuft.
+   */
+  @Throttle({ default: ANMELDE_GRENZE })
+  @Oeffentlich()
+  @Post('demo')
+  @HttpCode(HttpStatus.CREATED)
+  async demo(
+    @Res({ passthrough: true }) antwort: Response,
+  ): Promise<AuthAntwort> {
+    const ergebnis = await this.demoService.starte();
+    return this.setzeCookieUndAntworte(ergebnis, antwort);
+  }
 
   // Strenger als die globale Grenze: Ohne Beschraenkung koennte jemand
   // massenhaft Konten anlegen (Spam, Erschoepfen des Adressraums).
