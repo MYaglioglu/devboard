@@ -23,6 +23,8 @@ interface AuthZustand {
     passwort: string,
     name?: string,
   ) => Promise<void>;
+  /** Legt eine eigene Demo-Umgebung an und meldet darin an. */
+  demoStarten: () => Promise<void>;
   abmelden: () => Promise<void>;
   /** Fuehrt einen Aufruf mit gueltigem Access-Token aus. */
   authFetch: <T>(pfad: string, optionen?: RequestInit) => Promise<T>;
@@ -213,6 +215,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [uebernehme],
   );
 
+  /**
+   * Startet eine Demo-Umgebung und meldet direkt darin an.
+   *
+   * Kein Formular, keine Angaben - der Server legt Konto, Organisation und
+   * Inhalt an und liefert dieselbe Antwort wie ein Login. Deshalb genuegt
+   * hier `uebernehme`, es braucht keinen eigenen Zweig im Zustand.
+   */
+  const demoStarten = useCallback(async () => {
+    uebernehme(
+      await api<AuthAntwort>('/auth/demo', {
+        method: 'POST',
+      }),
+    );
+  }, [uebernehme]);
+
   const registrieren = useCallback(
     async (email: string, passwort: string, name?: string) => {
       await api('/auth/register', {
@@ -245,8 +262,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [verwerfe]);
 
   const wert = useMemo<AuthZustand>(
-    () => ({ nutzer, laedt, anmelden, registrieren, abmelden, authFetch }),
-    [nutzer, laedt, anmelden, registrieren, abmelden, authFetch],
+    () => ({
+      nutzer,
+      laedt,
+      anmelden,
+      registrieren,
+      demoStarten,
+      abmelden,
+      authFetch,
+    }),
+    [nutzer, laedt, anmelden, registrieren, demoStarten, abmelden, authFetch],
   );
 
   return <AuthContext.Provider value={wert}>{children}</AuthContext.Provider>;
