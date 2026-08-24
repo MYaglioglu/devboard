@@ -3447,3 +3447,68 @@ Test etwas anderes gemessen als gedacht.
 Dazu kommt die zweite Hälfte des Beweises: Ein Test prüft, dass Abgelaufenes verschwindet, ein
 zweiter, dass Nichtabgelaufenes **bleibt**. Ein Aufräumen, das schlicht alles löscht, bestünde die
 erste Hälfte mühelos.
+
+### 191. Ihr Deployment-Job liegt im selben Workflow wie die Tests. Warum nicht getrennt?
+
+Damit die Abhängigkeit **hart** ist und nicht abgeleitet.
+
+Der Job steht auf `needs: [backend, frontend]`. Ein roter Test rollt damit nicht aus – nicht weil
+eine Regel es verbietet, sondern weil der Job gar nicht erst startet. Das ist dieselbe Denkweise wie
+`expose` statt `ports` beim Container: Was nicht laufen kann, muss man nicht bewachen.
+
+Ein eigener Workflow müsste über `workflow_run` an die CI gekoppelt werden. Das funktioniert, hat
+aber Fallstricke – der Auslöser kennt das Ergebnis nur als Zustand, und man muss selbst prüfen, ob
+er „success" war und ob es überhaupt derselbe Commit ist. Genau dort baut man sich einen
+Deployment-Weg für ungetesteten Code, ohne es zu merken.
+
+Der Job hat außerdem eine **eigene Sperre ohne `cancel-in-progress`**. Der Workflow bricht laufende
+Durchläufe ab, sobald neue Commits kommen – bei Tests spart das Zeit, bei einem Deployment wäre es
+gefährlich: Ein mitten im Umschalten abgebrochener Lauf hinterlässt einen halben Zustand.
+Deployments warten deshalb aufeinander.
+
+### 192. Warum baut Ihr Server das Image nicht mehr selbst?
+
+Weil er sonst etwas ausliefert, das nie geprüft wurde.
+
+Vorher lief `docker compose up -d --build` auf dem Server: Er zog den Quelltext und übersetzte ihn
+selbst. Die CI hatte den Quelltext getestet – aber das Image, das am Ende lief, hatte sie nie
+gesehen. Zwischen beiden liegen eine andere Node-Version im Basis-Image, ein anderer Zeitpunkt der
+Abhängigkeitsauflösung und ein anderer Rechner.
+
+Jetzt baut die CI das Image, schiebt es in die Registry, und der Server zieht genau dieses. **Das
+Artefakt, das getestet wurde, ist dasselbe, das läuft.**
+
+Nebenbei braucht der Server damit kein Bauwerkzeug, keinen Speicher dafür und keine Bauzeit – auf
+einer Maschine mit zwei Kernen ist das kein Nebeneffekt.
+
+### 193. Sie taggen mit der Commit-Kennung statt mit `latest`. Ist das nicht umständlicher?
+
+Beim Aufrufen ja, bei allem anderen nein.
+
+`latest` ist ein **beweglicher Zeiger**. Zwei Probleme daran: Man kann nachträglich nicht mehr
+feststellen, welcher Stand tatsächlich läuft – „latest" beantwortet die Frage nicht. Und es gibt
+keinen Rückweg: Die vorige Fassung hat keinen Namen mehr, unter dem man sie wieder starten könnte.
+
+Mit der Commit-Kennung ist beides eindeutig. Der laufende Container nennt seinen Tag, und der Tag
+nennt den Commit. Der Rollback in Scheibe 6.5 ist überhaupt nur deshalb möglich.
+
+`latest` wird trotzdem mitgeschoben – als Bequemlichkeit für einen Start von Hand, wenn niemand eine
+Kennung setzen will. Es ist der Rückfall, nicht die Wahrheit.
+
+### 194. Ihr Deployment prüft am Ende `/health` von außen. Reicht nicht, dass die Befehle durchgelaufen sind?
+
+Nein, und das ist derselbe Unterschied wie zwischen einem grünen Build und einer startenden
+Anwendung.
+
+„Kein Befehl ist fehlgeschlagen" heißt: Docker hat einen Container gestartet. Es heißt nicht, dass
+er antwortet, dass er die Datenbank erreicht oder dass der Reverse Proxy ihn findet. Genau diese
+Lücke hat mich in Scheibe 6.1 schon einmal erwischt – dort war der Build grün und das Ergebnis nicht
+lauffähig.
+
+Deshalb fragt der letzte Schritt `https://api.devboard.info/health` ab, bis `200` mit
+`"database":"up"` kommt. Über die **echte Adresse**, samt TLS und Proxy – also über denselben Weg
+wie ein Besucher.
+
+Was der Schritt noch **nicht** tut, sage ich dazu: zurückrollen. Er meldet den Fehlschlag, die
+kaputte Fassung läuft weiter. Das ist die nächste Scheibe, und sie ist erst dadurch möglich, dass
+jedes Image unter seiner Commit-Kennung liegt.
