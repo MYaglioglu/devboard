@@ -152,6 +152,29 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
 
+    # Die Geheimnisse liegen in der UMGEBUNG `Production`, nicht als
+    # Repository-Secrets. Ohne diese Zeile waeren sie in diesem Job schlicht
+    # LEER - und der Lauf scheiterte mit einer irrefuehrenden Meldung, etwa
+    # "Permission denied (publickey)", weil ein leerer Schluessel geschrieben
+    # wurde.
+    #
+    # Der Unterschied ist nicht nur formal:
+    #
+    #   Repository-Secret  steht JEDEM Job in JEDEM Workflow zur Verfuegung.
+    #   Environment-Secret steht nur Jobs zur Verfuegung, die diese Umgebung
+    #                      ausdruecklich anfordern.
+    #
+    # Fuer Produktionszugaenge ist das Zweite richtig: Ein Schluessel, mit dem
+    # man auf den Server kommt, soll nicht in einem beliebigen Testjob lesbar
+    # sein, den irgendwann jemand hinzufuegt.
+    #
+    # Nebeneffekt, der spaeter nuetzlich wird: GitHub fuehrt je Umgebung eine
+    # Deployment-Historie, und man kann Schutzregeln daranhaengen - etwa eine
+    # Freigabe von Hand vor dem Ausrollen.
+    environment:
+      name: Production
+      url: https://api.devboard.info
+
     # Eigene Sperre OHNE `cancel-in-progress`. Der Workflow oben bricht
     # laufende Durchlaeufe ab, sobald neue Commits kommen - fuer Tests richtig,
     # fuer ein Deployment gefaehrlich: Ein mitten im Umschalten abgebrochener
