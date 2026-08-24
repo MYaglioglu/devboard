@@ -1102,3 +1102,38 @@ dasteht, gilt nicht verlässlich.
 Neustart war die Warnung weg und die Verbindung stand unverändert. Die Vorlage
 `.env.produktion.example` schreibt die strenge Variante samt Begründung vor, damit der Wert aus dem
 Neon-Dashboard nicht unbesehen übernommen wird.
+
+---
+
+## 2026-08-24 – Elf Knöpfe ohne Zeiger, gemeldet an einem
+
+**Was passiert ist.** Beim Ausprobieren der frisch veröffentlichten Startseite fiel auf, dass der
+Demo-Knopf beim Überfahren keinen Handzeiger zeigt – anders als die Links daneben. Der naheliegende
+Reflex wäre gewesen, `cursor-pointer` an diesen einen Knopf zu schreiben.
+
+**Die Ursache.** **Tailwind v4 setzt `cursor: pointer` auf `<button>` nicht mehr.** Das ist keine
+Nachlässigkeit, sondern eine bewusste Änderung: Das Preflight richtet sich nach dem
+Standardverhalten der Browser, und die zeigen auf einer Schaltfläche seit jeher den normalen Pfeil.
+Links sind nicht betroffen, deshalb fällt es nur an Knöpfen auf – und dort erst, wenn jemand genau
+hinsieht.
+
+Betroffen war damit **jede Schaltfläche der Anwendung**, verteilt über elf Dateien: Anmeldung,
+Registrierung, das Board, der Feed, die Seitenleiste. Gemeldet wurde einer.
+
+**Das Learning.**
+
+> **Ein Fehler, der an einer Stelle auffällt, ist selten an einer Stelle.** Die Frage nach der
+> Meldung ist nicht „wo behebe ich das", sondern „wie viele gibt es davon". Wer den einen Knopf
+> repariert, hat zehn übersehen – und der zwölfte bekommt die Klasse dann auch nicht.
+
+Behoben mit **einer Regel** in `globals.css` statt elf Klassen. `:not(:disabled)` gehört dazu, weil
+gesperrte Knöpfe `disabled:cursor-not-allowed` tragen – ohne die Ausnahme käme es auf die
+Spezifität an, und der Zeiger widerspräche dem gesperrten Zustand.
+
+**Der allgemeinere Punkt.** Beim Sprung auf eine neue Hauptversion ändern sich Vorgaben, nicht nur
+Schnittstellen. Ein solcher Wechsel bricht nichts, was einen Fehler wirft – er verändert still das
+Verhalten. Die Tests waren grün, der Build war grün, 211 Tests haben es nicht bemerkt, weil kein
+Test einen Mauszeiger hat.
+
+Damit steht dieselbe Lehre wie in Sprint 5 zum dritten Mal: **Die Anwendung wird angesehen, nicht
+nur getestet.** Dort war es eine Seitenleiste, die auf 68 Pixel zusammenfiel.

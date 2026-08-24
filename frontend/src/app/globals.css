@@ -133,3 +133,35 @@ body {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/*
+ * ============================================================================
+ * DER ZEIGER AUF SCHALTFLAECHEN
+ * ============================================================================
+ * Tailwind v4 setzt `cursor: pointer` auf <button> NICHT mehr. Das ist keine
+ * Nachlaessigkeit, sondern eine bewusste Entscheidung: Das Preflight richtet
+ * sich nach dem Standardverhalten der Browser, und die zeigen auf einer
+ * Schaltflaeche seit jeher den normalen Pfeil.
+ *
+ * Fuer eine Webanwendung ist das trotzdem falsch. Nutzer haben gelernt, dass
+ * sich der Zeiger ueber allem aendert, was anklickbar ist - bei Links tut er
+ * es weiterhin. Ein Knopf, der sich nicht so verhaelt wie der Link daneben,
+ * wirkt tot.
+ *
+ * WARUM HIER UND NICHT ALS KLASSE AN JEDEM KNOPF:
+ * Es betrifft ausnahmslos jede Schaltflaeche der Anwendung - elf Dateien.
+ * `cursor-pointer` an jede einzelne zu schreiben hiesse, dieselbe Entscheidung
+ * elfmal zu treffen und beim zwoelften Knopf zu vergessen. Aufgefallen ist es
+ * genau so: an einem einzelnen Knopf, waehrend zehn andere denselben Fehler
+ * schon hatten.
+ *
+ * `:not(:disabled)` ist notwendig, nicht kosmetisch: Gesperrte Knoepfe tragen
+ * `disabled:cursor-not-allowed`. Ohne die Ausnahme kaeme es hier auf dieselbe
+ * Spezifitaet an, und der Zeiger widerspraeche dem gesperrten Zustand.
+ */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
