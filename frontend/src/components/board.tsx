@@ -365,9 +365,24 @@ function NeueAufgabe({
         className="w-full rounded-lg border border-zinc-300 px-2 py-1 text-sm outline-none
           focus:ring-2 focus:ring-emerald-500/40 dark:border-zinc-700 dark:bg-zinc-900"
       />
+      {/*
+        Gesperrt, solange der Titel zu kurz ist.
+
+        Vorher war der Knopf immer bedienbar und `absenden` brach still ab -
+        ein Klick auf ein leeres Feld tat also NICHTS, ohne jede Rueckmeldung.
+        Wer das ausprobiert, sucht die Ursache anschliessend an der falschen
+        Stelle; bei einem Nutzer war es eine unabhaengige Fehlermeldung
+        daneben, die er dem Klick zugeschrieben hat.
+
+        Ein gesperrter Knopf sagt dasselbe wie das stille Abbrechen - nur
+        vorher und sichtbar.
+      */}
       <button
         type="submit"
+        disabled={titel.trim().length < 2}
+        title={titel.trim().length < 2 ? 'Mindestens zwei Zeichen' : undefined}
         className="rounded-lg border border-zinc-300 px-2 text-sm transition hover:bg-zinc-50
+          disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent
           dark:border-zinc-700 dark:hover:bg-zinc-800"
       >
         +
