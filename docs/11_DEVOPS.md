@@ -1119,7 +1119,20 @@ Die Ausgabe wird gleich zum Geheimnis `DEPLOY_KNOWN_HOSTS`.
 
 ### Die Geheimnisse im Repository setzen
 
-**Settings → Secrets and variables → Actions → New repository secret:**
+**Settings → Environments → `Production` → Add environment secret:**
+
+Ausdrücklich **Environment secrets**, nicht Repository secrets. Der Unterschied:
+
+| | sichtbar für |
+|---|---|
+| Repository-Secret | **jeden** Job in **jedem** Workflow |
+| Environment-Secret | nur Jobs, die diese Umgebung ausdrücklich anfordern |
+
+Für einen Zugang zum Produktionsserver ist das Zweite richtig: Der Schlüssel soll nicht in einem
+beliebigen Testjob lesbar sein, den irgendwann jemand hinzufügt. Der Deploy-Job fordert die Umgebung
+über `environment: Production` an – **ohne diese Zeile wären die Werte leer**, und der Lauf
+scheiterte mit einer irreführenden Meldung wie „Permission denied (publickey)".
+
 
 | Name | Wert |
 |---|---|
