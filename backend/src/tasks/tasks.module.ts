@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 
 import { ActivitiesModule } from '../activities/activities.module';
 
+import { KalenderController } from './kalender.controller';
+import { KalenderService } from './kalender.service';
 import { TasksController } from './tasks.controller';
 import { TasksService } from './tasks.service';
 
@@ -17,10 +19,24 @@ import { TasksService } from './tasks.service';
  * haengt an einem Pfad, der mit `projects/:projectId` beginnt, obwohl er nicht
  * im ProjectsModule liegt. In NestJS ist das unkritisch - Routen sind global,
  * Module gruppieren nur die Bereitstellung.
+ *
+ * ============================================================================
+ * WARUM DER KALENDER HIER MITWOHNT UND KEIN EIGENES MODUL IST
+ * ============================================================================
+ * Er liest Aufgaben - dieselbe Fachlichkeit, andere Blickrichtung. Ein eigenes
+ * KalenderModule muesste TasksModule importieren, ohne dass es dafuer eine
+ * Grenze gaebe, die man ziehen will.
+ *
+ * Was er dagegen SEHR WOHL ist, ist ein eigener Service neben TasksService,
+ * nicht eine weitere Methode darin: Der Kalender liest nur, kennt keine
+ * Sortierpositionen und schreibt keine Aktivitaeten. Waere er eine Methode auf
+ * TasksService, haette er ueber `this` Zugriff auf das Schreiben mitsamt
+ * ActivitiesService - und die Lehre aus Sprint 4 lautet: Was nicht da ist,
+ * kann man nicht versehentlich benutzen.
  */
 @Module({
   imports: [ActivitiesModule],
-  controllers: [TasksController],
-  providers: [TasksService],
+  controllers: [TasksController, KalenderController],
+  providers: [TasksService, KalenderService],
 })
 export class TasksModule {}
