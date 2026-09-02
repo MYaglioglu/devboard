@@ -232,6 +232,9 @@ export class DemoService {
           const erstellt = await tx.task.create({
             data: {
               projectId: projekt.id,
+              // Siehe TasksService.erstelle: Der Mandant steht seit dem
+              // 02.09.2026 auch auf `tasks` und wird mitgeschrieben.
+              organizationId: organisation.id,
               title: aufgabe.titel,
               description: aufgabe.beschreibung,
               status: aufgabe.status,

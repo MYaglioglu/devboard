@@ -24,7 +24,8 @@
     "db:studio": "prisma studio",
     "db:deploy": "prisma migrate deploy",
     "messung:dashboard": "node --env-file=../.env node_modules/ts-node/dist/bin.js --compilerOptions {\\\"module\\\":\\\"commonjs\\\"} scripts/messung-dashboard.ts",
-    "erklaere:feed": "node --env-file=../.env node_modules/ts-node/dist/bin.js --compilerOptions {\\\"module\\\":\\\"commonjs\\\"} scripts/erklaere-feed.ts"
+    "erklaere:feed": "node --env-file=../.env node_modules/ts-node/dist/bin.js --compilerOptions {\\\"module\\\":\\\"commonjs\\\"} scripts/erklaere-feed.ts",
+    "erklaere:kalender": "node --env-file=../.env node_modules/ts-node/dist/bin.js --compilerOptions {\\\"module\\\":\\\"commonjs\\\"} scripts/erklaere-kalender.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

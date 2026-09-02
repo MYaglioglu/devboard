@@ -49,17 +49,23 @@ export class KalenderService {
    * Alle Termine einer Organisation in einem Zeitraum.
    *
    * ==========================================================================
-   * DER MANDANTENFILTER - UEBER DIE BEZIEHUNG, WIE UEBERALL BEI TASKS
+   * DER MANDANTENFILTER - DIREKT AUF `tasks`
    * ==========================================================================
-   * `tasks` hat keine eigene `organizationId`; der Mandant haengt am Projekt
-   * (Begruendung in schema.prisma und 08_DATABASE.md). Er steht deshalb als
-   * `project: { organizationId }` in der WHERE-Bedingung - nicht in einer
-   * Pruefung, die nach dem Laden noch einmal hinsieht.
+   * Er steht in der WHERE-Bedingung, nicht in einer Pruefung nach dem Laden.
+   * Das ist die Regel, die im Projekt inzwischen an sechs Stellen steht, und
+   * ein vergessener Filter faellt im Erfolgspfad nicht auf - deshalb gibt es
+   * dazu einen negativen Test und eine Mutationsprobe (12_TESTING.md).
    *
-   * Das ist die Regel, die im Projekt inzwischen an sechs Stellen steht: Die
-   * Bedingung gehoert ins WHERE, nicht in ein `if` danach. Ein vergessener
-   * Filter faellt im Erfolgspfad nicht auf - deshalb gibt es dazu einen
-   * negativen Test (fremde Organisation ⇒ leere Liste, nicht fremde Termine).
+   * Neu gegenueber allen anderen Task-Abfragen ist die STELLE: `organizationId`
+   * kommt von der Aufgabe selbst, nicht ueber `project: { organizationId }`.
+   * Genau dafuer wurde die Spalte am 02.09.2026 eingefuehrt - die Fassung mit
+   * dem Verbund las bei zehn Mandanten 6740 Zeilen, um 674 zurueckzugeben.
+   * Der Ausfuehrungsplan steht in 12_TESTING.md.
+   *
+   * Sicherheitlich sind beide Fassungen gleichwertig: Der zusammengesetzte
+   * Fremdschluessel garantiert, dass die Mandanten-ID der Aufgabe mit der
+   * ihres Projekts uebereinstimmt. Ohne diese Garantie waere die Abkuerzung
+   * nicht erlaubt, sondern eine zweite Wahrheit im Sicherheitsfilter.
    *
    * ==========================================================================
    * WARUM ARCHIVIERTE PROJEKTE NICHT VORKOMMEN
@@ -92,8 +98,14 @@ export class KalenderService {
       where: {
         // Halboffen: `von` gehoert dazu, `bis` nicht. Warum, steht im
         // Query-DTO - dort ist die Entscheidung getroffen worden.
+        organizationId,
         dueDate: { gte: zeitraum.von, lt: zeitraum.bis },
-        project: { organizationId, archivedAt: null },
+        // Der Verbund bleibt - aber nur noch fuer das Archiv-Kennzeichen, das
+        // es auf `tasks` nicht gibt und aus gutem Grund auch nicht geben soll:
+        // Anders als der Mandant AENDERT es sich (ein Projekt wird
+        // archiviert), und eine veraenderliche Kopie ist genau die zweite
+        // Wahrheit, die man nicht will.
+        project: { archivedAt: null },
       },
       orderBy: [
         { dueDate: 'asc' },
