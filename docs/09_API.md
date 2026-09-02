@@ -1434,6 +1434,101 @@ Projekt selbst mitführen, und „höchstens eines je Projekt" wäre nicht mehr 
 
 ---
 
+## Kalender
+
+### `GET /organizations/:orgId/calendar` · alle Mitglieder
+
+Alle Aufgaben mit Fälligkeitsdatum in einem Zeitraum – **über alle nicht archivierten Projekte der
+Organisation hinweg**.
+
+```
+GET /organizations/:orgId/calendar?von=2026-09-01T00:00:00.000Z&bis=2026-10-01T00:00:00.000Z
+```
+
+| Parameter | Pflicht | Bedeutung |
+|---|---|---|
+| `von` | ja | Anfang des Zeitraums, **einschließlich** |
+| `bis` | ja | Ende des Zeitraums, **ausschließlich** |
+
+Antwort · 200 OK
+
+```json
+[
+  {
+    "id": "…",
+    "title": "Abgabe",
+    "status": "TODO",
+    "version": 0,
+    "dueDate": "2026-09-15T13:30:00.000Z",
+    "assignee": { "userId": "…", "name": "Murat", "email": "…" },
+    "project": { "id": "…", "name": "Website-Relaunch" }
+  }
+]
+```
+
+Sortiert nach `dueDate`, bei Gleichstand nach `id` – sonst wäre die Reihenfolge zweier Termine zur
+selben Uhrzeit von Aufruf zu Aufruf verschieden und der Kalender würde beim Neuladen „zappeln".
+
+Fehler:
+
+| Status | Wann |
+|---|---|
+| 400 | `von` oder `bis` fehlt, ist kein Datum, `bis` liegt nicht nach `von`, oder der Zeitraum ist breiter als 92 Tage |
+| 404 | Der Aufrufer ist in dieser Organisation kein Mitglied (der Guard, nicht dieser Endpoint) |
+
+### Warum der Pfad kein Projekt enthält
+
+Alle anderen Aufgaben-Routen liegen unter `/organizations/:orgId/projects/:projectId/tasks`. Der
+Kalender nicht, und das ist die Fachlichkeit: Auf demselben Dienstag liegen Aufgaben aus drei
+Projekten – das ist der Zweck der Ansicht. Ein `:projectId` im Pfad würde genau das ausschließen.
+
+Ein Filter auf ein einzelnes Projekt gehört deshalb später in die Query-Parameter, so wie beim Feed
+(`?projectId=`), nicht in den Pfad.
+
+### Warum `calendar` und nicht `tasks`
+
+`GET /organizations/:orgId/tasks` wäre naheliegender, wäre aber ein Versprechen, das dieser
+Endpoint nicht hält: Er liefert nur Aufgaben **mit** Fälligkeitsdatum, aus **nicht archivierten**
+Projekten, in einem **Pflicht-Zeitraum**, ohne `position` und ohne `description`.
+
+Wer `/tasks` liest, erwartet „alle Aufgaben" und bekäme stillschweigend eine Auswahl. `calendar`
+sagt, was es ist: eine Ansicht, kein Ressourcen-Zugriff. Singular wie `activity`, und aus demselben
+Grund gibt es kein `GET …/calendar/:id`.
+
+### Der Zeitraum ist halboffen – `von` gehört dazu, `bis` nicht
+
+Bei geschlossenem Ende müsste der September als `01.09. 00:00` bis `30.09. 23:59:59.999` angefragt
+werden, und ein Termin auf `23:59:59.9995` fiele durch das Raster. Fragt der Client stattdessen bis
+`01.10. 00:00`, erscheint ein Termin um Mitternacht in **zwei** Monaten.
+
+Halboffen stoßen zwei aufeinanderfolgende Monate exakt aneinander – ohne Lücke und ohne
+Überlappung. Derselbe Grund, aus dem `slice(0, 3)` das dritte Element ausläßt.
+
+### Beide Parameter sind Pflicht, und der Zeitraum ist begrenzt
+
+Naheliegend wäre ein Vorgabewert: kein Zeitraum angegeben ⇒ aktueller Monat. Verworfen, weil ein
+Vorgabewert die **teuerste** Variante zur einfachsten macht – wer den Parameter vergißt, bekommt
+trotzdem eine Antwort und merkt seinen Fehler nie.
+
+Der Unterschied zu `?limit=` beim Feed: Dort **begrenzt** der Vorgabewert die Arbeit, hier würde er
+sie erst erzeugen.
+
+Die Obergrenze von **92 Tagen** ist dieselbe Überlegung wie `limit.max(100)`: Ohne sie wäre
+`?von=0001-01-01&bis=9999-12-31` eine gültige Anfrage und damit ein Weg, mit einer einzigen Zeile
+Aufwand die gesamte Aufgabentabelle des Mandanten zu lesen. 92 statt 31, weil die Monatsansicht
+Vor- und Nachlauftage zeigt und das Frontend den Nachbarmonat mitladen können soll.
+
+### Zeitzonen: Der Server rechnet nicht
+
+Der Server bekommt zwei Zeitpunkte und vergleicht sie mit einem gespeicherten Zeitpunkt. Alle drei
+sind UTC, der Vergleich ist eindeutig.
+
+Welcher **Kalendertag** das ist, entscheidet die Zone des Betrachters – und die kennt der Server
+nicht. Ein Berliner September beginnt am 31.08. um 22:00 UTC; genau so schickt das Frontend den
+Zeitraum. Sobald der Server anfinge, „den 15." auszurechnen, müßte er eine Zone raten.
+
+---
+
 ## Geplante Endpoints
 
 | Sprint | Endpoints |

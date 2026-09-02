@@ -235,7 +235,8 @@ fachlich nicht gibt. Anders als bei `memberships`, wo doppelte Zeilen die Rolle 
 | Spalte | Typ | Constraints |
 |---|---|---|
 | `id` | `uuid` | Primärschlüssel |
-| `projectId` | `uuid` | Fremdschlüssel auf `projects`, `ON DELETE CASCADE` |
+| `projectId` | `uuid` | Teil des zusammengesetzten Fremdschlüssels auf `projects`, `ON DELETE CASCADE` |
+| `organizationId` | `uuid` | **NOT NULL** – der Mandant, verdoppelt aus `projects`; zweiter Teil desselben Fremdschlüssels |
 | `title` | `text` | **NOT NULL** |
 | `description` | `text` | optional |
 | `status` | `task_status` (Enum) | **NOT NULL**, Default `TODO` |
@@ -318,6 +319,89 @@ wie bei `memberships` – **ein zusammengesetzter Index hilft nur von links gele
 
 Der zweite Index auf `assigneeId` dient „meine Aufgaben" und dem `SET NULL` beim Entfernen eines
 Mitglieds; ohne ihn läse PostgreSQL dafür jedes Mal die ganze Tabelle.
+
+#### Der Mandant steht doppelt – und die Datenbank erzwingt, dass beide gleich sind
+
+Bis zum 02.09.2026 hatte `tasks` **keine** `organizationId`. Der Mandant hing am Projekt und wurde
+über `project: { organizationId }` in die `WHERE`-Bedingung gezogen; die Begründung lautete: keine
+zweite Wahrheit im Sicherheitsfilter.
+
+Für jede Abfrage, die **ein** Projekt betrifft, trägt das weiterhin. Die Kalenderabfrage betrifft
+alle Projekte einer Organisation auf einmal, und dort ist der Mandant nicht mehr Zusatzbedingung,
+sondern der eigentliche Filter. PostgreSQL kann keinen Index über Spalten zweier Tabellen anlegen.
+
+Gemessen (`npm run erklaere:kalender`, 80.000 Aufgaben, 10 Organisationen, 92-Tage-Fenster):
+
+| Fassung | Zeit | Aus `tasks` gelesen |
+|---|---|---|
+| Mandant über den Verbund, Index `(dueDate)` | 3,90 ms | **6.740** |
+| Mandant auf `tasks`, Index `(organizationId, dueDate)` | **0,91 ms** | **674** |
+
+Das Datumsfenster wählt die Aufgaben **aller** Mandanten; erst der Verbund wirft neun Zehntel weg.
+Der Aufwand für den Kalender einer Organisation hing damit an der Datenmenge aller anderen.
+Ausführlich in **ADR-021**.
+
+**Was die Redundanz ungefährlich macht, ist hier nicht dasselbe wie bei `activities`.** Dort trägt
+die Unveränderlichkeit der *Zeile*. Eine Aufgabe wird ständig geändert; hier trägt die
+Unveränderlichkeit der *Beziehung* – ein Projekt wechselt seine Organisation nie, und eine Aufgabe
+kann nicht in ein anderes Projekt verschoben werden.
+
+Darauf verlassen muß sich trotzdem niemand:
+
+```sql
+ALTER TABLE projects ADD CONSTRAINT projects_id_organizationId_key UNIQUE (id, "organizationId");
+
+ALTER TABLE tasks ADD CONSTRAINT tasks_projectId_organizationId_fkey
+  FOREIGN KEY ("projectId", "organizationId")
+  REFERENCES projects (id, "organizationId") ON DELETE CASCADE;
+```
+
+Der einspaltige Fremdschlüssel ist dem zusammengesetzten gewichen. Eine Aufgabe, deren Mandant nicht
+zu ihrem Projekt gehört, läßt sich nicht mehr speichern – die Übereinstimmung ist nicht
+unwahrscheinlich, sondern unmöglich.
+
+Das `UNIQUE (id, organizationId)` auf `projects` fügt fachlich nichts hinzu, weil `id` schon
+Primärschlüssel ist. Es erfüllt nur die Anforderung von PostgreSQL, daß ein Fremdschlüssel auf eine
+als eindeutig deklarierte Spaltenkombination zeigen muß.
+
+#### Der Kalender-Index: `(organizationId, dueDate)`
+
+Die Reihenfolge der Spalten ist nicht beliebig. `organizationId` steht vorne, weil darauf auf
+**Gleichheit** geprüft wird; `dueDate` hinten, weil es ein **Bereich** ist.
+
+Ein zusammengesetzter Index kann hinter der ersten Bereichsbedingung nichts mehr einschränken:
+Stünde `dueDate` vorne, wäre der Mandant im Index wertlos und die Abfrage läge wieder bei den 6.740
+gelesenen Zeilen. Dieselbe Regel wie beim Board-Index (`projectId, status, position`) – ein
+zusammengesetzter Index hilft nur von **links** gelesen, und **Gleichheit gehört vor Bereich**.
+
+Die Migration `20260902120000_kalender_index` legte zuerst einen Index auf `dueDate` allein an. Sie
+bleibt in der Historie stehen und wird von
+`20260902143000_tasks_organisation_denormalisiert` abgelöst, nicht nachträglich korrigiert – wie
+eine abgelöste ADR.
+
+#### `ADD COLUMN … NOT NULL` in drei Schritten
+
+`prisma migrate diff` erzeugt für diesen Schemastand:
+
+```sql
+ALTER TABLE "tasks" ADD COLUMN "organizationId" UUID NOT NULL;
+```
+
+Das läuft **nur auf einer leeren Tabelle**. Auf jeder Datenbank mit Bestand – also auch auf der
+Produktion – schlägt es fehl, weil die vorhandenen Zeilen keinen Wert hätten. Die Migration ist
+deshalb von Hand zerlegt:
+
+```sql
+ALTER TABLE "tasks" ADD COLUMN "organizationId" UUID;              -- 1. nullbar anlegen
+UPDATE "tasks" t SET "organizationId" = p."organizationId"          -- 2. aus dem Projekt füllen
+  FROM "projects" p WHERE p."id" = t."projectId";
+ALTER TABLE "tasks" ALTER COLUMN "organizationId" SET NOT NULL;     -- 3. verpflichtend machen
+```
+
+Das ist das Standardmuster für eine `NOT NULL`-Spalte auf Bestandsdaten – und der häufigste Weg,
+wie ein Deployment an einer Migration stirbt, die lokal funktioniert hat.
+
+---
 
 ### `activities`
 

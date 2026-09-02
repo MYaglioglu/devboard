@@ -1233,3 +1233,75 @@ Deployment, das man startet und nicht beobachtet, ist kein Deployment, sondern e
 kleingeschrieben (`${GITHUB_REPOSITORY_OWNER,,}`), statt an zwei Stellen abgeschrieben zu werden –
 eine davon würde beim nächsten Mal vergessen. Die Fehlermeldung steht jetzt in der Fehlertabelle in
 `11_DEVOPS.md`.
+
+---
+
+## 2026-09-02 – Eine Index-Entscheidung, die ich ausführlich begründet und falsch getroffen habe
+
+**Was passiert ist**
+
+Für die Kalenderabfrage (`alle Aufgaben dieser Organisation zwischen X und Y`) stellte sich die
+Frage, ob `tasks` eine eigene `organizationId` bekommt. In Sprint 4 war dieselbe Frage bei
+`activities` mit **Ja** beantwortet worden.
+
+Ich habe sie mit **Nein** beantwortet und die Begründung ausführlich ins Schema geschrieben – drei
+Argumente, sauber gegen ADR-011 abgegrenzt, mit dem Satz „Belegt statt behauptet: Der
+Ausführungsplan steht in `12_TESTING.md`".
+
+Der Plan stand da noch nicht. Als er eine Stunde später vorlag, sagte er das Gegenteil.
+
+**Was der Plan zeigte**
+
+Bei 80.000 Aufgaben in 10 Organisationen und einem 92-Tage-Fenster:
+
+| Fassung | Zeit | Aus `tasks` gelesen |
+|---|---|---|
+| meine Entscheidung: Index `(dueDate)`, Mandant über den Verbund | 3,90 ms | **6.740** |
+| die abgelehnte Variante: Index `(organizationId, dueDate)` | **0,91 ms** | **674** |
+
+Das tragende Argument war gewesen: „Die Selektivität liegt am Datum, nicht am Mandanten." Sie liegt
+am Mandanten. Das Datumsfenster wählt die Aufgaben **aller** Mandanten, und erst der Verbund wirft
+neun Zehntel weg.
+
+**Ursache**
+
+Ich habe die Selektivität **geschätzt statt gerechnet** – und dabei die Rechnung im Kopf für einen
+einzelnen Mandanten gemacht statt für die Tabelle. Bei 10 Mandanten ist das ein Faktor 10, bei 1.000
+ein Faktor 1.000. Genau die Zahl, um die es geht, kam in meiner Überlegung nicht vor.
+
+Der zweite Teil der Ursache ist ärgerlicher: Die Begründung war **gut formuliert**. Drei nummerierte
+Argumente, ein sauberer Vergleich mit einer früheren Entscheidung, ein Verweis auf eine Messung, die
+es noch nicht gab. Sie las sich wie ein Beleg und war eine Meinung.
+
+**Learning**
+
+> **Ein Verweis auf eine Messung ist keine Messung.** Wer „belegt in 12_TESTING.md" schreibt, bevor
+> dort etwas steht, hat den Beleg nicht erbracht, sondern versprochen. Die Reihenfolge muss
+> umgekehrt sein: erst messen, dann begründen.
+
+Und ein zweites, unbequemeres:
+
+> **Je besser eine Begründung formuliert ist, desto weniger sagt ihre Überzeugungskraft über ihre
+> Richtigkeit.** Drei sauber nummerierte Argumente fühlen sich an wie ein Beweis. Der Unterschied
+> zwischen „gut begründet" und „richtig" ist genau die Messung – und sie kostete zwanzig Minuten.
+
+**Was daraus geworden ist**
+
+Der Umbau (ADR-021) ist besser als die ursprüngliche Fassung *und* besser als die Variante, die ich
+abgelehnt hatte: Weil die Redundanz jetzt begründet werden musste, kam die Frage auf, wer sie
+garantiert. Die Antwort ist ein zusammengesetzter Fremdschlüssel auf `projects(id, organizationId)`
+– die Datenbank erzwingt die Übereinstimmung, statt dass jede künftige Schreibstelle daran denken
+muss.
+
+Ohne den Fehler wäre die Spalte einfach mitgeschrieben und gehofft worden.
+
+**Nebenbei, zum vierten Mal:** Nach dem Wechsel auf einen anderen Branch war der erzeugte
+Prisma-Client veraltet, und `npm run build` scheiterte an vier Fehlern, die mit der eigenen
+Änderung nichts zu tun hatten. `npx prisma generate` ist die Antwort. Der Wiederholungstäter aus
+Sprint 2, 3 und 5.
+
+**Und noch ein kleiner:** Beim ersten Anlauf der Mutationsprobe wurden 12 von 12 Tests rot. Ursache
+war nicht der entfernte Schutz, sondern ein Aufruf per `npx jest` statt über `npm run test:e2e` –
+ohne `THROTTLE_LIMIT=0` scheitert schon die Registrierung am Rate Limiting. Ohne die vorher
+aufgeschriebene Erwartung („7 rot, 5 grün") wäre das als „der Schutz wirkt sehr breit" durchgegangen.
+Dieselbe Falle wie in Sprint 3 mit dem nicht laufenden Docker-Daemon.

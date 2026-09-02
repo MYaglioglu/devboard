@@ -155,6 +155,33 @@ Sprint 5:
 | Dieselbe Probe, **10** gleichzeitige Aufrufe am Dienst | **0** |
 | Dieselbe Probe, **50** gleichzeitige Aufrufe am Dienst | 1 E2E, punktgenau |
 
+Kalender (02.09.2026):
+
+| Entfernt | Vorhergesagt | Rot geworden |
+|---|---|---|
+| `project: { organizationId }` im `where` von `KalenderService.findeZeitraum` | 7 E2E, namentlich benannt | **genau diese 7** |
+| `organizationId` im `where` derselben Methode, nach dem Umbau auf die eigene Spalte | dieselben 7 | **genau diese 7** |
+
+Beide Proben wurden mit **vorher aufgeschriebener Erwartung** gefahren – und die Erwartung war
+diesmal bewusst breiter als „der eine negative Test": Die Suite teilt sich eine Datenbank, also
+sehen ohne Mandantenfilter auch alle Tests fremde Termine, die eine **exakte** Liste erwarten und
+nach einem anderen Test laufen. Grün bleiben mussten der erste Test der Suite (er läuft, bevor
+andere Organisationen Termine anlegen), die drei Prüfungen des Zeitraums (sie greifen vor der
+Abfrage) und der 404-Test (den erledigt der Guard, nicht der Filter).
+
+Genau das trat ein. Ein breites Rot ist nur dann kein Warnzeichen, wenn man es **vorher**
+vorhergesagt hat – sonst ist es von einem kaputten Testaufbau nicht zu unterscheiden. Beim ersten
+Anlauf am selben Tag waren 12 von 12 rot; Ursache war nicht der entfernte Schutz, sondern ein
+Aufruf ohne `THROTTLE_LIMIT=0`, an dem schon die Registrierung scheiterte.
+
+Zusätzlich geprüft, **nicht** per Mutationsprobe, sondern durch zwei eigene Tests: der
+zusammengesetzte Fremdschlüssel `tasks(projectId, organizationId) → projects(id, organizationId)`.
+Sie greifen bewusst **an der API vorbei** direkt auf Prisma zu – über die Endpoints lässt sich der
+Fehler gar nicht auslösen, weil der Service beide Werte aus derselben Quelle schreibt. Geprüft
+werden soll aber nicht der heutige Service, sondern das, was übrig bleibt, wenn ein künftiger es
+falsch macht. Dazu gehört die Gegenprobe mit passendem Mandanten: Ohne sie wäre der Test auch dann
+grün, wenn `task.create` aus einem ganz anderen Grund scheitert.
+
 ### Die Probe, die den Test überführt hat – nicht den Code
 
 Der Idempotenz-Test schickte in seiner ersten Fassung **fünf** Anfragen ohne `await` dazwischen. Er
@@ -379,6 +406,40 @@ Gegenprobe ohne den zweiten Index (in einer zurückgerollten Transaktion). Ergeb
 
 Und die ehrliche Einschränkung: Die absoluten Zeiten (0,235 ms gegen 0,082 ms) sagen bei 40.000
 Zeilen im Arbeitsspeicher **nichts**. Belastbar ist, wie viele Zeilen gelesen werden mussten.
+
+### `npm run erklaere:kalender`
+
+Legt **10 Organisationen mit je 8.000 Aufgaben** an (80.000 Zeilen, Fälligkeiten über drei Jahre
+gestreut) und liest den Plan der Kalenderabfrage für ein 92-Tage-Fenster – die Obergrenze aus dem
+Query-DTO, also den teuersten erlaubten Fall.
+
+Dieses Skript hat eine Entwurfsentscheidung **widerlegt**. Geplant war es als Beleg dafür, dass ein
+Index auf `dueDate` allein genügt und `tasks` keine eigene `organizationId` braucht.
+
+| Fassung | Zeit | Aus `tasks` gelesen | Puffer |
+|---|---|---|---|
+| Mandant über den Verbund, Index `(dueDate)` – der abgelöste Entwurf | 3,90 ms | **6.740** | 1239 |
+| Mandant auf `tasks`, Index `(organizationId, dueDate)` – heute | **0,91 ms** | **674** | 146 |
+| ohne Index auf `dueDate` | 8,57 ms | Seq Scan über 80.000 | 1234 |
+
+Alle drei liefern **dieselben 674 Zeilen**. Eine schnellere Abfrage, die etwas anderes zurückgibt,
+wäre keine Verbesserung, sondern ein Fehler – dieselbe Bedingung wie bei der N+1-Messung in
+Sprint 4.
+
+Beide Gegenproben laufen in einer **absichtlich scheiternden Transaktion**. DDL ist in PostgreSQL
+transaktional: `DROP INDEX` und `CREATE INDEX` innerhalb einer Transaktion, die zurückgerollt wird,
+hinterlassen nichts.
+
+**Warum zehn Organisationen und nicht eine.** Der Mandantenfilter kostet nur dann etwas, wenn es
+fremde Zeilen im selben Zeitraum überhaupt gibt. Bei einer einzigen Organisation wäre er gratis –
+und die Messung hätte die günstigste denkbare Lage gemessen statt der echten. Genau daran wäre der
+ursprüngliche Entwurf unbemerkt vorbeigekommen.
+
+**Was die Zahlen sagen und was nicht.** Die Zeiten sind bei 80.000 Zeilen im Arbeitsspeicher wieder
+das schwächere Argument. Belastbar ist die mittlere Spalte: Die alte Fassung liest die Aufgaben
+**aller** Mandanten im Zeitraum und wirft neun Zehntel im Verbund weg. Der Aufwand für den Kalender
+einer Organisation wächst damit mit der Datenmenge aller anderen – Kopplung über genau die Grenze
+hinweg, die Mandantentrennung ziehen soll. Ausführlich in ADR-021.
 
 ---
 

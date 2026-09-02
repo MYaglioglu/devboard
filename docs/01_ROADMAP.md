@@ -373,6 +373,51 @@ verbleibenden Betriebsscheiben 6.4, 6.5 und 6.7.
 
 ---
 
+## Sprint 8 – Kalender & Termine
+**ab 02.09.2026** · nachträglich aufgenommen
+
+Nicht in der ursprünglichen Roadmap. Aufgenommen, weil das Fälligkeitsdatum seit Sprint 3 in
+Datenbank, DTO und Service existiert und im Frontend **an keiner einzigen Stelle** setzbar oder
+sichtbar war – ein Feld, das nur in Tests vorkommt.
+
+**Kernthemen:** Zeitzonen (UTC in der Datenbank, Kalendertag beim Betrachter) · Bereichsabfragen und
+zusammengesetzte Indizes (Gleichheit vor Bereich) · denormalisierte Spalten, abgesichert durch einen
+zusammengesetzten Fremdschlüssel · reine Rechnung getrennt von der Anzeige (`monatsraster`).
+
+**Entschieden vor K.1:**
+
+- Der Kalender hängt an der **Organisation**, nicht an einem Projekt. Auf demselben Dienstag liegen
+  Aufgaben aus mehreren Projekten – das ist sein Zweck.
+- Der Zeitraum ist **halboffen** und **Pflicht**, höchstens 92 Tage breit.
+- `dueDate` bleibt ein **Zeitstempel mit Uhrzeit**, kein reines Datum. Ausdrücklich gewünscht;
+  der Preis ist, daß jede Ansicht die Zone des Betrachters selbst umrechnet.
+- Der Monatskalender wird **von Hand** gebaut, ohne Kalenderbibliothek. Das Monatsraster ist eine
+  reine Funktion und damit ohne React prüfbar – wie `positionen.ts` und `board-logik.ts`.
+
+**Definition of Done** – die Scheiben, jede einzeln mergebar:
+
+- [x] K.1 `GET …/calendar?von=&bis=` – Zeitraum-Prüfung, Mandantenfilter im `WHERE`, negative
+      Tests, Mutationsprobe, `EXPLAIN` (02.09.2026)
+- [x] K.1b Nachgezogen: `tasks.organizationId` mit zusammengesetztem Fremdschlüssel, nachdem die
+      Messung die Index-Entscheidung aus K.1 widerlegt hat – ADR-021 (02.09.2026)
+- [ ] K.2 Seite `/kalender`: `monatsraster()` als reine Funktion mit Tests, Termine in den Tagen
+- [ ] K.3 Klick auf einen Tag ⇒ Aufgabe anlegen: Projekt, Titel, Datum **mit Uhrzeit**,
+      **Zuständiger** – beide Felder gibt es im Backend seit Sprint 3 und im Frontend noch nicht
+- [ ] K.4 Termin per Drag auf einen anderen Tag ziehen, optimistisch mit Rollback
+- [ ] K.5 Wochenleiste über dem Feed auf dem Dashboard, filtert nach Datum
+- [ ] K.6 ADR zur Zeitzonen-Aufteilung, Doku, Interviewfragen, Handbuch
+
+**Der Fund aus K.1.** Die Index-Entscheidung wurde ausführlich begründet, ins Schema geschrieben –
+und von der eigenen Messung widerlegt. Die alte Fassung las 6.740 Zeilen, um 674 zu liefern, weil
+das Datumsfenster über **alle** Mandanten wählt. Protokolliert in `17_MISTAKES_AND_LESSONS.md`,
+entschieden in ADR-021.
+
+Der Umbau ist dabei besser geworden als beide ursprünglichen Varianten: Weil die Redundanz begründet
+werden mußte, kam die Frage auf, wer sie garantiert – und die Antwort ist ein zusammengesetzter
+Fremdschlüssel statt eines Versprechens im Service.
+
+---
+
 ## Nicht in dieser Roadmap
 
 Alles, was im Fernziel stand, aber bewusst nicht gebaut wird, steht mit Begründung in

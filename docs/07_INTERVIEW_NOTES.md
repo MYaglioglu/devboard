@@ -3512,3 +3512,154 @@ wie ein Besucher.
 Was der Schritt noch **nicht** tut, sage ich dazu: zurückrollen. Er meldet den Fehlschlag, die
 kaputte Fassung läuft weiter. Das ist die nächste Scheibe, und sie ist erst dadurch möglich, dass
 jedes Image unter seiner Commit-Kennung liegt.
+
+### 195. Sie haben in Sprint 4 die `organizationId` auf `activities` verdoppelt und in Sprint 8 dieselbe Frage bei `tasks` zuerst mit Nein beantwortet. Was war der Unterschied?
+
+Zunächst: Ich habe sie **falsch** beantwortet, und das ist der interessantere Teil.
+
+Mein Argument war, dass bei `activities` die **Unveränderlichkeit** die Redundanz trägt – eine
+Protokollzeile wird einmal geschrieben und nie angefasst, zwei Kopien können sich nicht
+auseinanderentwickeln. Eine Aufgabe dagegen wird ständig geändert. Das stimmt auch weiterhin.
+
+Das tragende Argument war aber ein anderes, und es war falsch: Ich hatte behauptet, die Selektivität
+liege beim Kalender am Datum und nicht am Mandanten – ein Fenster von 92 Tagen treffe über alle
+Mandanten hinweg wenige Zeilen.
+
+Der Ausführungsplan sagte das Gegenteil. Bei 80.000 Aufgaben in 10 Organisationen wählt das
+Datumsfenster **6.740** Zeilen, und erst der Verbund mit `projects` wirft neun Zehntel weg, um
+674 zu liefern. Mit der Spalte auf `tasks` sind es 674 gelesene Zeilen.
+
+Ich hatte die Selektivität im Kopf für **einen** Mandanten gerechnet statt für die Tabelle. Bei
+10 Mandanten ist das ein Faktor 10, bei 1.000 ein Faktor 1.000.
+
+### 196. Die Zeitdifferenz ist unter drei Millisekunden. Ist das nicht Mikrooptimierung?
+
+Die Zeit ist auch für mich das schwächere Argument – 0,91 ms gegen 3,90 ms bei 80.000 Zeilen im
+Arbeitsspeicher sagt wenig, weil dort nichts von der Platte kommt.
+
+Das Argument ist die mittlere Spalte der Messung: **wie viele Zeilen gelesen werden müssen**. In der
+alten Fassung wächst der Aufwand für den Kalender **einer** Organisation mit der Datenmenge **aller
+anderen**. Bei 1.000 Mandanten würden 674.000 Zeilen gelesen, um 674 zu liefern.
+
+Das ist Kopplung über genau die Grenze hinweg, die Mandantentrennung ziehen soll: Ein Kunde, der
+nichts tut, wird langsamer, weil ein anderer wächst. Das ist keine Frage von Millisekunden, sondern
+eine Eigenschaft, die man nicht haben will.
+
+### 197. Eine verdoppelte Spalte ist eine zweite Wahrheit. Wie stellen Sie sicher, dass beide gleich bleiben?
+
+Gar nicht – im Sinne von: nicht im Code. Die Datenbank tut es.
+
+`projects` hat ein zusätzliches `UNIQUE (id, organizationId)`, und `tasks` hat statt des
+einspaltigen Fremdschlüssels einen zusammengesetzten:
+
+```sql
+FOREIGN KEY ("projectId", "organizationId") REFERENCES projects (id, "organizationId")
+```
+
+Eine Aufgabe, deren Mandant nicht zu ihrem Projekt gehört, lässt sich damit nicht speichern. Die
+Übereinstimmung ist nicht unwahrscheinlich, sondern unmöglich.
+
+Der naheliegende Weg wäre gewesen, die Spalte im Service mitzuschreiben und sich darauf zu
+verlassen. Verworfen, weil die Richtigkeit dann an jeder künftigen Schreibstelle hängt – und die
+erste, die es vergisst, erzeugt eine Aufgabe, die im Kalender einer fremden Organisation auftaucht.
+Das ist dieselbe Sorte Fehler wie ein vergessener Mandantenfilter, nur eine Ebene tiefer.
+
+Das `UNIQUE` auf `projects` fügt fachlich übrigens nichts hinzu – `id` ist schon Primärschlüssel. Es
+erfüllt nur die Anforderung von PostgreSQL, dass ein Fremdschlüssel auf eine als eindeutig
+deklarierte Spaltenkombination zeigen muss.
+
+Geprüft wird das durch zwei Tests, die bewusst **an der API vorbei** direkt auf Prisma zugreifen.
+Über die Endpoints lässt sich der Fehler gar nicht auslösen, weil der Service beide Werte aus
+derselben Quelle schreibt – geprüft werden soll aber nicht der heutige Service, sondern das, was
+übrig bleibt, wenn ein künftiger es falsch macht.
+
+### 198. Warum steht `organizationId` im Index vor `dueDate` und nicht umgekehrt?
+
+Weil auf `organizationId` auf **Gleichheit** geprüft wird und auf `dueDate` auf einen **Bereich**.
+
+Ein zusammengesetzter Index ist sortiert wie ein Telefonbuch: erst nach der ersten Spalte, innerhalb
+gleicher Werte nach der zweiten. Hinter der ersten Bereichsbedingung kann er nichts mehr
+einschränken – die Einträge sind dort nicht mehr nach der nächsten Spalte geordnet.
+
+Stünde `dueDate` vorne, wäre der Mandant im Index wertlos: PostgreSQL läse alle Aufgaben aller
+Mandanten im Zeitraum und filterte danach. Genau die 6.740 Zeilen aus der Messung.
+
+Die Regel lautet also: **Gleichheit vor Bereich**, und ein zusammengesetzter Index hilft nur von
+links gelesen. Dieselbe Überlegung wie beim Board-Index `(projectId, status, position)`.
+
+### 199. Ihr Kalender-Endpoint verlangt beide Zeitgrenzen. Warum kein Vorgabewert für den aktuellen Monat?
+
+Weil ein Vorgabewert hier die **teuerste** Variante zur bequemsten machen würde. Wer den Parameter
+vergisst, bekäme trotzdem eine Antwort und merkte seinen Fehler nie.
+
+Der Vergleich, den ich dabei gern ziehe, ist `?limit=` beim Aktivitäts-Feed. Dort **ist** ein
+Vorgabewert richtig – er *begrenzt* die Arbeit. Hier würde er sie erst erzeugen. Dieselbe Technik,
+gegensätzliche Bewertung, und der Unterschied ist die Richtung.
+
+Aus demselben Grund gibt es eine Obergrenze von 92 Tagen: Ohne sie wäre
+`?von=0001-01-01&bis=9999-12-31` eine gültige Anfrage – ein Weg, mit einer Zeile Aufwand die ganze
+Aufgabentabelle des Mandanten zu lesen.
+
+### 200. Warum ist der Zeitraum halboffen?
+
+`von <= dueDate < bis`. Bei einem geschlossenen Ende müsste der September als `01.09. 00:00` bis
+`30.09. 23:59:59.999` angefragt werden, und ein Termin auf `23:59:59.9995` fiele durch das Raster.
+Fragt der Client stattdessen bis `01.10. 00:00`, erscheint ein Termin um Mitternacht in **zwei**
+Monaten.
+
+Halboffen stossen zwei aufeinanderfolgende Monate exakt aneinander – ohne Lücke und ohne
+Überlappung. Derselbe Grund, aus dem `slice(0, 3)` das dritte Element auslässt.
+
+Der Test dazu prüft **die Grenzen selbst**, nicht Werte in ihrer Nähe: ein Termin genau auf
+`01.09. 00:00:00.000` und einer genau auf `01.10. 00:00:00.000`, und beide Monate werden abgefragt.
+Ohne die zweite Hälfte wäre eine Umsetzung grün, die das Ende einfach verschluckt.
+
+### 201. Ihre Mutationsprobe hat sieben Tests rot gemacht, nicht einen. Ist das nicht zu breit?
+
+Es wäre verdächtig, wenn ich es nicht **vorher** aufgeschrieben hätte.
+
+Die Suite teilt sich eine Datenbank. Ohne Mandantenfilter sieht also jeder Test fremde Termine – und
+rot werden damit alle, die eine **exakte** Liste erwarten und nach einem anderen Test laufen, der
+einen Termin im selben Zeitraum angelegt hat. Grün bleiben mussten: der erste Test der Suite, die
+drei Prüfungen des Zeitraums (sie greifen vor der Abfrage) und der 404-Test (den erledigt der Guard,
+nicht der Filter).
+
+Vorhergesagt: sieben rot, fünf grün, namentlich. Genau das trat ein – und nach dem Umbau auf die
+eigene Spalte noch einmal dieselben sieben.
+
+Warum ich darauf bestehe: Beim ersten Anlauf waren **12 von 12** rot. Ursache war nicht der
+entfernte Schutz, sondern ein Aufruf ohne `THROTTLE_LIMIT=0`, an dem schon die Registrierung
+scheiterte. Ohne vorher festgelegte Erwartung wäre das als „der Schutz wirkt sehr breit"
+durchgegangen – und die Probe hätte nichts bewiesen.
+
+### 202. Warum rechnet Ihr Server keine Zeitzonen um?
+
+Weil er die Zone des Betrachters nicht kennt und sie sonst raten müsste.
+
+Der Server bekommt zwei Zeitpunkte, vergleicht sie mit einem gespeicherten Zeitpunkt, und alle drei
+sind UTC – der Vergleich ist eindeutig. Welcher **Kalendertag** das ist, ist dagegen eine Frage der
+Zone: Eine Aufgabe, fällig am 01.09. um 00:30 Uhr in Berlin, steht in der Datenbank als 31.08.
+22:30 UTC.
+
+Das Frontend kennt die Zone und rechnet sie um: Ein Berliner September wird als
+`von=2026-08-31T22:00:00Z` angefragt. Sobald der Server anfinge, „den 15." selbst auszurechnen,
+hätte er eine Zone festgeschrieben – und die erste Nutzerin ausserhalb davon sähe ihre Termine am
+falschen Tag.
+
+### 203. Sie haben eine Migration von Hand geschrieben, statt sie erzeugen zu lassen. Warum?
+
+Weil die erzeugte Fassung auf der Produktion gescheitert wäre.
+
+`prisma migrate diff` macht aus der neuen Pflichtspalte:
+
+```sql
+ALTER TABLE "tasks" ADD COLUMN "organizationId" UUID NOT NULL;
+```
+
+Das läuft auf einer leeren Tabelle. Auf jeder Datenbank mit Bestand schlägt es fehl, weil die
+vorhandenen Zeilen keinen Wert hätten – und meine Entwicklungsdatenbank war zufällig genau der
+Fall, in dem es funktioniert.
+
+Von Hand in drei Schritten: nullbar anlegen, aus dem Projekt füllen, erst dann `SET NOT NULL`. Das
+ist das Standardmuster für eine Pflichtspalte auf Bestandsdaten – und der häufigste Weg, wie ein
+Deployment an einer Migration stirbt, die lokal grün war.
