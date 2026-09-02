@@ -894,3 +894,122 @@ kann man nicht versehentlich treffen.
 - **Zu beachten:** Der Nutzer hängt **nicht** per Cascade an der Organisation. Beide Löschungen
   gehören deshalb in eine Transaktion – sonst blieben Waisenkonten zurück, die durch nichts mehr
   auffindbar wären.
+
+---
+
+## ADR-021: Der Mandant wird auf `tasks` verdoppelt – abgesichert durch einen zusammengesetzten Fremdschlüssel
+
+**Status:** Angenommen (02.09.2026) · **Ersetzt** die Begründung in ADR-009 zum Mandantenfilter auf
+Aufgaben
+
+### Kontext
+Seit Sprint 3 gilt für Aufgaben: `tasks` hat **keine** eigene `organizationId`. Der Mandant hängt am
+Projekt und wird über `project: { organizationId }` in die `WHERE`-Bedingung gezogen. Die
+Begründung stand im Schema und war ausdrücklich formuliert: keine zweite Wahrheit im
+Sicherheitsfilter.
+
+Für alle bisherigen Abfragen trägt das, weil sie ohnehin **ein** Projekt betreffen – das Board lädt
+`WHERE projectId = ?`, und der Mandant ist dabei eine Zusatzbedingung auf einer bereits winzigen
+Menge.
+
+Der Kalender ist die erste Abfrage, die das nicht tut. Er fragt **über alle Projekte einer
+Organisation hinweg**: „alle Aufgaben mit Fälligkeit zwischen X und Y". Damit ist der Mandant nicht
+mehr Zusatzbedingung, sondern der eigentliche Filter – und er steht auf einer anderen Tabelle.
+
+PostgreSQL kann keinen Index über Spalten zweier Tabellen anlegen. Dieselbe Lage wie bei
+`activities` in Sprint 4, wo die Antwort **Verdopplung** lautete (ADR-011).
+
+### Die zuerst getroffene, falsche Entscheidung
+Beim Bau von K.1 wurde gegen die Verdopplung entschieden, mit drei Argumenten:
+
+1. Bei `activities` trage die **Unveränderlichkeit** der Zeile die Redundanz; eine Aufgabe werde
+   dagegen ständig geändert.
+2. `tasks` wachse mit der Arbeit eines Teams, `activities` unbegrenzt.
+3. Die **Selektivität liege am Datum**, nicht am Mandanten – ein Fenster von 92 Tagen treffe über
+   alle Mandanten hinweg wenige Zeilen.
+
+Argument 3 war falsch, und es war das tragende. Die Messung (`npm run erklaere:kalender`,
+80.000 Aufgaben, 10 Organisationen, 92-Tage-Fenster) zeigt:
+
+| Fassung | Zeit | Aus `tasks` gelesen | Puffer |
+|---|---|---|---|
+| Mandant über den Verbund, Index `(dueDate)` | 3,90 ms | **6.740** | 1239 |
+| Mandant auf `tasks`, Index `(organizationId, dueDate)` | **0,91 ms** | **674** | 146 |
+| ohne Index auf `dueDate` | 8,57 ms | Seq Scan über 80.000 | 1234 |
+
+Das Datumsfenster wählt die Aufgaben **aller** Mandanten. Erst der Verbund mit `projects` wirft
+neun Zehntel davon weg.
+
+### Entscheidung
+`tasks` bekommt eine eigene `organizationId` (`NOT NULL`) und einen Index
+`(organizationId, dueDate)` in **dieser** Reihenfolge – Gleichheit vor Bereich, weil ein
+zusammengesetzter Index hinter der ersten Bereichsbedingung nichts mehr einschränken kann.
+
+Die Kopie wird **nicht** vom Anwendungscode garantiert, sondern von der Datenbank: ein
+zusammengesetzter Fremdschlüssel
+
+```sql
+tasks(projectId, organizationId) → projects(id, organizationId)
+```
+
+gegen ein zusätzliches `UNIQUE (id, organizationId)` auf `projects`. Eine Aufgabe, deren Mandant
+nicht zu ihrem Projekt gehört, lässt sich damit nicht speichern.
+
+### Warum die Zeit das schwächere Argument ist
+0,91 ms gegen 3,90 ms ist bei 80.000 Zeilen im Arbeitsspeicher nicht der Punkt – beide sind
+schnell genug, und absolute Zeiten auf Testdaten sagen wenig (dieselbe Einschränkung wie bei
+`erklaere:feed`).
+
+Belastbar ist die **Zahl der gelesenen Zeilen**, und daraus folgt das eigentliche Argument: In der
+alten Fassung wächst der Aufwand für den Kalender **einer** Organisation mit der Datenmenge **aller
+anderen**. Bei 1.000 Mandanten würden 674.000 Zeilen gelesen, um 674 zu liefern.
+
+Das ist Kopplung über genau die Grenze hinweg, die Mandantentrennung ziehen soll. Ein Kunde, der
+nichts tut, wird langsamer, weil ein anderer wächst.
+
+### Warum die Redundanz hier ungefährlich ist – aus einem anderen Grund als bei `activities`
+Bei `Activity.organizationId` trägt die **Unveränderlichkeit der Zeile**: Sie wird einmal
+geschrieben und nie angefasst, zwei Kopien können sich nicht auseinanderentwickeln.
+
+Für eine Aufgabe gilt das nicht – sie wird ständig geändert. Was hier trägt, ist die
+**Unveränderlichkeit der Beziehung**:
+
+- Ein Projekt wechselt seine Organisation nie (so schon im Schema seit Sprint 3 festgehalten).
+- Es gibt keinen Weg, eine Aufgabe in ein anderes Projekt zu verschieben.
+
+Darauf **verlassen** müssen wir uns aber nicht, und das ist der Kern dieser ADR: Der zusammengesetzte
+Fremdschlüssel macht die Übereinstimmung nicht unwahrscheinlich, sondern unmöglich.
+
+### Verworfene Alternativen
+**`organizationId` im Service mitschreiben und darauf vertrauen.** Der billige Weg. Verworfen, weil
+die Richtigkeit damit an jeder künftigen Schreibstelle hängt – und die erste, die es vergisst,
+erzeugt eine Aufgabe, die im Kalender einer fremden Organisation auftaucht. Das ist dieselbe Sorte
+Fehler wie der vergessene Mandantenfilter aus Sprint 2, nur eine Ebene tiefer und ohne Test, der
+zwangsläufig darauf stößt.
+
+**Ein Datenbank-Trigger, der die Spalte füllt.** Erzwingt die Richtigkeit ebenfalls, aber an einer
+Stelle, die im Code unsichtbar ist. Ein Fremdschlüssel steht im Schema und erscheint in jeder
+Schema-Ansicht; ein Trigger ist Verhalten, das man kennen muss.
+
+**Eine materialisierte Sicht für den Kalender.** Löst dasselbe Problem, kostet eine zweite
+Datenhaltung mit Aktualisierungsfrage – und bei Terminen, die sich beim Tippen ändern, wäre eine
+verzögerte Sicht falsch. Verhältnis von Aufwand zu Gewinn stimmt nicht.
+
+**Bei der alten Fassung bleiben und die Zahlen dokumentieren.** Ehrlich und billig, war eine der
+angebotenen Optionen. Verworfen, weil die mandantenübergreifende Kopplung bestehen bliebe – und
+weil sie in einem Gespräch zu verteidigen wäre, obwohl die Messung daneben liegt.
+
+### Konsequenzen
+- **Positiv:** Der Kalender liest nur noch die Zeilen, die er liefert. Die Laufzeit hängt nicht mehr
+  von fremden Mandanten ab.
+- **Positiv:** Eine falsche Mandanten-ID auf einer Aufgabe ist strukturell ausgeschlossen, nicht nur
+  ungetestet unwahrscheinlich.
+- **Negativ:** Eine redundante Spalte im Datenmodell und ein `UNIQUE` auf `projects`, das fachlich
+  nichts bedeutet und nur den Fremdschlüssel ermöglicht.
+- **Negativ:** Jede Schreibstelle für Aufgaben muss die Spalte setzen. Der Compiler erzwingt das
+  (`NOT NULL`), und beim Umbau hat er genau die zwei vorhandenen Stellen gemeldet – aber es ist ein
+  Schritt mehr.
+- **Zu beachten:** Ein Projekt in eine andere Organisation zu verschieben wäre jetzt eine Migration
+  statt eines `UPDATE`. Das ist ohnehin ausgeschlossen, aber es ist eine Tür, die zugeht.
+- **Zu beachten:** Der abgelöste Index bleibt als eigene Migration in der Historie stehen. Die
+  Fehlentscheidung wird ersetzt, nicht überschrieben – wie eine abgelöste ADR.

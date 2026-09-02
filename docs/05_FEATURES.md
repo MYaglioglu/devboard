@@ -42,7 +42,7 @@ Mandanten gäbe es noch nichts, worauf sich eine Rolle beziehen könnte.
 ## F3 – Projekte, Tasks & Kanban-Board *(Sprint 3 – abgeschlossen am 13.08.2026)*
 
 - [x] CRUD für Projekte innerhalb einer Organisation
-- [x] CRUD für Tasks mit Status, Beschreibung, Zuweisung, Fälligkeitsdatum
+- [x] CRUD für Tasks mit Status, Beschreibung, Zuweisung, Fälligkeitsdatum *(siehe Korrektur unten)*
 - [x] Kanban-Board mit Spalten und Drag & Drop
 - [x] Reihenfolge und Spaltenwechsel werden persistiert
 - [x] Gleichzeitiges Verschieben durch zwei Nutzer führt nicht zu Datenverlust
@@ -56,6 +56,15 @@ Mandanten gäbe es noch nichts, worauf sich eine Rolle beziehen könnte.
 - Archivierte Projekte bleiben lesbar, nehmen aber keine neuen Aufgaben mehr auf
 - Neuverteilung der Sortierpositionen, wenn die Genauigkeit von `numeric(65,30)` erschöpft ist
 - Das Board ist mit der Tastatur bedienbar, nicht nur mit der Maus
+
+> **Korrektur (02.09.2026).** Der zweite Haken war für das **Backend** richtig und für das
+> **Frontend** falsch. `assigneeId` und `dueDate` gibt es seit Sprint 3 in Datenbank, DTO und
+> Service samt Tests – aber es gab im Frontend nie ein Feld, um sie zu setzen. Die Karte *zeigt*
+> den Zuständigen an, das Fälligkeitsdatum kam ausschließlich in Tests vor.
+>
+> Aufgefallen ist das erst, als der Kalender danach fragte. Beides wird in F8 nachgezogen. Das ist
+> die Sorte Lücke, die eine grüne Testsuite nicht findet: Jede Schicht war für sich geprüft,
+> niemand hat gefragt, ob sie zusammen einen benutzbaren Weg ergeben.
 
 ## F4 – Dashboard & Aktivitäts-Feed *(Sprint 4)*
 
@@ -83,3 +92,16 @@ Mandanten gäbe es noch nichts, worauf sich eine Rolle beziehen könnte.
 - [ ] GitHub Actions grün vor jedem Merge
 - [ ] Staging-Umgebung vor Produktion
 - [ ] Dokumentation im selben Sprint aktualisiert, nicht nachträglich
+
+## F8 – Kalender & Termine *(Sprint 8 – in Arbeit)*
+
+- [x] `GET …/calendar` – Termine einer Organisation in einem Zeitraum, über alle Projekte hinweg
+- [ ] Monatskalender auf einer eigenen Seite, Termine in den Tagen
+- [ ] Klick auf einen Tag legt eine Aufgabe an – Projekt, Titel, Datum **mit Uhrzeit**, Zuständiger
+- [ ] Termin per Drag auf einen anderen Tag verschieben
+- [ ] Wochenleiste über dem Aktivitäts-Feed, filtert nach Datum
+
+**Über den Umfang hinaus umgesetzt:**
+
+- `tasks.organizationId` mit zusammengesetztem Fremdschlüssel auf `projects(id, organizationId)` –
+  nachgezogen, nachdem die eigene Messung die Index-Entscheidung widerlegt hat (ADR-021)
