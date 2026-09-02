@@ -291,6 +291,38 @@ model Task {
   /// Mitglieds. Ohne diesen Index muesste PostgreSQL fuer jedes entfernte
   /// Mitglied die gesamte Task-Tabelle lesen, um SetNull anzuwenden.
   @@index([assigneeId])
+  /// ==========================================================================
+  /// DER KALENDER-INDEX - UND WARUM ER NUR EINE SPALTE HAT
+  /// ==========================================================================
+  /// Die Kalenderabfrage lautet: "alle Aufgaben DIESER Organisation mit
+  /// dueDate zwischen X und Y". Der erste Teil steht aber gar nicht auf dieser
+  /// Tabelle - `tasks` hat keine `organizationId`, der Mandant haengt am
+  /// Projekt.
+  ///
+  /// Damit steht dieselbe Frage wie bei `activities` in Sprint 4: Spalte
+  /// verdoppeln, damit ein zusammengesetzter Index moeglich wird? Dort war die
+  /// Antwort JA, hier ist sie NEIN - und der Unterschied ist begruendbar:
+  ///
+  ///   1. UNVERAENDERLICHKEIT. Was die Redundanz bei `activities` vertretbar
+  ///      macht, ist, dass eine Zeile EINMAL geschrieben und nie wieder
+  ///      angefasst wird; zwei Kopien koennen sich nicht auseinanderentwickeln.
+  ///      Eine Aufgabe dagegen wird staendig geaendert. Genau die Bedingung,
+  ///      die dort traegt, fehlt hier.
+  ///
+  ///   2. DIE MENGE. `activities` waechst unbegrenzt und wird nie geloescht.
+  ///      `tasks` waechst mit der Arbeit eines Teams - Groessenordnungen
+  ///      weniger Zeilen.
+  ///
+  ///   3. DIE SELEKTIVITAET LIEGT AM DATUM, NICHT AM MANDANTEN. Der Zeitraum
+  ///      ist auf 92 Tage begrenzt (siehe kalender-query.dto.ts). Ein Fenster
+  ///      von drei Monaten trifft ueber ALLE Mandanten hinweg wenige Zeilen;
+  ///      der anschliessende Verbund mit `projects` filtert den Rest weg.
+  ///
+  /// Belegt statt behauptet: Der Ausfuehrungsplan steht in 12_TESTING.md.
+  /// Sollte er das Gegenteil zeigen, ist die Gegenmassnahme bekannt - dann
+  /// bekommt `tasks` doch eine `organizationId`, und diese Begruendung wird
+  /// durch die Messung ersetzt.
+  @@index([dueDate])
   @@map("tasks")
 }
 
