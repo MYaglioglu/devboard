@@ -397,6 +397,62 @@ describe('Kalender (e2e)', () => {
     });
   });
 
+  /**
+   * ==========================================================================
+   * DIE ZUSICHERUNG DES SCHEMAS, GEPRUEFT STATT ANGENOMMEN
+   * ==========================================================================
+   * `tasks.organizationId` ist eine Kopie aus `projects`. Was sie ungefaehrlich
+   * macht, ist nicht die Sorgfalt des Codes, sondern der zusammengesetzte
+   * Fremdschluessel auf `projects(id, organizationId)`.
+   *
+   * Dieser Test greift deshalb bewusst AN DER API VORBEI direkt auf Prisma zu.
+   * Ueber die API laesst sich der Fehler gar nicht ausloesen - der Service
+   * schreibt beide Werte aus derselben Quelle. Geprueft werden soll aber nicht
+   * der Service, sondern das, was uebrig bleibt, wenn ein kuenftiger Service
+   * es falsch macht.
+   */
+  describe('Zusammengesetzter Fremdschluessel', () => {
+    it('verweigert eine Aufgabe, deren Mandant nicht zu ihrem Projekt gehoert', async () => {
+      const fremd = await baueAufbau('fk-a');
+      const eigen = await baueAufbau('fk-b');
+
+      await expect(
+        prisma.task.create({
+          data: {
+            projectId: fremd.projektId,
+            // Die Luege: Das Projekt gehoert zu `fremd`, hier steht `eigen`.
+            // Ohne den Fremdschluessel entstuende damit eine Aufgabe, die im
+            // Kalender einer fremden Organisation auftaucht - genau der
+            // Mandanten-Leck-Fall, nur ueber die Datenschicht statt ueber
+            // einen vergessenen Filter.
+            organizationId: eigen.orgId,
+            title: 'Darf nicht entstehen',
+            position: 1000,
+          },
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('nimmt dieselbe Aufgabe an, wenn der Mandant passt', async () => {
+      const { orgId, projektId } = await baueAufbau('fk-ok');
+
+      // Die Gegenprobe. Ohne sie wuerde der Test oben auch dann gruen sein,
+      // wenn `task.create` aus einem voellig anderen Grund scheitert - etwa
+      // weil ein Pflichtfeld fehlt.
+      const aufgabe = await prisma.task.create({
+        data: {
+          projectId: projektId,
+          organizationId: orgId,
+          title: 'Darf entstehen',
+          position: 1000,
+        },
+        select: { id: true },
+      });
+
+      expect(aufgabe.id).toBeDefined();
+    });
+  });
+
   describe('Zeitraum-Pruefung', () => {
     it('weist eine Anfrage ohne Zeitraum ab', async () => {
       const { orgId, ownerToken } = await baueAufbau('kein-zeitraum');

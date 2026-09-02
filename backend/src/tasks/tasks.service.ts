@@ -222,6 +222,16 @@ export class TasksService {
       const zeile = await tx.task.create({
         data: {
           projectId: projektId,
+          // Der Mandant wird MITGESCHRIEBEN, nicht vom Projekt geerbt - seit
+          // dem 02.09.2026 steht er auch auf `tasks` (Begruendung und Messung
+          // in schema.prisma). `organizationId` ist hier nicht geraten: Es ist
+          // derselbe Wert, gegen den das Projekt oben in dieser Transaktion
+          // geprueft wurde.
+          //
+          // Verschreiben kann man sich dabei nicht - der zusammengesetzte
+          // Fremdschluessel auf `projects(id, organizationId)` weist eine
+          // Aufgabe ab, deren Mandant nicht zu ihrem Projekt passt.
+          organizationId,
           title: daten.title,
           description: daten.description,
           status: daten.status,

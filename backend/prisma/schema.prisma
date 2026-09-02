@@ -165,6 +165,20 @@ model Project {
   /// gibt - anders als bei Membership, wo doppelte Zeilen die Rolle
   /// mehrdeutig machen wuerden.
   @@index([organizationId])
+  /// ==========================================================================
+  /// DAS ZIEL DES ZUSAMMENGESETZTEN FREMDSCHLUESSELS VON `tasks`
+  /// ==========================================================================
+  /// `id` ist bereits Primaerschluessel und damit eindeutig - dieses UNIQUE
+  /// fuegt fachlich nichts hinzu. Es ist reine Technik: PostgreSQL verlangt,
+  /// dass ein Fremdschluessel auf eine Spaltenkombination zeigt, die als
+  /// EINDEUTIG deklariert ist. Ohne diese Zeile laesst sich der Schluessel
+  /// `tasks(projectId, organizationId) -> projects(id, organizationId)` nicht
+  /// anlegen.
+  ///
+  /// Der Gewinn steht drueben bei `Task.organizationId`: Er macht die
+  /// verdoppelte Mandanten-ID nicht nur unwahrscheinlich falsch, sondern
+  /// unmoeglich falsch.
+  @@unique([id, organizationId])
   @@map("projects")
 }
 
@@ -198,8 +212,63 @@ enum TaskStatus {
 model Task {
   id String @id @default(uuid()) @db.Uuid
 
-  projectId String  @db.Uuid
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String @db.Uuid
+
+  /// ==========================================================================
+  /// DER MANDANT - VERDOPPELT, UND WARUM DAS HIER RICHTIG IST
+  /// ==========================================================================
+  /// Bis zum 02.09.2026 stand an dieser Stelle das Gegenteil: `tasks` habe
+  /// bewusst KEINE eigene `organizationId`, der Mandant werde ueber
+  /// `project.organizationId` geerbt, alles andere waere eine zweite Wahrheit.
+  ///
+  /// Das war als Begruendung richtig gedacht und als Entscheidung falsch. Die
+  /// Kalenderabfrage ("alle Termine dieser Organisation zwischen X und Y") hat
+  /// sie widerlegt, und zwar gemessen statt behauptet - der vollstaendige
+  /// Ausfuehrungsplan steht in 12_TESTING.md:
+  ///
+  ///   ohne diese Spalte      3,19 ms   1239 Puffer   6740 gelesene Zeilen
+  ///   mit dieser Spalte      0,95 ms    146 Puffer    674 gelesene Zeilen
+  ///
+  /// Die Zeit ist dabei das schwaechere Argument. Das starke ist die ZAHL DER
+  /// GELESENEN ZEILEN: Ohne die Spalte waehlt das Datumsfenster zuerst alle
+  /// Aufgaben ALLER Mandanten in diesem Zeitraum, und erst der Verbund mit
+  /// `projects` wirft 90 Prozent davon weg. Der Kalender einer Organisation
+  /// wird also langsamer, wenn FREMDE Organisationen wachsen - eine Kopplung
+  /// ueber genau die Grenze hinweg, die Mandantentrennung ziehen soll.
+  ///
+  /// Warum die Redundanz hier ungefaehrlich ist - und zwar aus einem anderen
+  /// Grund als bei `Activity.organizationId`: Dort traegt die
+  /// Unveraenderlichkeit der ZEILE. Eine Aufgabe dagegen wird staendig
+  /// geaendert. Was hier traegt, ist die Unveraenderlichkeit der BEZIEHUNG:
+  /// Ein Projekt wechselt seine Organisation nie (siehe oben bei `Project`),
+  /// und es gibt keinen Weg, eine Aufgabe in ein anderes Projekt zu
+  /// verschieben.
+  ///
+  /// Darauf verlassen muessen wir uns trotzdem nicht - siehe die Beziehung
+  /// unten.
+  organizationId String @db.Uuid
+
+  /// ==========================================================================
+  /// DER ZUSAMMENGESETZTE FREMDSCHLUESSEL - DIE DATENBANK ERZWINGT DIE KOPIE
+  /// ==========================================================================
+  /// Der naheliegende Weg waere gewesen, `organizationId` beim Anlegen im
+  /// Service mitzuschreiben und sich darauf zu verlassen. Damit haenge die
+  /// Richtigkeit an jeder kuenftigen Schreibstelle - und die erste, die es
+  /// vergisst, erzeugt eine Aufgabe, die in einem fremden Kalender auftaucht.
+  /// Das ist dieselbe Sorte Fehler wie der vergessene Mandantenfilter, nur
+  /// eine Ebene tiefer.
+  ///
+  /// Stattdessen zeigt der Schluessel auf BEIDE Spalten von `projects`. Eine
+  /// Zeile mit einer `organizationId`, die nicht zu ihrem Projekt passt, laesst
+  /// sich damit nicht speichern - die Datenbank weist sie ab. Die Redundanz
+  /// ist nicht mehr eine Zusage des Codes, sondern eine Zusicherung des
+  /// Schemas.
+  ///
+  /// Preis: `projects` braucht dafuer ein zusaetzliches UNIQUE (siehe dort),
+  /// und ein Umzug eines Projekts in eine andere Organisation waere jetzt eine
+  /// Migration statt eines UPDATE. Beides ist der Preis wert - Letzteres ist
+  /// ohnehin ausgeschlossen.
+  project Project @relation(fields: [projectId, organizationId], references: [id, organizationId], onDelete: Cascade)
 
   title       String
   description String?
@@ -292,37 +361,25 @@ model Task {
   /// Mitglied die gesamte Task-Tabelle lesen, um SetNull anzuwenden.
   @@index([assigneeId])
   /// ==========================================================================
-  /// DER KALENDER-INDEX - UND WARUM ER NUR EINE SPALTE HAT
+  /// DER KALENDER-INDEX
   /// ==========================================================================
-  /// Die Kalenderabfrage lautet: "alle Aufgaben DIESER Organisation mit
-  /// dueDate zwischen X und Y". Der erste Teil steht aber gar nicht auf dieser
-  /// Tabelle - `tasks` hat keine `organizationId`, der Mandant haengt am
-  /// Projekt.
+  /// Genau die Kalenderabfrage: Mandant gleich, Faelligkeit in einem Bereich,
+  /// Ergebnis nach Faelligkeit sortiert.
   ///
-  /// Damit steht dieselbe Frage wie bei `activities` in Sprint 4: Spalte
-  /// verdoppeln, damit ein zusammengesetzter Index moeglich wird? Dort war die
-  /// Antwort JA, hier ist sie NEIN - und der Unterschied ist begruendbar:
+  /// Die Reihenfolge der Spalten ist nicht beliebig. `organizationId` steht
+  /// vorne, weil darauf auf GLEICHHEIT geprueft wird; `dueDate` hinten, weil
+  /// es ein BEREICH ist. Ein zusammengesetzter Index kann hinter der ersten
+  /// Bereichsbedingung nichts mehr einschraenken - stuende `dueDate` vorne,
+  /// waere der Mandant im Index wertlos und die Abfrage laege wieder bei den
+  /// 6740 Zeilen aus der Messung.
   ///
-  ///   1. UNVERAENDERLICHKEIT. Was die Redundanz bei `activities` vertretbar
-  ///      macht, ist, dass eine Zeile EINMAL geschrieben und nie wieder
-  ///      angefasst wird; zwei Kopien koennen sich nicht auseinanderentwickeln.
-  ///      Eine Aufgabe dagegen wird staendig geaendert. Genau die Bedingung,
-  ///      die dort traegt, fehlt hier.
+  /// Dieselbe Regel wie beim Board-Index darueber: Ein zusammengesetzter Index
+  /// hilft nur von LINKS gelesen, und Gleichheit gehoert vor Bereich.
   ///
-  ///   2. DIE MENGE. `activities` waechst unbegrenzt und wird nie geloescht.
-  ///      `tasks` waechst mit der Arbeit eines Teams - Groessenordnungen
-  ///      weniger Zeilen.
-  ///
-  ///   3. DIE SELEKTIVITAET LIEGT AM DATUM, NICHT AM MANDANTEN. Der Zeitraum
-  ///      ist auf 92 Tage begrenzt (siehe kalender-query.dto.ts). Ein Fenster
-  ///      von drei Monaten trifft ueber ALLE Mandanten hinweg wenige Zeilen;
-  ///      der anschliessende Verbund mit `projects` filtert den Rest weg.
-  ///
-  /// Belegt statt behauptet: Der Ausfuehrungsplan steht in 12_TESTING.md.
-  /// Sollte er das Gegenteil zeigen, ist die Gegenmassnahme bekannt - dann
-  /// bekommt `tasks` doch eine `organizationId`, und diese Begruendung wird
-  /// durch die Messung ersetzt.
-  @@index([dueDate])
+  /// Der Vorgaenger dieses Index stand auf `dueDate` allein und war eine
+  /// Fehlentscheidung; die Zahlen dazu stehen oben bei `organizationId` und
+  /// vollstaendig in 12_TESTING.md.
+  @@index([organizationId, dueDate])
   @@map("tasks")
 }
 
