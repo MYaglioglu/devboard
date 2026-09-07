@@ -1,6 +1,14 @@
 # Architektur
 
-Stand: Sprint 0. Wächst mit jedem Sprint.
+Stand: Sprint 8 (Kalender, Scheibe K.1). Sprints 0–5 abgeschlossen, 6 und 7 teilweise.
+
+Dieses Kapitel beschreibt das **Gesamtbild über beide Anwendungen** – wie Frontend und Backend
+zueinander stehen, welche Prinzipien in beiden gelten und wo die Mandantengrenze verläuft.
+
+Die Tiefe je Seite steht daneben:
+
+- **`19_BACKEND.md`** – Ordnerkarte des Backends, der Weg einer Anfrage, die wiederkehrenden Muster
+- **`18_FRONTEND.md`** – Aufbau des Frontends, dazu die Gegenüberstellung mit Angular
 
 ---
 
@@ -161,13 +169,13 @@ ist eine Variable nur serverseitig sichtbar.
 ## Backend – Schichten
 
 ```
-Controller   nimmt HTTP entgegen, validiert Eingaben, gibt Antworten zurück
-    │        kennt HTTP, kennt keine Fachlogik
+Controller     nimmt HTTP entgegen, validiert Eingaben, gibt Antworten zurück
+    │          kennt HTTP, kennt keine Fachlogik
     ▼
-Service      enthält die Fachlogik
-    │        kennt kein HTTP
+Service        enthält die Fachlogik
+    │          kennt kein HTTP
     ▼
-Repository   Datenzugriff (über Prisma)
+PrismaService  Datenzugriff
     │
     ▼
 Datenbank
@@ -178,6 +186,19 @@ Die Logik liegt im Service – dadurch ist sie auch aus einem Cronjob, einem Que
 Unit-Test heraus aufrufbar. Ein Service, der `request` und `response` kennt, kann das nicht.
 
 Die Abhängigkeiten zeigen **nur nach unten**. Ein Service darf keinen Controller aufrufen.
+
+**Bewusst keine eigene Repository-Schicht.** Der Service spricht direkt mit `PrismaService`. Eine
+Zwischenschicht wäre hier eine Hülle um eine Hülle: Prisma ist bereits die Abstraktion über SQL, und
+ein `TaskRepository`, das nur `prisma.task.findMany` weiterreicht, kostet eine Datei und kauft
+nichts. Der Preis dieser Entscheidung ist bekannt und wird bewusst getragen: Ein Wechsel des ORM
+würde jeden Service anfassen. Bei einem Projekt dieser Größe ist das der günstigere Handel –
+dokumentiert, damit die Frage im Gespräch nicht als Versäumnis erscheint.
+
+Die Ausnahme, die die Regel schärft: Wo eine Trennung tatsächlich etwas verhindert, gibt es sie.
+`ActivitiesService` (Schreiben) und `ActivityFeedService` (Lesen) sind zwei Klassen, weil der
+Schreiber **keinen eigenen `PrismaService` haben soll** – so kann er nur in der Transaktion seines
+Aufrufers arbeiten. Eine Schicht, die etwas unmöglich macht, verdient ihren Preis; eine, die nur
+weiterreicht, nicht.
 
 ---
 
@@ -212,14 +233,25 @@ Nicht nach technischen Schichten gruppieren, sondern nach Fachlichkeit:
 backend/src/
   main.ts                  Composition Root
   app.module.ts            Wurzelmodul, hängt Feature-Module ein
+
   config/                  Umgebungsvariablen + Validierung (Zod)
-  health/                  health.module.ts, health.controller.ts
+  common/                  Fehlerfilter, Validierungs-Pipe
+  prisma/                  PrismaService (globales Modul)
+  health/                  Sprint 0
+
   auth/                    Sprint 1
   organizations/           Sprint 2
   projects/                Sprint 3
-  tasks/                   Sprint 3
-  prisma/                  PrismaService (globales Modul)
+  tasks/                   Sprint 3, Kalender-Abfrage in Sprint 8
+  activities/              Sprint 4
+  dashboard/               Sprint 4
+  webhooks/                Sprint 5
+
+  generated/               Prisma-Client, erzeugt – nicht von Hand pflegen
 ```
+
+Was in welcher Datei steht und welche Funktionen darin die wichtigen sind, steht in
+**`19_BACKEND.md`**.
 
 **Warum nicht `controllers/`, `services/`, `repositories/`?** Weil bei einer Änderung an „Tasks"
 dann drei entfernte Ordner angefasst werden. Bei feature-basierter Gliederung liegt alles zu einem
