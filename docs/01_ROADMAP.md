@@ -400,12 +400,19 @@ zusammengesetzten Fremdschlüssel · reine Rechnung getrennt von der Anzeige (`m
       Tests, Mutationsprobe, `EXPLAIN` (02.09.2026)
 - [x] K.1b Nachgezogen: `tasks.organizationId` mit zusammengesetztem Fremdschlüssel, nachdem die
       Messung die Index-Entscheidung aus K.1 widerlegt hat – ADR-021 (02.09.2026)
-- [ ] K.2 Seite `/kalender`: `monatsraster()` als reine Funktion mit Tests, Termine in den Tagen
+- [x] K.2 Seite `/kalender`: `monatsraster()` als reine Funktion mit Tests, Termine in den Tagen (07.09.2026)
 - [ ] K.3 Klick auf einen Tag ⇒ Aufgabe anlegen: Projekt, Titel, Datum **mit Uhrzeit**,
       **Zuständiger** – beide Felder gibt es im Backend seit Sprint 3 und im Frontend noch nicht
 - [ ] K.4 Termin per Drag auf einen anderen Tag ziehen, optimistisch mit Rollback
 - [ ] K.5 Wochenleiste über dem Feed auf dem Dashboard, filtert nach Datum
 - [ ] K.6 ADR zur Zeitzonen-Aufteilung, Doku, Interviewfragen, Handbuch
+
+**Aus K.2:** Das Raster hat **immer sechs Wochen**, auch wenn der Monat in vier passt – sonst
+aendert der Kalender beim Blaettern seine Hoehe und der Knopf springt unter dem Mauszeiger weg.
+Abgefragt wird das **Raster**, nicht der Monat, sonst blieben die sichtbaren Vor- und Nachlauftage
+leer. Die Zeitzonen-Umrechnung passiert an genau einer Stelle im Frontend; belegt im Browser mit
+einem Termin, der als `2026-08-31 22:00 UTC` gespeichert ist und im Kalender am **1. September**
+steht.
 
 **Der Fund aus K.1.** Die Index-Entscheidung wurde ausführlich begründet, ins Schema geschrieben –
 und von der eigenen Messung widerlegt. Die alte Fassung las 6.740 Zeilen, um 674 zu liefern, weil

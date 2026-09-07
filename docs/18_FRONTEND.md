@@ -217,6 +217,56 @@ der Backend-Typen im Frontend. Zweite Wahrheit der gefährlichsten Sorte – bei
 still falsch, sobald das Backend ein Feld umbenennt. Die Lösung wäre ein erzeugter Typ aus einem
 OpenAPI-Schema. Steht im Backlog.
 
+## A10 · Reine Rechnung neben der Darstellung
+
+Dreimal dasselbe Muster im Projekt, und jedes Mal aus demselben Grund:
+
+| Rechnung | Darstellung | Was getrennt wurde |
+|---|---|---|
+| `positionen.ts` | – | Sortierarithmetik des Boards (Backend) |
+| `board-logik.ts` | `board.tsx` | Gruppieren in Spalten, Verschiebung ableiten |
+| `kalender-raster.ts` | `monatskalender.tsx` | Monatsraster, Zeitraum, Wochentage |
+
+Der Grund ist nicht die Architekturlehre, sondern der **Preis eines Tests**. „Der September 2026
+beginnt an einem Dienstag" kostet in `kalender-raster.test.ts` drei Zeilen. Als Komponententest
+bräuchte dieselbe Aussage einen gerenderten Kalender, einen Query-Zwischenspeicher und einen
+angemeldeten Nutzer – und sagte bei einem Fehlschlag nicht, *was* falsch gerechnet wurde.
+
+Die Trennung ist dann geglückt, wenn der Komponententest **keine Attrappen** mehr braucht.
+`monatskalender.test.tsx` ruft weder einen Hook noch die Uhr auf, weil die Komponente beides nicht
+selbst beschafft: Monat, Termine und „heute" werden hineingereicht. Was eine Komponente nicht
+beschafft, muss ein Test nicht fälschen.
+
+### Zeitzonen gehören ins Frontend – und dort an eine Stelle
+
+Der Server speichert `dueDate` als Zeitpunkt in UTC und vergleicht ihn mit zwei Zeitpunkten. Er
+rechnet **nicht** mit Zonen, weil er die des Betrachters nicht kennt.
+
+Welcher Kalendertag ein Zeitpunkt ist, entscheidet deshalb allein das Frontend:
+
+```ts
+// Mitternacht ORTSZEIT ⇒ der zugehörige Zeitpunkt in UTC
+new Date(2026, 8, 1).toISOString(); // in Berlin: 2026-08-31T22:00:00.000Z
+```
+
+Der naheliegende Fehler ist `dueDate.slice(0, 10)` – die ersten zehn Zeichen des JSON sehen wie ein
+Datum aus. Sie sind der **UTC**-Tag und damit für alles östlich von Greenwich abends der falsche.
+Eine Aufgabe, die am 01.09. um 00:30 Uhr in Berlin fällig ist, stünde damit am 31.08.
+
+Belegt statt behauptet: In der Demo liegt ein Termin mit `dueDate = 2026-08-31 22:00 UTC`, und der
+Kalender zeigt ihn am **1. September**.
+
+### Ein Kalender ist eine Tabelle
+
+`<table>` mit `<th scope="col">`, nicht `grid-cols-7` mit 42 Divs. Sichtbar identisch, für einen
+Screenreader nicht: In einer Tabelle wird beim Betreten einer Zelle die Spaltenüberschrift
+mitgelesen – „Mittwoch, 16". Bei Divs hört man „16".
+
+Dieselbe Überlegung wie bei `aria-current="page"` in der Seitenleiste und `aria-label` an den
+Blätterknöpfen: Der Zustand ist für das Auge da und für den Screenreader nur, wenn man ihn ausspricht.
+
+---
+
 ---
 
 # Teil B – Angular (Gegenüberstellung, nicht gebaut)

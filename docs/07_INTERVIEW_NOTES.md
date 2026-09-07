@@ -3663,3 +3663,99 @@ Fall, in dem es funktioniert.
 Von Hand in drei Schritten: nullbar anlegen, aus dem Projekt füllen, erst dann `SET NOT NULL`. Das
 ist das Standardmuster für eine Pflichtspalte auf Bestandsdaten – und der häufigste Weg, wie ein
 Deployment an einer Migration stirbt, die lokal grün war.
+
+### 204. Sie haben den Kalender ohne Datumsbibliothek gebaut. Warum nicht date-fns?
+
+Weil `Date` genau die zwei Dinge kann, die dieses Raster braucht: einen Monat weiterspringen und
+einen Wochentag nennen. `new Date(2026, 12, 1)` ist der Januar 2027 – der Überlauf wird
+normalisiert, inklusive Schaltjahr. Deshalb steht im Raster nirgends „wie viele Tage hat der
+Vormonat".
+
+Wo ich eine Bibliothek nehmen würde: sobald Termine in einer **anderen** Zone als der des
+Betrachters anzuzeigen wären – „Berliner Zeit, egal wo du sitzt". Zeitzonen selbst zu rechnen ist
+der Fehler, den man nicht machen will; dafür gibt es `Intl` und Bibliotheken. Solange der Kalender
+die lokale Zone meint, rechnet `Date` sie von selbst richtig.
+
+Das ist meine allgemeine Linie bei Abhängigkeiten: Eine Bibliothek ist dann richtig, wenn sie ein
+Problem löst, das ich sonst **falsch** lösen würde – nicht, wenn sie Zeilen spart.
+
+### 205. Ihr Monatsraster hat immer 42 Felder, auch im Februar. Ist das nicht Verschwendung?
+
+Ein Monat braucht je nach Länge und Startwochentag vier bis sechs Zeilen. Der Februar 2027 beginnt
+an einem Montag und hat 28 Tage – er passt in genau vier.
+
+Würde das Raster mitwachsen, änderte der Kalender beim Blättern seine Höhe. Der Inhalt darunter
+springt, und der Knopf „nächster Monat" liegt nach dem Klick woanders als davor – man klickt
+zweimal, weil der erste Klick den Knopf wegbewegt hat.
+
+Feste sechs Zeilen kosten in manchen Monaten eine leere Zeile und sparen dafür jedes Springen.
+Dasselbe Prinzip wie die grauen Platzhalterbalken beim Laden: Platz reservieren, statt ihn entstehen
+zu lassen.
+
+Nebeneffekt, der zufällig gut passt: 42 Tage liegen sicher unter der 92-Tage-Grenze des Endpoints.
+Ein Test hält das fest, damit eine spätere Änderung am Raster nicht still einen 400er erzeugt.
+
+### 206. Sie fragen den Server nach 42 Tagen, obwohl der Monat nur 30 hat. Warum?
+
+Weil das Raster Vor- und Nachlauftage **zeigt**. Fragte ich nur den Monat ab, blieben genau die
+Felder leer, die sichtbar sind – der 31.08. stünde im September-Kalender ohne seine Termine, und
+niemand sähe, dass dort welche sind.
+
+Das habe ich beim Blättern in den Oktober auch überprüft: Der Termin am 30.09. um 23:00 erscheint im
+Oktober-Raster in seinem Vorlauffeld. Genau das wäre ohne die Rasterabfrage weg.
+
+### 207. Wo passiert in Ihrem Kalender die Zeitzonen-Umrechnung?
+
+An genau einer Stelle, und die ist im Frontend.
+
+`new Date(2026, 8, 1)` ist Mitternacht **Ortszeit**. `toISOString()` macht daraus den zugehörigen
+Zeitpunkt in UTC – in Berlin `2026-08-31T22:00:00.000Z`. Genau das geht als `von` an den Server.
+
+Der Server rechnet ausdrücklich nicht mit Zonen: Er bekommt zwei Zeitpunkte und vergleicht sie mit
+einem gespeicherten. Welcher **Kalendertag** ein Zeitpunkt ist, entscheidet allein der Betrachter.
+
+Der Beweis dafür steht in der Demo: Eine Aufgabe mit `dueDate = 2026-08-31 22:00 UTC` erscheint im
+Kalender am **1. September**, nicht am 31. August. Wer stattdessen `dueDate.slice(0, 10)` nimmt –
+der naheliegende Weg, weil das JSON ja mit dem Datum anfängt – bekommt für alles östlich von
+Greenwich abends den falschen Tag.
+
+### 208. Sie gruppieren die Termine in eine `Map`, statt je Tag zu filtern. Ist das nicht verfrühte Optimierung?
+
+Der naheliegende Weg wäre, im Raster für jeden der 42 Tage die Terminliste zu filtern. Das ist 42
+mal ein Durchlauf durch alle Termine – bei 200 Terminen 8.400 Vergleiche, und zwar bei **jedem**
+Rendern, also auch bei jedem Blättern und jedem Neuladen der Daten.
+
+Einmal gruppieren ist ein Durchlauf, und das Nachschlagen je Tag kostet danach nichts.
+
+Ich würde das nicht Optimierung nennen, sondern dieselbe Denkweise wie bei N+1 im Backend: nicht in
+der Schleife nachladen, sondern vorher einmal einsammeln. Der Unterschied zur verfrühten Optimierung
+ist, dass hier kein Code komplizierter wird – die `Map`-Fassung ist eher kürzer.
+
+### 209. Warum ist Ihr Kalender eine `<table>` und kein CSS-Grid?
+
+Ein `grid-cols-7` mit 42 Divs sähe identisch aus und wäre weniger Markup. Ein Kalender **ist** aber
+eine Tabelle: Die Spalte sagt den Wochentag, die Zeile die Woche. Genau diese Beziehung geht in Divs
+verloren.
+
+Für einen Screenreader ist der Unterschied groß. In einer Tabelle wird beim Betreten einer Zelle die
+zugehörige Spaltenüberschrift mitgelesen – „Mittwoch, 16". Bei Divs hört man „16" und muss selbst
+zählen, in welcher Spalte man ist.
+
+Deshalb steht dort auch `<th scope="col">` und nicht nur `<th>`: Ohne `scope` muss der Screenreader
+raten, ob die Überschrift für die Spalte oder für die Zeile gilt.
+
+Dieselbe Überlegung wie bei `aria-current="page"` in der Seitenleiste: Der aktive Eintrag ist für das
+Auge am Hintergrund erkennbar, für einen Screenreader ohne das Attribut nicht.
+
+### 210. Ihre Komponente bekommt „heute" als Parameter. Warum ermittelt sie es nicht selbst?
+
+Weil `new Date()` im Inneren den Test von der Uhr abhängig machen würde. „Hebt heute hervor" wäre nur
+an dem Tag prüfbar, an dem man den Test schreibt – am nächsten Tag ist er grün, ohne etwas zu
+prüfen, und irgendwann rot, ohne dass sich Code geändert hat.
+
+So reicht die Seite den Wert hinein, und der Test setzt ihn auf den 16.09.2026. Dazu gehört die
+Gegenprobe mit einem Datum außerhalb des Monats: Ohne sie wäre der erste Test auch dann grün, wenn
+die Komponente **jeden** Tag hervorhöbe.
+
+Das ist im Projekt die vierte Ausprägung derselben Lehre: Ein Test darf die Bedingung nicht abwarten,
+er muss sie herstellen.
