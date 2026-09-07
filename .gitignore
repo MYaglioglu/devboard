@@ -64,5 +64,11 @@ docker/data/
 # Claude Code: geteilte Settings ja, persoenliche nein
 .claude/settings.local.json
 
-# Erzeugte Handbuecher - jederzeit neu baubar mit scripts/build_handbuch.py
-DevBoard-Handbuch*.pdf
+# Erzeugte Buecher - jederzeit neu baubar mit scripts/build_handbuch.py.
+#
+# Das Muster stand hier urspruenglich nur fuer "DevBoard-Handbuch*.pdf". Seit
+# der Generator zusaetzlich ein Lernbuch und eine Referenz erzeugt, lagen drei
+# unversionierte PDFs im Arbeitsverzeichnis - ein `git add .` haette sie
+# mitgenommen. Erzeugtes gehoert nicht ins Repository, und ein Muster, das nur
+# den Stand von gestern kennt, schuetzt davor nicht.
+DevBoard-*.pdf
