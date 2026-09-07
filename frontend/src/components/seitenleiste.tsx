@@ -88,6 +88,13 @@ export function Seitenleiste({
           Dashboard
         </NavEintrag>
         <NavEintrag
+          href="/kalender"
+          aktiv={pfad === '/kalender'}
+          beimNavigieren={beimNavigieren}
+        >
+          Kalender
+        </NavEintrag>
+        <NavEintrag
           href="/organizations"
           aktiv={pfad === '/organizations'}
           beimNavigieren={beimNavigieren}
