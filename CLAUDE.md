@@ -86,6 +86,13 @@ cd frontend && npm run lint:ci && npm test && npm run build
 | `10_SECURITY.md` | umgesetzt / offen, mit Fälligkeit |
 | `16_DECISIONS.md` | ADRs – nie ändern, nur ersetzen |
 | `17_MISTAKES_AND_LESSONS.md` | Fehler mit Ursache und Learning |
+| `18_FRONTEND.md` | Aufbau des Frontends, dazu die Gegenüberstellung mit Angular |
+| `19_BACKEND.md` | **Landkarte des Backends**: Ordner, Weg einer Anfrage, Muster, wo neuer Code hingehört |
+
+`19_BACKEND.md` ist der Einstieg, nicht das Nachschlagewerk. Endpoint-Details stehen in `09_API.md`,
+Spalten und Indizes in `08_DATABASE.md`, Begründungen in `16_DECISIONS.md`. **Jede Tatsache steht an
+genau einer Stelle** – doppelte Beschreibungen driften auseinander, und man merkt es erst, wenn
+jemand nachfragt.
 
 Am Sprint-Ende:
 
@@ -108,8 +115,8 @@ neu laden.
 
 ## Stand
 
-**Sprint 0 bis 4 abgeschlossen** (Stand 14.08.2026). **494 Tests** (156 Backend-Unit,
-176 Backend-E2E, 162 Frontend), CI grün, `main` geschützt.
+**Sprint 0 bis 5 abgeschlossen, 6 und 7 teilweise, Sprint 8 läuft** (Stand 07.09.2026).
+**687 Tests** (228 Backend-Unit, 243 Backend-E2E, 216 Frontend), CI grün, `main` geschützt.
 
 - **Auth** vollständig: Registrierung, Login, Refresh-Rotation mit Wiederverwendungs-Erkennung,
   globaler Guard, Rate Limiting.
@@ -122,17 +129,33 @@ neu laden.
 - **Dashboard und Aktivitäts-Feed** vollständig: eigene Tabelle `activities` (ADR-011), Einträge
   entstehen **in der Transaktion** der Änderung (ADR-012), **Cursor-Paginierung** auf
   `(createdAt, id)`, Kennzahlen per `groupBy` unter `REPEATABLE READ`.
+- **GitHub-Integration** vollständig (Sprint 5): HMAC-Signaturprüfung auf den **Rohbytes**
+  (`rawBody: true`), zeitkonstanter Vergleich, Idempotenz über `WebhookDelivery`, Webhook-Secret
+  verschlüsselt mit `aes-256-gcm` (ADR-014). **Empfang und Verarbeitung sind getrennt** – erst
+  annehmen und antworten, dann arbeiten.
+- **Deployment und Demo-Zugang** (Sprint 6/7, teilweise): dreigeteilter Betrieb nach
+  **Schadenshöhe** statt Bequemlichkeit (ADR-016), `POST /auth/demo` legt je Besucher eine
+  gefüllte Organisation an und räumt beim nächsten Start auf (ADR-020).
+- **Kalender-Bereichsabfrage** (Sprint 8, Scheibe K.1): halboffener Zeitraum, auf 92 Tage begrenzt,
+  `organizationId` auf `tasks` denormalisiert – **nachdem die Messung die vorige Entscheidung
+  widerlegt hat** (ADR-021).
 
-**Das Projekt ist ab jetzt vorzeigbar.** Alles Weitere steigert die Qualität, ist aber keine
-Voraussetzung mehr für ein Bewerbungsgespräch.
+**Das Projekt ist vorzeigbar.** Alles Weitere steigert die Qualität, ist aber keine Voraussetzung
+mehr für ein Bewerbungsgespräch.
 
-**Als Nächstes: Sprint 5 – GitHub-Integration.** Neu darin: Webhook-Signaturprüfung (HMAC),
-Idempotenz bei mehrfach zugestellten Events, asynchrone Verarbeitung. Dort stellt sich die Frage aus
-ADR-012 **neu**: Für die Zustellung an ein fremdes System ist das Transactional Outbox Pattern der
-richtige Ort, nicht der Inline-Schreiber.
+**Als Nächstes: Sprint 8 ab Scheibe K.2** – die Kalenderseite im Frontend. `monatsraster()` als
+reine Funktion mit Tests, Termine in den Tagen, Klick auf einen Tag legt eine Aufgabe an, Ziehen
+verschiebt sie optimistisch mit Rollback. Kernthema: **Zeitzonen** – UTC in der Datenbank, der
+Kalendertag entsteht beim Betrachter.
 
-Das Projekt liegt weiterhin **rund zwei Wochen vor Plan** (Roadmap sah Sprint 4 für den
-16.09.–22.09. vor).
+**Die Outbox-Frage ist noch offen, nicht beantwortet.** Sprint 5 **empfängt** nur – das ist die
+Inbox. Das Transactional Outbox Pattern wird erst gebraucht, wenn DevBoard selbst an ein fremdes
+System zustellt (Status zurück nach GitHub schreiben). Bis dahin bleibt es eine Antwort, die man im
+Gespräch geben, aber nicht im Code zeigen kann.
+
+**Ebenfalls offen aus Sprint 6/7:** Staging ausrollen (6.3), Deployment aus GitHub Actions (6.4),
+Zero-Downtime und Rollback (6.5), Uptime-Wächter und Backup-Probe (6.7), Screenshots im README
+(7.4), Demo-Hinweisband (7.5).
 
 **GitHub-Profil: erledigt** (geprüft am 14.08.2026). Bio, Standort, Website und „hireable" sind
 gesetzt; gepinnt sind `devboard`, `rissundwisch` und das Profil-README – keine Bootcamp-Repos mehr.
@@ -143,6 +166,35 @@ einzige Punkt, bei dem Murats Aussage die Quelle ist. Seit Woche 2 überfällig.
 
 **Ebenfalls offen am Repository, nur über die GitHub-Oberfläche zu erledigen:** Topics
 (`nextjs`, `nestjs`, `postgresql`, `typescript`, `prisma`, `docker`) und die Homepage-URL.
+
+## Was aus Sprint 5 und 8 weitergilt
+
+- **Ein Verweis auf eine Messung ist keine Messung.** Die erste Kalender-Scheibe begründete
+  ausführlich, warum `tasks` keine eigene `organizationId` braucht – sauber gegen ADR-011
+  abgegrenzt, und gestützt auf Zahlen, die es noch nicht gab. Als sie vorlagen, sagten sie das
+  Gegenteil: 0,91 ms statt 3,90 ms, 674 statt 6.740 gelesene Zeilen. Korrigiert in ADR-021.
+  **Je besser eine Begründung formuliert ist, desto weniger sagt ihre Überzeugungskraft über ihre
+  Richtigkeit.**
+- **Das starke Argument ist selten die Zeit.** Bei der Kalenderabfrage war es nicht „schneller",
+  sondern: Die alte Fassung liest die Aufgaben **aller** Mandanten im Zeitraum und wirft neun
+  Zehntel im Verbund weg – der Kalender einer Organisation würde also langsamer, wenn **fremde**
+  Organisationen wachsen.
+- **Redundanz darf nicht an der Sorgfalt des Codes hängen.** Ein zusammengesetzter Fremdschlüssel
+  macht eine Aufgabe mit falschem Mandanten **unspeicherbar**. Zwei Tests greifen dafür bewusst an
+  der API vorbei direkt auf Prisma zu.
+- **Eine Migration wird gegen volle Tabellen gedacht.** Die von `prisma migrate diff` erzeugte
+  Fassung von `ADD COLUMN NOT NULL` läuft nur auf einer leeren Tabelle und wäre in Produktion
+  gescheitert – von Hand in drei Schritte zerlegt.
+- **Ein HMAC ist eine Aussage über Bytes, nicht über Bedeutung.** Deshalb `rawBody: true`, deshalb
+  `timingSafeEqual` statt `===`. Und deshalb prüft der Webhook-Controller ausdrücklich, **ob** der
+  Rohrumpf da ist – sonst meldete er eine falsche Signatur, wo in Wahrheit die Anwendung falsch
+  zusammengebaut ist.
+- **Hashen und Verschlüsseln sind verschiedene Werkzeuge.** Passwort, Refresh-Token und
+  Einladungs-Token werden **gehasht** – sie müssen nur wiedererkannt werden. Das Webhook-Secret wird
+  **verschlüsselt** – es muss zurückgelesen werden, um die Signatur zu prüfen.
+- **Ein Bauergebnis, das nie ausgeführt wird, ist ungetestet.** `dist/src/main.js` statt
+  `dist/main.js` – monatelang unbemerkt, weil in der Entwicklung `nest start --watch` läuft und die
+  CI baut, aber nicht startet. Zum dritten Mal dieselbe Lehre.
 
 ## Was aus Sprint 4 weitergilt
 
