@@ -207,3 +207,37 @@ Die CI baut das Backend, startet es aber nie – deshalb blieb `npm run start:pr
 unbemerkt kaputt (siehe `17_MISTAKES_AND_LESSONS.md`). Ein Schritt, der das gebaute Image startet
 und `/health` abfragt, ist in Scheibe 6.4 vorgesehen. Falls er dort aus Zeitgründen entfällt,
 gehört er hierher und nicht ins Vergessen.
+
+### Der angezeigte Monat gehört in die URL *(Sprint 8, 07.09.2026)*
+
+Die Kalenderseite hält den Monat in `useState`. `/kalender?monat=2026-09` wäre besser: teilbar, im
+Verlauf des Browsers, und der Zurück-Knopf täte das Erwartete – nach dem Blättern führt er derzeit
+von der Seite weg statt einen Monat zurück.
+
+**Warum nicht in K.2 gebaut:** Der Zustand in der URL zieht `useSearchParams` nach sich, dazu einen
+`Suspense`-Rahmen (Next.js verlangt ihn für Seiten, die Suchparameter lesen) und die Frage, welcher
+Teil Server- und welcher Client-Komponente wird. Das ist eine eigene Frage und keine Zugabe zum
+Kalender.
+
+Die Regel, nach der hier geschnitten wurde: **Eine Scheibe endet, wenn sie funktioniert – nicht,
+wenn nichts mehr zu verbessern ist.**
+
+### Termine eines einzelnen Projekts filtern *(Sprint 8, 07.09.2026)*
+
+Der Kalender zeigt alle Projekte der Organisation. Ein Filter wäre nützlich, sobald ein Team mehr
+als eine Handvoll Projekte hat.
+
+Er gehört in die **Query-Parameter**, nicht in den Pfad – genau wie `?projectId=` beim
+Aktivitäts-Feed. Ein `:projectId` im Pfad würde ausschließen, was den Kalender ausmacht: mehrere
+Projekte an einem Tag.
+
+Backendseitig ist das wenig Arbeit (ein optionaler Parameter im Query-DTO, eine Bedingung mehr im
+`where`), frontendseitig eine Auswahlliste. Erst sinnvoll, wenn K.3 bis K.5 stehen.
+
+### Mehr als zwei Termine je Tag sichtbar machen *(Sprint 8, 07.09.2026)*
+
+Eine Tageszelle zeigt zwei Termine und zählt den Rest als „+2". Wer die übrigen sehen will, hat
+derzeit keinen Weg – der Zähler ist eine Auskunft, kein Knopf.
+
+Naheliegend wäre eine Tagesansicht oder ein Aufklappen der Zelle. Beides ist eine eigene Ansicht mit
+eigener Zustandsfrage und wartet, bis der Kalender schreibend ist (K.3, K.4).
