@@ -4,6 +4,7 @@ import Link from 'next/link';
 
 import {
   amSelbenTag,
+  langesDatum,
   monatsName,
   monatsraster,
   wochentagsNamen,
@@ -45,6 +46,7 @@ export function Monatskalender({
   eintraege,
   heute,
   orgId,
+  beiTagKlick,
 }: {
   monat: Monatszeiger;
   eintraege: Kalendereintrag[];
@@ -57,6 +59,16 @@ export function Monatskalender({
    */
   heute: Date;
   orgId: string;
+  /**
+   * Wird gerufen, wenn jemand die freie Flaeche eines Tages anklickt.
+   *
+   * Die Komponente entscheidet NICHT, was dann passiert - sie meldet nur den
+   * Tag. Ob daraus ein Dialog wird, eine Navigation oder gar nichts, gehoert
+   * der Seite. Dadurch bleibt der Komponententest ohne Zwischenspeicher und
+   * ohne Attrappe: Er reicht eine Funktion hinein und sieht nach, ob sie mit
+   * dem richtigen Datum gerufen wurde.
+   */
+  beiTagKlick: (tag: Date) => void;
 }) {
   const raster = monatsraster(monat);
 
@@ -99,6 +111,7 @@ export function Monatskalender({
                 istHeute={amSelbenTag(tag.datum, heute)}
                 termine={nachTag.get(tagesSchluessel(tag.datum)) ?? []}
                 orgId={orgId}
+                beiTagKlick={beiTagKlick}
               />
             ))}
           </tr>
@@ -128,12 +141,14 @@ function Tageszelle({
   istHeute,
   termine,
   orgId,
+  beiTagKlick,
 }: {
   datum: Date;
   imMonat: boolean;
   istHeute: boolean;
   termine: Kalendereintrag[];
   orgId: string;
+  beiTagKlick: (tag: Date) => void;
 }) {
   return (
     <td
@@ -144,43 +159,93 @@ function Tageszelle({
         imMonat ? '' : 'bg-flaeche-gedaempft text-still'
       }`}
     >
-      <div className="flex items-center justify-between">
-        <span
-          className={`grid h-5 w-5 place-items-center rounded-full text-[11px] ${
-            istHeute ? 'bg-akzent font-medium text-akzent-text' : ''
-          }`}
-        >
-          {datum.getDate()}
-        </span>
+      {/*
+        Die Flex-Spalte steht in einem <div>, NICHT am <td>. Ein
+        `display: flex` auf einer Tabellenzelle hebt ihr `table-cell`-Verhalten
+        auf - die Zelle verliert damit ihre Ausrichtung im Raster, und die
+        Spalten stehen nicht mehr untereinander. Ein Fehler, den man erst im
+        Browser sieht und in keinem Test.
 
-        {/*
+        `h-full` gibt der Spalte die Hoehe der Zelle, damit `flex-1` am Knopf
+        weiter unten etwas zu verteilen hat.
+      */}
+      <div className="flex h-full flex-col">
+        <div className="flex items-center justify-between">
+          <span
+            className={`grid h-5 w-5 place-items-center rounded-full text-[11px] ${
+              istHeute ? 'bg-akzent font-medium text-akzent-text' : ''
+            }`}
+          >
+            {datum.getDate()}
+          </span>
+
+          {/*
           Die Zahl erscheint erst, wenn mehr Termine da sind als Platz. Sie
           steht als `title` UND sichtbar - ein Zaehler, den man nur mit der
           Maus erfaehrt, ist fuer Tastaturnutzer nicht vorhanden.
         */}
-        {termine.length > 2 && (
-          <span className="text-[10px] text-still">+{termine.length - 2}</span>
-        )}
-      </div>
+          {termine.length > 2 && (
+            <span className="text-[10px] text-still">
+              +{termine.length - 2}
+            </span>
+          )}
+        </div>
 
-      <ul className="mt-0.5 flex flex-col gap-0.5">
-        {termine.slice(0, 2).map((termin) => (
-          <li key={termin.id}>
-            <Link
-              href={`/organizations/${orgId}/projects/${termin.project.id}`}
-              // `title` traegt den vollen Text, weil die Kachel ihn abschneidet.
-              title={`${uhrzeit(termin.dueDate)} · ${termin.title} · ${termin.project.name}`}
-              className={`block truncate rounded border-l-2 bg-flaeche-gedaempft px-1 py-0.5
+        <ul className="mt-0.5 flex flex-col gap-0.5">
+          {termine.slice(0, 2).map((termin) => (
+            <li key={termin.id}>
+              <Link
+                href={`/organizations/${orgId}/projects/${termin.project.id}`}
+                // `title` traegt den vollen Text, weil die Kachel ihn abschneidet.
+                title={`${uhrzeit(termin.dueDate)} · ${termin.title} · ${termin.project.name}`}
+                className={`block truncate rounded border-l-2 bg-flaeche-gedaempft px-1 py-0.5
                 text-[11px] transition hover:bg-rand ${
                   statusFarbe[termin.status] ?? 'border-l-rand-stark'
                 } ${termin.status === 'DONE' ? 'text-still line-through' : ''}`}
-            >
-              <span className="text-still">{uhrzeit(termin.dueDate)}</span>{' '}
-              {termin.title}
-            </Link>
-          </li>
-        ))}
-      </ul>
+              >
+                <span className="text-still">{uhrzeit(termin.dueDate)}</span>{' '}
+                {termin.title}
+              </Link>
+            </li>
+          ))}
+        </ul>
+
+        {/*
+        ==================================================================
+        DIE ANLEGE-FLAECHE - EIN ECHTER KNOPF, KEIN onClick AUF DER ZELLE
+        ==================================================================
+        Naheliegend waere `onClick` am `<td>`. Das funktioniert mit der Maus
+        und mit nichts sonst: Eine Tabellenzelle ist nicht fokussierbar, also
+        gibt es sie fuer Tastatur und Screenreader nicht. Man muesste
+        `tabIndex`, `role="button"` und die Behandlung von Enter und Leertaste
+        von Hand nachruesten - also einen Knopf nachbauen.
+        
+        Ein `<button>` bringt all das mit. Der Preis ist ein Element mehr im
+        Markup, und der ist gering.
+
+        `flex-1` laesst ihn den Rest der Zelle fuellen - bei einem leeren Tag
+        also fast die ganze Flaeche, bei einem vollen nur den Rand darunter.
+        Der Klick trifft damit da, wo man ihn erwartet, ohne die Termine zu
+        ueberdecken.
+
+        Der zugaengliche Name nennt den TAG. "Aufgabe anlegen" allein waere im
+        Screenreader 42 mal derselbe Knopf, und niemand wuesste, welcher.
+      */}
+        <button
+          type="button"
+          onClick={() => beiTagKlick(datum)}
+          aria-label={`Aufgabe am ${langesDatum(datum)} anlegen`}
+          className="mt-0.5 w-full flex-1 rounded text-left text-[11px] text-still opacity-0
+          transition hover:bg-flaeche-gedaempft hover:opacity-100 focus-visible:opacity-100
+          focus-visible:outline-2 focus-visible:outline-akzent"
+        >
+          {/* `aria-hidden`, weil der Name schon am Knopf steht - sonst laese ein
+            Screenreader "plus Aufgabe am Dienstag ... anlegen". */}
+          <span aria-hidden className="px-1">
+            +
+          </span>
+        </button>
+      </div>
     </td>
   );
 }

@@ -13,6 +13,7 @@ import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
   ReactNode,
+  SelectHTMLAttributes,
 } from 'react';
 
 /**
@@ -77,6 +78,77 @@ export function Feld({
               : 'border-zinc-300 dark:border-zinc-700'
           }`}
       />
+      {fehler && (
+        <span
+          id={fehlerId}
+          role="alert"
+          className="text-xs text-red-600 dark:text-red-400"
+        >
+          {fehler}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Beschriftetes Auswahlfeld - dieselbe Aufteilung wie bei `Feld`.
+ *
+ * ============================================================================
+ * WARUM `<select>` UND NICHT DAS EIGENE MENUE AUS DER SEITENLEISTE
+ * ============================================================================
+ * Der Organisationswechsler ist von Hand gebaut, weil er Avatare und eine
+ * Aktion ("Organisation anlegen") enthaelt - Dinge, die ein `<select>` nicht
+ * kann. Hier geht es um reine Textauswahl.
+ *
+ * Was ein `<select>` dafuer geschenkt mitbringt: Tastaturbedienung,
+ * Tippen-zum-Springen, korrekte Ansage im Screenreader, und auf dem Handy die
+ * Auswahlrolle des Betriebssystems. Das alles von Hand nachzubauen ist genau
+ * die Arbeit, die im Wechsler steckt - und sie lohnt nur, wenn man etwas
+ * davon hat.
+ *
+ * `aria-invalid` und `aria-describedby` wie bei `Feld`: Ohne sie existiert ein
+ * Fehler nur fuer sehende Nutzer.
+ */
+export function Auswahl({
+  label,
+  fehler,
+  id,
+  children,
+  ...rest
+}: SelectHTMLAttributes<HTMLSelectElement> & {
+  label: string;
+  fehler?: string;
+  children: ReactNode;
+}) {
+  const erzeugteId = useId();
+  const feldId = id ?? erzeugteId;
+  const fehlerId = `${feldId}-fehler`;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label
+        htmlFor={feldId}
+        className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+      >
+        {label}
+      </label>
+      <select
+        {...rest}
+        id={feldId}
+        aria-invalid={fehler ? true : undefined}
+        aria-describedby={fehler ? fehlerId : undefined}
+        className={`rounded-lg border px-3 py-2 text-sm outline-none transition
+          focus:ring-2 focus:ring-emerald-500/40
+          dark:bg-zinc-900 dark:text-zinc-100
+          ${
+            fehler
+              ? 'border-red-500 dark:border-red-500'
+              : 'border-zinc-300 dark:border-zinc-700'
+          }`}
+      >
+        {children}
+      </select>
       {fehler && (
         <span
           id={fehlerId}

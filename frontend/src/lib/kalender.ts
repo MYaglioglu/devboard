@@ -1,7 +1,8 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { aufgabenKey } from './aufgaben';
 import { organisationKey } from './organisationen';
 import { useAuth } from './auth-context';
 import type { AufgabenStatus, Zustaendiger } from './aufgaben';
@@ -103,6 +104,71 @@ export function useKalender(
     enabled: Boolean(orgId),
     placeholderData: (vorherige) => vorherige,
     retry: false,
+  });
+}
+
+/**
+ * Legt eine Aufgabe mit Termin an.
+ *
+ * ============================================================================
+ * WARUM NICHT `useAufgabeAnlegen` AUS aufgaben.ts
+ * ============================================================================
+ * Der Hook dort bindet das Projekt beim ERZEUGEN des Hooks
+ * (`useAufgabeAnlegen(orgId, projektId)`). Auf der Projektseite ist das
+ * richtig - dort steht das Projekt im Pfad und aendert sich nicht.
+ *
+ * Im Kalender waehlt der Nutzer das Projekt erst im Dialog. Ein Hook mit
+ * festem Projekt muesste also bei jeder Auswahl neu erzeugt werden, und
+ * Hooks lassen sich nicht bedingt oder in einer Schleife aufrufen. Deshalb
+ * wandert `projektId` hier vom Hook in die MUTATION.
+ *
+ * Der zweite Unterschied ist der Zwischenspeicher: `useAufgabeAnlegen`
+ * entwertet nur das Board seines Projekts. Eine im Kalender angelegte Aufgabe
+ * muss beides entwerten - sonst bliebe der Kalender nach dem Anlegen leer,
+ * obwohl die Aufgabe da ist.
+ */
+export function useTerminAnlegen(orgId: string | undefined) {
+  const { authFetch } = useAuth();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      projektId,
+      ...daten
+    }: {
+      projektId: string;
+      title: string;
+      /** ISO-Zeitpunkt. Die Umrechnung aus der Ortszeit passiert im Dialog. */
+      dueDate: string;
+      /**
+       * Die NUTZER-ID, nicht die der Mitgliedschaft - so verlangt es die API.
+       * Warum, steht ausfuehrlich in `create-task.dto.ts`: Die interne
+       * Struktur unserer Tabellen soll nicht Teil der Schnittstelle sein.
+       */
+      assigneeId?: string;
+    }) =>
+      authFetch<{ id: string }>(
+        `/organizations/${orgId}/projects/${projektId}/tasks`,
+        { method: 'POST', body: JSON.stringify(daten) },
+      ),
+
+    onSuccess: (_ergebnis, variablen) => {
+      // Alles unterhalb dieser Organisation, was den Kalender betrifft. Kein
+      // genauer Schluessel mit `von`/`bis`: Der Nutzer koennte inzwischen
+      // weitergeblaettert haben, und dann waere der entwertete Monat der
+      // falsche. TanStack Query vergleicht Schluessel von links - `['org',
+      // id, 'calendar']` trifft jeden Zeitraum darunter.
+      void queryClient.invalidateQueries({
+        queryKey: [...organisationKey(orgId ?? 'keine'), 'calendar'],
+      });
+
+      // Und das Board des betroffenen Projekts. Ohne diese Zeile zeigt es die
+      // neue Karte erst nach einem Neuladen - der Fehler faellt nicht sofort
+      // auf, weil man nach dem Anlegen im Kalender bleibt.
+      void queryClient.invalidateQueries({
+        queryKey: aufgabenKey(orgId ?? 'keine', variablen.projektId),
+      });
+    },
   });
 }
 
