@@ -3759,3 +3759,88 @@ die Komponente **jeden** Tag hervorhöbe.
 
 Das ist im Projekt die vierte Ausprägung derselben Lehre: Ein Test darf die Bedingung nicht abwarten,
 er muss sie herstellen.
+
+### 211. Warum ist die anklickbare Fläche im Kalender ein `<button>` und nicht ein `onClick` auf der Tabellenzelle?
+
+Weil ein `onClick` am `<td>` mit der Maus funktioniert und mit nichts sonst.
+
+Eine Tabellenzelle ist nicht fokussierbar. Für Tastatur und Screenreader existiert die Fläche damit nicht – man käme nie hin. Um das nachzurüsten, bräuchte es `tabIndex={0}`, `role="button"` und eine eigene Behandlung von Enter *und* Leertaste, weil die beiden Tasten sich bei einem echten Knopf unterschiedlich verhalten.
+
+Das ist genau der Punkt: Man baut einen Knopf nach. Ein `<button>` bringt all das mit, und der Preis ist ein Element mehr im Markup.
+
+Dieselbe Abwägung wie bei `<select>` gegenüber dem handgebauten Menü in der Seitenleiste – nur fällt sie hier eindeutig aus, weil es nichts gibt, was ein Knopf nicht könnte.
+
+### 212. Der Knopf heißt „Aufgabe am Dienstag, 15. September 2026 anlegen". Ist das nicht übertrieben lang?
+
+Für das Auge ja – da steht nur ein „+". Für einen Screenreader ist die Länge der ganze Punkt.
+
+Es gibt 42 dieser Knöpfe. Hießen sie alle „Aufgabe anlegen", wäre die Liste der Bedienelemente 42 mal derselbe Eintrag, und niemand wüsste, welcher Tag gemeint ist. Der zugängliche Name ist die einzige Information, die ein Screenreader über den Kontext hat.
+
+Ein Test hält das fest: Er sammelt alle 42 `aria-label` ein und prüft, dass es 42 **verschiedene** sind. Ein `Set` mit weniger Einträgen wäre rot.
+
+Das sichtbare „+" ist übrigens `aria-hidden`. Ohne das läse ein Screenreader „plus Aufgabe am Dienstag … anlegen" – der Name stünde doppelt.
+
+### 213. Warum `<dialog>` und nicht ein eigenes Overlay?
+
+Ein `<div>` mit `position: fixed` und dunklem Hintergrund ist in fünf Minuten gebaut. Danach fängt die Arbeit an:
+
+- Escape muss schließen
+- der Fokus darf nicht hinter den Dialog wandern (Fokusfalle)
+- der Rest der Seite muss für Screenreader unsichtbar werden (`inert`)
+- beim Schließen muss der Fokus dorthin zurück, wo er herkam
+
+`showModal()` leistet all das von sich aus, dazu `::backdrop` als Abdunklung. Im Browser nachgemessen: `dialog.matches(':modal')` ist wahr, und der Fokus liegt nach dem Öffnen im ersten Feld.
+
+Wichtig ist der Unterschied zwischen `showModal()` und dem Attribut `open`. Steht bloß `open` im Markup, ist es ein sichtbares Element **ohne jede** dieser Eigenschaften. Man sieht dem Markup nicht an, welche der beiden Varianten läuft.
+
+Der Preis: `showModal()` ist ein imperativer Aufruf, den React nicht aus dem Zustand ableiten kann. Also braucht es `useRef` und einen `useEffect` – eine der wenigen Stellen, an denen das richtig und kein Notbehelf ist.
+
+### 214. Wo kann bei einem Datumsfeld eine Zeitzone verlorengehen?
+
+An zwei Stellen, und beide sind Einzeiler, die richtig aussehen.
+
+**Beim Vorbelegen.** `toISOString().slice(0, 16)` liefert das Format, das `<input type="datetime-local">` verlangt – aber in **UTC**. Klickt jemand in Berlin auf den 15. und soll 09:00 angeboten bekommen, steht dort 07:00. Richtig ist, den Wert aus den lokalen Bestandteilen zusammenzusetzen, mit `getHours()` statt `getUTCHours()`.
+
+**Beim Absenden.** `new Date('2026-09-15T09:00')` – ohne Zonenangabe – liest den Wert als **lokale** Zeit. Genau das ist gewollt. Stünde am Ende ein `Z`, läse JavaScript dieselbe Zeichenkette als UTC.
+
+Der Unterschied ist ein einziges Zeichen, im Winter nur eine Stunde groß und in London gar nicht vorhanden. Er verschwindet also genau dort, wo man ihn sucht.
+
+`datetime-local` ist ausdrücklich ein Feld **ohne** Zone: Es zeigt und nimmt entgegen, was der Nutzer auf seiner Uhr sieht. Die Umrechnung passiert an genau zwei benannten Stellen, und beide haben einen Test, der die **Beziehung** prüft statt der Zeichenkette – deshalb laufen sie in jeder Zeitzone.
+
+### 215. Ihr Test prüft `new Date(gesendet.dueDate).getTime() === tag.getTime()` statt einer festen Zeichenkette. Warum?
+
+Weil eine feste Zeichenkette den Test an die Zeitzone der Maschine binden würde, auf der er läuft.
+
+In Berlin wird aus 09:00 Ortszeit `2026-09-15T07:00:00.000Z`, in London `08:00:00.000Z`. Ein Test, der die Berliner Fassung erwartet, wäre in der CI rot, sobald jemand die Zeitzone des Containers ändert – aus einem Grund, der mit der Sache nichts zu tun hat.
+
+Geprüft wird deshalb die Aussage, um die es geht: **Der gesendete Zeitpunkt ist derselbe, den der Nutzer lokal gemeint hat.** Zusätzlich `getHours() === 9`, damit der Test nicht auch dann grün wäre, wenn beide Seiten denselben Fehler machten.
+
+### 216. Warum wird eine leere Zuständigen-Auswahl zu `undefined` und nicht zu `""`?
+
+Weil das Backend drei Dinge unterscheidet, und ein leerer String keines davon ist.
+
+`assigneeId` fehlt heißt „nicht zuweisen". Eine UUID heißt „diesem Mitglied zuweisen". Ein leerer String ist für die Prüfung mit Zod eine **ungültige UUID** und ergäbe 400.
+
+`undefined` lässt das Feld beim Serialisieren aus dem JSON verschwinden – das ist der Unterschied zu `null`, das ausdrücklich mitgeschickt würde. Beim Ändern einer Aufgabe hat `null` sogar eine eigene Bedeutung: „Zuweisung entfernen". Drei Werte, drei Bedeutungen, und im Formular kommt nur einer davon vor.
+
+Der Fehler wäre nicht selten aufgefallen, sondern fast immer: Die meisten Aufgaben werden ohne Zuständigen angelegt.
+
+### 217. Sie haben `showModal()` in der Testeinrichtung nachgebaut. Ist das nicht eine Attrappe für eigenen Code?
+
+Nein – für eine Lücke der **Umgebung**. jsdom kennt `<dialog>` als Element, aber weder `showModal()` noch `close()`. Ein Dialog, der im Browser einwandfrei läuft, wirft im Test „showModal is not a function".
+
+Der naheliegende Ausweg wäre eine Prüfung in der Komponente, ob es die Methode gibt. Das wäre eine Zeile Produktionscode, die nur wegen der Testumgebung existiert – und in einem halben Jahr könnte niemand mehr erklären, warum sie da steht.
+
+Richtig ist, die Lücke dort zu schließen, wo sie ist: in `vitest.setup.ts`. Die Ersatzfassung setzt `open` und meldet das `close`-Ereignis, weil der Dialog darin aufräumt.
+
+Was sie **nicht** nachbildet, sage ich dazu: Fokusfalle, Escape und `::backdrop`. Genau die machen ein `<dialog>` erst wertvoll, und genau die gibt es nur im Browser. Deshalb ersetzt hier kein Test das Anschauen – ich habe im Browser nachgemessen, dass `:modal` greift und der Fokus im ersten Feld landet.
+
+### 218. Warum liegt der Zustand „welcher Tag ist angeklickt" in der Seite und nicht im Dialog?
+
+Weil es sonst 42 Dialoge gäbe – einen je Tageszelle – oder jede Zelle den einen Dialog kennen müsste, um ihn zu öffnen.
+
+So gibt es genau einen Dialog, und der Kalender **meldet** nur, welcher Tag geklickt wurde. Der Dialog ist damit eine Anzeige des Zustands, kein Ding mit eigenem Gedächtnis.
+
+Der Nebeneffekt ist der, auf den es mir ankommt: Der Komponententest des Kalenders braucht keine Attrappe. Er reicht eine Funktion hinein und sieht nach, ob sie mit dem richtigen Datum gerufen wurde – kein Zwischenspeicher, kein `vi.mock`, kein Netzwerk.
+
+Ein Test dazu prüft den Grenzfall, der leicht durchrutscht: Ein Klick auf den **31. August** im September-Raster muss den August melden. Wäre dort der angezeigte Monat verdrahtet statt des Tages, läge die Aufgabe einen Monat daneben – und im Kalender sähe es richtig aus.

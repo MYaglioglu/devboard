@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  VORGABE_STUNDE,
   amSelbenTag,
+  fuerEingabefeld,
+  langesDatum,
   monatsraster,
   rasterZeitraum,
   verschiebeMonat,
+  vorgabeFuerTag,
   wochentagAbMontag,
   wochentagsNamen,
 } from './kalender-raster';
@@ -207,6 +211,67 @@ describe('amSelbenTag', () => {
     // derselbe Tag - ein Fehler, den man im laufenden Jahr nie bemerkt.
     expect(amSelbenTag(new Date(2026, 8, 15), new Date(2027, 8, 15))).toBe(
       false,
+    );
+  });
+});
+
+describe('fuerEingabefeld', () => {
+  it('formatiert die LOKALE Zeit, nicht UTC', () => {
+    // Der eigentliche Test dieser Funktion. `toISOString().slice(0, 16)` waere
+    // der naheliegende Einzeiler und ergaebe im Berliner Sommer 07:00 statt
+    // 09:00 - still, und in London gar nicht reproduzierbar.
+    const neun = new Date(2026, 8, 15, 9, 0);
+
+    expect(fuerEingabefeld(neun)).toBe('2026-09-15T09:00');
+  });
+
+  it('fuellt einstellige Werte mit einer Null auf', () => {
+    // `<input type="datetime-local">` verlangt genau dieses Format. Ein
+    // "2026-1-5T9:05" wuerde das Feld stillschweigend leer lassen - der Nutzer
+    // saehe ein leeres Datum und wuesste nicht, warum.
+    expect(fuerEingabefeld(new Date(2026, 0, 5, 9, 5))).toBe(
+      '2026-01-05T09:05',
+    );
+  });
+
+  it('laesst sich vom Eingabefeld verlustfrei zurueckwandeln', () => {
+    // Die Rundreise: Was hier herauskommt, liest `new Date(...)` wieder als
+    // denselben lokalen Zeitpunkt. Genau darauf verlaesst sich der Dialog,
+    // wenn er den Wert des Feldes in einen Zeitpunkt umwandelt.
+    const zeitpunkt = new Date(2026, 8, 15, 13, 30);
+
+    expect(new Date(fuerEingabefeld(zeitpunkt)).getTime()).toBe(
+      zeitpunkt.getTime(),
+    );
+  });
+});
+
+describe('vorgabeFuerTag', () => {
+  it('nimmt den geklickten Tag und setzt die Vorgabestunde', () => {
+    // `Kalendertag.datum` ist immer Mitternacht. Ein Termin um 00:00 liest
+    // sich wie "keine Uhrzeit angegeben".
+    const vorgabe = vorgabeFuerTag(new Date(2026, 8, 15));
+
+    expect(vorgabe.getDate()).toBe(15);
+    expect(vorgabe.getHours()).toBe(VORGABE_STUNDE);
+    expect(vorgabe.getMinutes()).toBe(0);
+  });
+
+  it('behaelt den Tag, auch wenn schon eine Uhrzeit dransteht', () => {
+    // Gegenprobe: Die Funktion ersetzt die Uhrzeit, sie addiert nicht.
+    const vorgabe = vorgabeFuerTag(new Date(2026, 8, 15, 23, 45));
+
+    expect(vorgabe.getDate()).toBe(15);
+    expect(vorgabe.getHours()).toBe(VORGABE_STUNDE);
+  });
+});
+
+describe('langesDatum', () => {
+  it('nennt Wochentag, Tag, Monat und Jahr', () => {
+    // Gebraucht als zugaenglicher Name der Anlege-Flaeche. Ein Knopf, der nur
+    // "+" heisst, ist im Screenreader 42 mal derselbe Knopf.
+    expect(langesDatum(new Date(2026, 8, 15))).toBe(
+      'Dienstag, 15. September 2026',
     );
   });
 });

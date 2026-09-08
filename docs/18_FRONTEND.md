@@ -256,6 +256,61 @@ Eine Aufgabe, die am 01.09. um 00:30 Uhr in Berlin fällig ist, stünde damit am
 Belegt statt behauptet: In der Demo liegt ein Termin mit `dueDate = 2026-08-31 22:00 UTC`, und der
 Kalender zeigt ihn am **1. September**.
 
+### Modale Dialoge: `<dialog>` statt eines eigenen Overlays
+
+`showModal()` bringt vier Dinge mit, die man bei einem selbstgebauten Overlay einzeln nachrüsten
+muss und typischerweise nicht vollständig hinbekommt:
+
+| | |
+|---|---|
+| Fokusfalle | Tab verlässt den Dialog nicht |
+| Escape | schließt, ohne eigenen Zuhörer |
+| `inert` | der Hintergrund verschwindet für Screenreader |
+| `::backdrop` | die Abdunklung, ohne zusätzliches Element |
+
+**`showModal()` ist nicht dasselbe wie das Attribut `open`.** Steht bloß `open` im Markup, ist der
+Dialog sichtbar und hat **keine** dieser Eigenschaften. Dem Markup sieht man den Unterschied nicht
+an – nachprüfbar ist er über `dialog.matches(':modal')`.
+
+Der Preis ist ein imperativer Aufruf, den React nicht aus dem Zustand ableiten kann: `useRef` plus
+ein `useEffect`, der auf den geöffneten Tag reagiert. Eine der wenigen Stellen, an denen ein
+`useEffect` mit `ref` richtig und kein Notbehelf ist.
+
+**Zwei Fallen dabei:**
+
+1. **`setState` im Effekt.** Die erste Fassung leerte dort die Fehlermeldung, und
+   `react-hooks/set-state-in-effect` hat es angestrichen – zu Recht: Das löst ein zweites Rendern
+   aus, nur um einen Wert zu berichtigen. Die Meldung wird stattdessen beim Schließen geleert, also
+   in einem Ereignis.
+2. **jsdom kennt `showModal()` und `close()` nicht.** Die Lücke gehört in `vitest.setup.ts`, nicht
+   in eine Abfrage im Produktionscode. Die Ersatzfassung bildet ausdrücklich **nicht** nach, was den
+   Dialog wertvoll macht – Fokusfalle, Escape, Abdunklung. Dafür ersetzt kein Test das Anschauen.
+
+### Anklickbare Flächen brauchen ein fokussierbares Element
+
+Die Anlege-Fläche im Kalender ist ein `<button>` in der Zelle, kein `onClick` am `<td>`. Eine
+Tabellenzelle ist nicht fokussierbar; die Fläche existierte damit für Tastatur und Screenreader
+nicht. Der Nachbau bräuchte `tabIndex`, `role="button"` und die getrennte Behandlung von Enter und
+Leertaste – also einen Knopf.
+
+Der zugängliche Name nennt den **Tag**: „Aufgabe am Dienstag, 15. September 2026 anlegen". Es gibt
+42 dieser Knöpfe; hießen sie alle gleich, wäre die Bedienelement-Liste eines Screenreaders 42 mal
+derselbe Eintrag. Ein Test sammelt die Namen ein und prüft, dass es 42 **verschiedene** sind.
+
+Das sichtbare „+" ist `aria-hidden` – sonst stünde der Name doppelt.
+
+### Ein Wort zum Messen im Browser
+
+Beim Durchklicken zeigte eine Messung `opacity: 0` an einem gerade per Tab fokussierten Knopf – das
+sah nach einem Fehler aus (unsichtbarer Fokus). Die zweite Messung zeigte `opacity: 1` und einen
+grünen Rahmen.
+
+Die Ursache war die Messung selbst: Die Klasse `transition` blendet die Deckkraft über etwa 150 ms
+ein, und der erste Wert wurde unmittelbar nach dem Tastendruck gelesen – mitten in der Blende.
+
+> **Wer im Browser misst, misst auch die Zeit mit.** Ein Wert, der während einer Übergangsanimation
+> abgelesen wird, ist kein Endzustand.
+
 ### Ein Kalender ist eine Tabelle
 
 `<table>` mit `<th scope="col">`, nicht `grid-cols-7` mit 42 Divs. Sichtbar identisch, für einen
