@@ -97,7 +97,7 @@ Mandanten gäbe es noch nichts, worauf sich eine Rolle beziehen könnte.
 
 - [x] `GET …/calendar` – Termine einer Organisation in einem Zeitraum, über alle Projekte hinweg
 - [x] Monatskalender auf einer eigenen Seite, Termine in den Tagen
-- [ ] Klick auf einen Tag legt eine Aufgabe an – Projekt, Titel, Datum **mit Uhrzeit**, Zuständiger
+- [x] Klick auf einen Tag legt eine Aufgabe an – Projekt, Titel, Datum **mit Uhrzeit**, Zuständiger
 - [ ] Termin per Drag auf einen anderen Tag verschieben
 - [ ] Wochenleiste über dem Aktivitäts-Feed, filtert nach Datum
 

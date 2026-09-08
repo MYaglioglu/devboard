@@ -401,11 +401,16 @@ zusammengesetzten Fremdschlüssel · reine Rechnung getrennt von der Anzeige (`m
 - [x] K.1b Nachgezogen: `tasks.organizationId` mit zusammengesetztem Fremdschlüssel, nachdem die
       Messung die Index-Entscheidung aus K.1 widerlegt hat – ADR-021 (02.09.2026)
 - [x] K.2 Seite `/kalender`: `monatsraster()` als reine Funktion mit Tests, Termine in den Tagen (07.09.2026)
-- [ ] K.3 Klick auf einen Tag ⇒ Aufgabe anlegen: Projekt, Titel, Datum **mit Uhrzeit**,
-      **Zuständiger** – beide Felder gibt es im Backend seit Sprint 3 und im Frontend noch nicht
+- [x] K.3 Klick auf einen Tag ⇒ Aufgabe anlegen: Projekt, Titel, Datum **mit Uhrzeit**,
+      **Zuständiger** – beide Felder gab es im Backend seit Sprint 3 und im Frontend nicht (08.09.2026)
 - [ ] K.4 Termin per Drag auf einen anderen Tag ziehen, optimistisch mit Rollback
 - [ ] K.5 Wochenleiste über dem Feed auf dem Dashboard, filtert nach Datum
 - [ ] K.6 ADR zur Zeitzonen-Aufteilung, Doku, Interviewfragen, Handbuch
+
+**Aus K.3:** Die Anlege-Fläche ist ein echter `<button>` in der Zelle, kein `onClick` am `<td>` –
+eine Tabellenzelle ist nicht fokussierbar und existierte für Tastatur und Screenreader nicht. Der
+Dialog ist ein natives `<dialog>` mit `showModal()`; Fokusfalle, Escape, `inert` und `::backdrop`
+kommen von der Plattform. Im Browser nachgemessen: `:modal` greift, der Fokus landet im ersten Feld.
 
 **Aus K.2:** Das Raster hat **immer sechs Wochen**, auch wenn der Monat in vier passt – sonst
 aendert der Kalender beim Blaettern seine Hoehe und der Knopf springt unter dem Mauszeiger weg.
