@@ -221,6 +221,80 @@ export function amSelbenTag(a: Date, b: Date): boolean {
 }
 
 /**
+ * Die Uhrzeit, mit der ein neu angelegter Termin vorbelegt wird.
+ *
+ * Nicht Mitternacht: Ein Termin um 00:00 liest sich wie "kein Zeitpunkt
+ * angegeben", und der Nutzer muesste ihn fast immer aendern. 09:00 ist ein
+ * Arbeitsbeginn und damit die Vorgabe, die am seltensten falsch ist.
+ *
+ * Sie steht hier und nicht im Dialog, weil sie zur Datumsrechnung gehoert -
+ * und weil ein Test sie so ohne React pruefen kann.
+ */
+export const VORGABE_STUNDE = 9;
+
+/**
+ * Formatiert einen Zeitpunkt fuer ein `<input type="datetime-local">`.
+ *
+ * ============================================================================
+ * DIE FALLE: `toISOString().slice(0, 16)`
+ * ============================================================================
+ * Das ist der Einzeiler, den man an dieser Stelle fast immer zuerst schreibt,
+ * und er ist falsch. `toISOString()` liefert **UTC**. Im Berliner Sommer
+ * stuende im Feld also 07:00, obwohl 09:00 gemeint ist - zwei Stunden zu
+ * frueh, und zwar still.
+ *
+ * Der Fehler ist besonders unangenehm, weil er im Winter nur eine Stunde
+ * betraegt und in London gar nicht auftritt. Er verschwindet also genau dort,
+ * wo man ihn sucht.
+ *
+ * `datetime-local` ist ausdruecklich ein Feld OHNE Zone: Es zeigt und nimmt
+ * genau das entgegen, was der Nutzer auf seiner Uhr sieht. Also wird hier aus
+ * den lokalen Bestandteilen zusammengesetzt, nicht umgerechnet.
+ */
+export function fuerEingabefeld(datum: Date): string {
+  const zweistellig = (wert: number) => String(wert).padStart(2, '0');
+
+  return (
+    `${datum.getFullYear()}-${zweistellig(datum.getMonth() + 1)}-` +
+    `${zweistellig(datum.getDate())}T${zweistellig(datum.getHours())}:` +
+    `${zweistellig(datum.getMinutes())}`
+  );
+}
+
+/**
+ * Der Zeitpunkt, mit dem der Anlege-Dialog startet, wenn jemand auf einen Tag
+ * klickt.
+ *
+ * Der geklickte Tag, aber nicht seine Uhrzeit - `Kalendertag.datum` ist immer
+ * Mitternacht. Ohne diese Funktion muesste der Dialog das selbst wissen.
+ */
+export const vorgabeFuerTag = (tag: Date): Date =>
+  new Date(
+    tag.getFullYear(),
+    tag.getMonth(),
+    tag.getDate(),
+    VORGABE_STUNDE,
+    0,
+    0,
+    0,
+  );
+
+/**
+ * Der Tagesname fuer eine Beschriftung - "Dienstag, 15. September 2026".
+ *
+ * Gebraucht fuer den `aria-label` der Anlege-Flaeche und die Ueberschrift des
+ * Dialogs. Ein Knopf, der nur "+" heisst, ist fuer einen Screenreader 42 mal
+ * derselbe Knopf.
+ */
+export const langesDatum = (datum: Date, sprache = 'de-DE'): string =>
+  datum.toLocaleDateString(sprache, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
+/**
  * Der angezeigte Monatsname.
  *
  * `Intl` statt einer eigenen Liste mit zwoelf Namen: Die Liste waere schnell

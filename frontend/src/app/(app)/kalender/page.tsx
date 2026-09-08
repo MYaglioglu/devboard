@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 
 import { SeitenKopf } from '@/components/app-huelle';
 import { Monatskalender } from '@/components/monatskalender';
+import { TerminDialog } from '@/components/termin-dialog';
 import { useAktiveOrganisation } from '@/lib/aktive-organisation';
 import { useKalender } from '@/lib/kalender';
 import {
@@ -12,6 +13,7 @@ import {
   monatsraster,
   rasterZeitraum,
   verschiebeMonat,
+  vorgabeFuerTag,
 } from '@/lib/kalender-raster';
 import { useOrganisationen } from '@/lib/organisationen';
 import type { Monatszeiger } from '@/lib/kalender-raster';
@@ -79,6 +81,23 @@ export default function KalenderSeite() {
    * dort der Unterschied zwischen "einmal fragen" und "immer wieder fragen".
    */
   const zeitraum = useMemo(() => rasterZeitraum(monatsraster(monat)), [monat]);
+
+  /**
+   * Der Tag, fuer den gerade eine Aufgabe angelegt wird - `null` heisst: kein
+   * Dialog offen.
+   *
+   * ==========================================================================
+   * WARUM DER ZUSTAND HIER LIEGT UND NICHT IM DIALOG
+   * ==========================================================================
+   * Der Dialog koennte sich selbst oeffnen und schliessen. Dann muesste ihn
+   * aber jede Tageszelle kennen - oder es gaebe 42 Dialoge, einen je Zelle.
+   *
+   * So gibt es genau EINEN Dialog, und der Kalender meldet nur, welcher Tag
+   * geklickt wurde. Der Dialog ist damit eine Anzeige seines Zustands und kein
+   * Ding mit eigenem Gedaechtnis - dieselbe Richtung wie ueberall sonst auf
+   * dieser Seite.
+   */
+  const [angeklickterTag, setzeAngeklicktenTag] = useState<Date | null>(null);
 
   const {
     data: termine,
@@ -173,6 +192,16 @@ export default function KalenderSeite() {
             eintraege={termine ?? []}
             heute={heute}
             orgId={aktive.id}
+            // `vorgabeFuerTag` macht aus der Mitternacht des Rastertages die
+            // Vorgabe-Uhrzeit. Ohne sie stuende im Dialog 00:00 - das liest
+            // sich wie "keine Uhrzeit angegeben".
+            beiTagKlick={(tag) => setzeAngeklicktenTag(vorgabeFuerTag(tag))}
+          />
+
+          <TerminDialog
+            orgId={aktive.id}
+            tag={angeklickterTag}
+            beimSchliessen={() => setzeAngeklicktenTag(null)}
           />
 
           {/*
@@ -180,14 +209,14 @@ export default function KalenderSeite() {
             Ein Kalender ohne Termine ist nicht leer - er zeigt weiterhin
             einen Monat, und den will man auch dann sehen.
 
-            Der Satz sagt ausserdem, WARUM nichts da ist. Das ist derzeit die
-            haeufigste Ursache: Es gibt im Frontend bis Scheibe K.3 gar keinen
-            Weg, ein Faelligkeitsdatum zu setzen.
+            Der Satz sagt ausserdem, was man TUN kann. Ein leerer Zustand,
+            der nur feststellt, dass nichts da ist, laesst den Nutzer stehen -
+            der naechste Schritt gehoert dorthin, wo die Leere auffaellt.
           */}
           {!isPending && termine?.length === 0 && (
             <p className="text-center text-sm text-still">
-              Keine Termine in diesem Zeitraum. Aufgaben erscheinen hier, sobald
-              sie ein Fälligkeitsdatum haben.
+              Keine Termine in diesem Zeitraum. Klicken Sie auf einen Tag, um
+              eine Aufgabe mit Fälligkeitsdatum anzulegen.
             </p>
           )}
         </>
