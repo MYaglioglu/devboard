@@ -407,6 +407,9 @@ zusammengesetzten Fremdschlüssel · reine Rechnung getrennt von der Anzeige (`m
 - [ ] K.5 Wochenleiste über dem Feed auf dem Dashboard, filtert nach Datum
 - [ ] K.6 ADR zur Zeitzonen-Aufteilung, Doku, Interviewfragen, Handbuch
 
+**Stand 14.10.2026:** K.1 bis K.3 sind auf `main`. Der Kalender ist lesend **und** schreibend –
+sichtbar unter `/kalender`, ein Klick auf einen freien Tag legt eine Aufgabe mit Termin an.
+
 **Aus K.3:** Die Anlege-Fläche ist ein echter `<button>` in der Zelle, kein `onClick` am `<td>` –
 eine Tabellenzelle ist nicht fokussierbar und existierte für Tastatur und Screenreader nicht. Der
 Dialog ist ein natives `<dialog>` mit `showModal()`; Fokusfalle, Escape, `inert` und `::backdrop`
