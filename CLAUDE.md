@@ -115,8 +115,9 @@ neu laden.
 
 ## Stand
 
-**Sprint 0 bis 5 abgeschlossen, 6 und 7 teilweise, Sprint 8 läuft** (Stand 07.09.2026).
-**687 Tests** (228 Backend-Unit, 243 Backend-E2E, 216 Frontend), CI grün, `main` geschützt.
+**Sprint 0 bis 5 abgeschlossen, 6 und 7 teilweise, Sprint 8 läuft** (Stand 14.10.2026).
+**735 Tests** (228 Backend-Unit, 243 Backend-E2E, 264 Frontend), CI grün, `main` geschützt,
+keine offenen Pull Requests.
 
 - **Auth** vollständig: Registrierung, Login, Refresh-Rotation mit Wiederverwendungs-Erkennung,
   globaler Guard, Rate Limiting.
@@ -136,17 +137,29 @@ neu laden.
 - **Deployment und Demo-Zugang** (Sprint 6/7, teilweise): dreigeteilter Betrieb nach
   **Schadenshöhe** statt Bequemlichkeit (ADR-016), `POST /auth/demo` legt je Besucher eine
   gefüllte Organisation an und räumt beim nächsten Start auf (ADR-020).
-- **Kalender-Bereichsabfrage** (Sprint 8, Scheibe K.1): halboffener Zeitraum, auf 92 Tage begrenzt,
+- **Kalender** (Sprint 8, Scheiben K.1 bis K.3): halboffener Zeitraum, auf 92 Tage begrenzt,
   `organizationId` auf `tasks` denormalisiert – **nachdem die Messung die vorige Entscheidung
-  widerlegt hat** (ADR-021).
+  widerlegt hat** (ADR-021). Seite `/kalender` mit `monatsraster()` als reiner Funktion, Klick auf
+  einen Tag legt eine Aufgabe an – Projekt, Titel, Datum **mit Uhrzeit**, Zuständiger. Damit sind
+  `dueDate` und `assigneeId` zum ersten Mal im Frontend erreichbar; beide lagen seit Sprint 3 im
+  Backend und kamen nur in Tests vor.
+- **Das Handbuch ist ein Lernbuch geworden**: zwei Bände aus denselben Quelldateien
+  (`DevBoard-Lernbuch.pdf`, 272 Seiten, in Lernreihenfolge · `DevBoard-Referenz.pdf`, 291 Seiten,
+  zum Nachschlagen). Neu darin `20_REACT.md` – Grundlagen, Syntax, zwölf typische Fehler, jedes
+  Beispiel aus diesem Projekt. Jedes Kapitel nennt seine **Voraussetzungen**, im Lernbuch führt ein
+  Satz am Kapitelende zum nächsten.
 
 **Das Projekt ist vorzeigbar.** Alles Weitere steigert die Qualität, ist aber keine Voraussetzung
 mehr für ein Bewerbungsgespräch.
 
-**Als Nächstes: Sprint 8 ab Scheibe K.2** – die Kalenderseite im Frontend. `monatsraster()` als
-reine Funktion mit Tests, Termine in den Tagen, Klick auf einen Tag legt eine Aufgabe an, Ziehen
-verschiebt sie optimistisch mit Rollback. Kernthema: **Zeitzonen** – UTC in der Datenbank, der
-Kalendertag entsteht beim Betrachter.
+**Als Nächstes: Sprint 8 ab Scheibe K.4** – einen Termin per Drag auf einen anderen Tag ziehen,
+optimistisch mit Rollback. dnd-kit liegt vom Board bereits vor; die Frage daneben ist, warum das
+Board eine `version` braucht und der Kalender nicht. Danach K.5 (Wochenleiste über dem Feed) und
+K.6 (ADR zur Zeitzonen-Aufteilung).
+
+**Offen und nicht technisch:** LinkedIn ist seit Woche 2 unverändert. Das Projekt ist vorzeigbar,
+das Handbuch ist ein Buch – was fehlt, ist, daß jemand davon erfährt. Ebenfalls nur über die
+GitHub-Oberfläche zu erledigen: Topics und Homepage-URL am Repository.
 
 **Die Outbox-Frage ist noch offen, nicht beantwortet.** Sprint 5 **empfängt** nur – das ist die
 Inbox. Das Transactional Outbox Pattern wird erst gebraucht, wenn DevBoard selbst an ein fremdes
