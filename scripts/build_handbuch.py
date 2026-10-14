@@ -134,6 +134,14 @@ S = {
         leftIndent=12, borderPadding=(6, 6, 6, 10), spaceBefore=4, spaceAfter=8,
         textColor=colors.HexColor("#3F3F46"), backColor=colors.HexColor("#F7F7F8"),
     ),
+    # Der Uebergang am Kapitelende. Abgesetzt durch eine Linie darueber und
+    # Akzentfarbe - er gehoert sichtbar NICHT mehr zum Kapitel, sondern ist
+    # der Wegweiser des Buches.
+    "uebergang": ParagraphStyle(
+        "uebergang", fontName="Text", fontSize=9, leading=13.5,
+        spaceBefore=10, borderWidth=0, borderPadding=(8, 0, 0, 0),
+        textColor=AKZENT,
+    ),
     "code": ParagraphStyle(
         "code", fontName="Mono", fontSize=7.8, leading=10.5,
         textColor=colors.HexColor("#18181B"),
@@ -513,6 +521,93 @@ NUR_REFERENZ = [
 ]
 
 
+# --------------------------------------------------------------------------
+# Die Uebergaenge zwischen den Kapiteln
+# --------------------------------------------------------------------------
+# Je ein Satz, der am Ende eines Kapitels steht und sagt, warum das naechste
+# folgt. Nur im LERNBUCH - in der Referenz stehen die Kapitel in der
+# Ablageordnung, und "weiter mit" zeigte dort auf etwas anderes als das, was
+# tatsaechlich folgt.
+#
+# ==========================================================================
+# WARUM DIESE SAETZE HIER STEHEN UND NICHT IN DEN MARKDOWN-DATEIEN
+# ==========================================================================
+# Weil ein Kapitel nicht weiss, was nach ihm kommt - das ist eine Eigenschaft
+# des BUCHES, nicht des Kapitels. Stuende der Verweis in der Datei, gaebe es
+# die Reihenfolge zweimal: einmal in LERNPFAD und einmal verteilt ueber
+# zwanzig Dateien. Die zweite Fassung waere beim naechsten Umsortieren still
+# falsch.
+#
+# Was dagegen ins Kapitel gehoert, sind die VORAUSSETZUNGEN - die gelten
+# unabhaengig davon, in welcher Reihenfolge jemand liest. Deshalb stehen sie
+# als Kasten unter jeder Ueberschrift.
+#
+# Der Name des naechsten Kapitels wird nicht hier hingeschrieben, sondern aus
+# der Datei gelesen (`_kapitelname`). Sonst muesste man ihn beim Umbenennen an
+# zwei Stellen aendern.
+UEBERGAENGE = {
+    "README.md":
+        "Zuerst das Gesamtbild: wie Frontend und Backend zueinander stehen und"
+        " wo die Mandantengrenze verlaeuft.",
+    "02_ARCHITECTURE.md":
+        "Das Gesamtbild benutzt Begriffe, die ab hier vorausgesetzt werden."
+        " Wer sie kennt, blaettert weiter.",
+    "14_GLOSSARY.md":
+        "Bevor es in den Code geht: die Regeln, nach denen er geschrieben ist.",
+    "03_CODING_STANDARDS.md":
+        "Jetzt das Backend - und zwar erst die Landkarte, damit die Einzelteile"
+        " danach ein Bild ergeben.",
+    "19_BACKEND.md":
+        "Die Landkarte nennt die Tabellen, erklaert sie aber nicht. Das tut das"
+        " naechste Kapitel, samt der Begruendung jedes Index.",
+    "08_DATABASE.md":
+        "Die Daten liegen jetzt richtig. Als Naechstes, wie sie nach aussen"
+        " kommen - und welche Zusagen dabei gelten.",
+    "09_API.md":
+        "Damit ist das Backend vollstaendig. Die Gegenseite beginnt bei React -"
+        " dem, was das Frontend-Kapitel voraussetzt.",
+    "20_REACT.md":
+        "Die Bausteine sind bekannt. Jetzt, was DevBoard daraus gebaut hat -"
+        " und wie dieselben Fragen in Angular beantwortet werden.",
+    "18_FRONTEND.md":
+        "Beide Seiten stehen. Die naechsten vier Kapitel gehen quer durch sie"
+        " hindurch, und das erste davon betrifft jede Zeile: Sicherheit.",
+    "10_SECURITY.md":
+        "Jede dieser Zusagen ist nur so viel wert wie ihr Nachweis. Darum geht"
+        " es als Naechstes.",
+    "12_TESTING.md":
+        "Getestet ist nicht ausgeliefert. Was dafuer noetig ist, steht im"
+        " naechsten Kapitel.",
+    "11_DEVOPS.md":
+        "Die Werkzeuge sind erklaert - jetzt der konkrete Betrieb von DevBoard"
+        " auf drei Plattformen.",
+    "13_DEPLOYMENT.md":
+        "Damit ist beschrieben, WAS gebaut wurde. Der Rest des Buches"
+        " beantwortet das Warum - und was dabei schiefging.",
+    "16_DECISIONS.md":
+        "Nicht jede Entscheidung war richtig. Die Fehler stehen im naechsten"
+        " Kapitel, mit Ursache und Lehre.",
+    "17_MISTAKES_AND_LESSONS.md":
+        "Zum Schluss der Verlauf: was in welcher Sitzung gelernt wurde, in der"
+        " Reihenfolge, in der es passiert ist.",
+    "04_LEARNING_JOURNAL.md":
+        "Und am Ende die Probe aufs Exempel: Fragen zu allem, was bis hierher"
+        " stand.",
+}
+
+
+def _kapitelname(pfad) -> str:
+    """Der angezeigte Name eines Kapitels - aus seiner ersten H1, nicht aus
+    dem Dateinamen. Sonst stuende ein englischer Dateiname in einem deutschen
+    Satz."""
+    if pfad.stem == "README":
+        return "dem Ueberblick"
+
+    text = pfad.read_text(encoding="utf-8")
+    treffer = re.search(r"^#\s+(.+)$", text, flags=re.MULTILINE)
+    return f"„{treffer.group(1).strip()}“" if treffer else pfad.stem
+
+
 def waehle_dateien(docs_pfad, band: str) -> list:
     """
     Liefert die Dateien in der Reihenfolge des gewaehlten Bandes.
@@ -688,6 +783,24 @@ def baue_band(band: str, sprint):
             titel = ueberschrift
 
         story.extend(markdown_zu_flowables(md, nutzbreite, titel))
+
+        # Der Uebergang zum naechsten Kapitel - nur im Lernbuch.
+        #
+        # In der Referenz waere er falsch: Dort stehen die Kapitel in der
+        # Ablageordnung, und "weiter mit" zeigte auf ein anderes Kapitel als
+        # das, was folgt.
+        if band == "lernbuch" and nr < len(dateien) - 1:
+            satz = UEBERGAENGE.get(datei.name)
+            if satz:
+                naechste = dateien[nr + 1]
+                story.append(Spacer(1, 0.8 * cm))
+                story.append(
+                    Paragraph(
+                        f"<b>Weiter mit {_kapitelname(naechste)}.</b> {satz}",
+                        S["uebergang"],
+                    )
+                )
+
         if nr < len(dateien) - 1:
             story.append(PageBreak())
 
