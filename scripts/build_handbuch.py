@@ -442,6 +442,85 @@ class Handbuch(BaseDocTemplate):
 
 
 # --------------------------------------------------------------------------
+# Lesereihenfolge
+#
+# Frueher stand hier `sorted(docs_pfad.glob("*.md"))` - also die Reihenfolge
+# der Dateinamen. Die Nummern sind aber Ablagefaecher und keine Didaktik:
+# `18_FRONTEND` setzt React voraus, und `20_REACT` stuende dahinter.
+#
+# Deshalb jetzt eine ausdrueckliche Reihenfolge. Sie ist die einzige Stelle,
+# an der steht, in welcher Reihenfolge dieses Buch gelesen werden soll - im
+# Dateisystem laesst sich das nicht ausdruecken, ohne alles umzubenennen.
+#
+# Die Gruppen sind bewusst nicht als Teile im PDF sichtbar; sie ordnen nur.
+# --------------------------------------------------------------------------
+LESEREIHENFOLGE = [
+    # Orientierung - wofuer, wie gebaut, welche Begriffe
+    "README.md",
+    "02_ARCHITECTURE.md",
+    "14_GLOSSARY.md",
+    "03_CODING_STANDARDS.md",
+
+    # Handwerk - von der Oberflaeche nach unten
+    "20_REACT.md",
+    "18_FRONTEND.md",
+    "19_BACKEND.md",
+    "08_DATABASE.md",
+    "09_API.md",
+    "12_TESTING.md",
+    "10_SECURITY.md",
+    "11_DEVOPS.md",
+    "13_DEPLOYMENT.md",
+
+    # Urteil - warum es so ist und was schiefging
+    "16_DECISIONS.md",
+    "17_MISTAKES_AND_LESSONS.md",
+
+    # Projektakte - Verlauf, Umfang, Geparktes
+    "01_ROADMAP.md",
+    "05_FEATURES.md",
+    "06_BACKLOG.md",
+    "04_LEARNING_JOURNAL.md",
+    "15_CHANGELOG.md",
+
+    # Pruefung und Werkstatt
+    "07_INTERVIEW_NOTES.md",
+    "00_MASTER_PROMPT.md",
+]
+
+
+def kapitel_in_lesereihenfolge(docs_pfad):
+    """Liefert die Kapiteldateien in der Lesereihenfolge.
+
+    Bricht ab, wenn eine Datei in `docs/` liegt, aber nicht in der Liste steht.
+    Das ist Absicht: Ein neues Kapitel soll nicht STILL aus dem Buch fallen,
+    nur weil jemand vergessen hat, es einzutragen. Ein Fehlschlag beim Bauen
+    ist dafuer der guenstigste Zeitpunkt.
+    """
+    vorhanden = {d.name for d in docs_pfad.glob("*.md")}
+    genannt = {name for name in LESEREIHENFOLGE if name != "README.md"}
+
+    fehlend = sorted(vorhanden - genannt)
+    if fehlend:
+        raise SystemExit(
+            "Diese Kapitel liegen in docs/, stehen aber nicht in "
+            "LESEREIHENFOLGE und wuerden fehlen: " + ", ".join(fehlend)
+        )
+
+    uebrig = sorted(genannt - vorhanden)
+    if uebrig:
+        raise SystemExit(
+            "Diese Kapitel stehen in LESEREIHENFOLGE, existieren aber "
+            "nicht: " + ", ".join(uebrig)
+        )
+
+    return [
+        REPO / name if name == "README.md" else docs_pfad / name
+        for name in LESEREIHENFOLGE
+    ]
+
+
+# --------------------------------------------------------------------------
 # Zusammenbau
 # --------------------------------------------------------------------------
 def main():
@@ -455,7 +534,7 @@ def main():
     argumente = parser.parse_args()
 
     docs_pfad = REPO / "docs"
-    dateien = [REPO / "README.md"] + sorted(docs_pfad.glob("*.md"))
+    dateien = kapitel_in_lesereihenfolge(docs_pfad)
 
     if argumente.sprint is None:
         ziel = REPO / "DevBoard-Handbuch.pdf"
