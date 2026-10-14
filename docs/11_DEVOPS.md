@@ -1,5 +1,9 @@
 # DevOps
 
+> **Voraussetzungen:** Kommandozeile, Grundbegriffe Container und Image (→ `14_GLOSSARY.md`).
+>
+> **Nicht hier:** Der konkrete Betrieb von DevBoard → `13_DEPLOYMENT.md`
+
 Docker, Compose, CI/CD. Referenz zum Nachschlagen – wächst mit jedem Sprint.
 
 ---

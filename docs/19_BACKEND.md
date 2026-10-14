@@ -1,5 +1,9 @@
 # Backend
 
+> **Voraussetzungen:** TypeScript (Klassen, Dekoratoren, async/await), HTTP-Grundbegriffe.
+>
+> **Nicht hier:** Endpoint-Vertraege → `09_API.md` · Spalten und Indizes → `08_DATABASE.md` · Begruendungen → `16_DECISIONS.md`
+
 `18_FRONTEND.md` beginnt mit dem Satz, bis dahin sei dieses Handbuch ein Backend-Buch gewesen. Das
 stimmte – und stimmte doch nicht. Das Backend ist ausführlich dokumentiert, aber **nur zerlegt**:
 `09_API.md` sortiert nach Endpoint, `08_DATABASE.md` nach Tabelle, `16_DECISIONS.md` nach

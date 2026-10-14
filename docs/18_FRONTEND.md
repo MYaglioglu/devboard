@@ -1,5 +1,9 @@
 # Frontend
 
+> **Voraussetzungen:** **React** – JSX, Hooks, Schluessel. Steht in `20_REACT.md` und wird hier vorausgesetzt.
+>
+> **Nicht hier:** React-Grundlagen und typische Fehler → `20_REACT.md` · Endpoint-Vertraege → `09_API.md`
+
 Bis hierher war dieses Handbuch ein Backend-Buch. Das war eine Lücke: Die Frontend-Entscheidungen
 lagen ausschließlich in Code-Kommentaren, und damit fand sie niemand, der nicht ohnehin in der Datei
 war.
