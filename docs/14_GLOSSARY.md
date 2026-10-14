@@ -1,5 +1,9 @@
 # Glossar
 
+> **Voraussetzungen:** Keine. Zum Nachschlagen gedacht, nicht zum Lesen am Stueck.
+>
+> **Nicht hier:** Warum eine Entscheidung so fiel → `16_DECISIONS.md`
+
 Begriffe, die im Projekt vorkommen – kurz und in eigenen Worten. Wächst mit jedem Sprint.
 
 ---

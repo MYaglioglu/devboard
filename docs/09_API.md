@@ -1,5 +1,9 @@
 ﻿# API
 
+> **Voraussetzungen:** HTTP (Methoden, Statuscodes), JSON, und `19_BACKEND.md` als Landkarte.
+>
+> **Nicht hier:** Tabellen und Indizes → `08_DATABASE.md` · Anmeldung und Token → `10_SECURITY.md`
+
 REST-Schnittstelle des Backends. Basis-URL lokal: `http://localhost:3000`
 
 ---

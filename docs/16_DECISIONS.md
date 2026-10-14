@@ -1,5 +1,9 @@
 # Architekturentscheidungen (ADRs)
 
+> **Voraussetzungen:** Die Fachkapitel davor. Eine ADR beantwortet ein *Warum* und setzt das *Was* voraus.
+>
+> **Nicht hier:** Die Umsetzung → jeweils das Fachkapitel, auf das die ADR verweist
+
 Eine **ADR** (Architecture Decision Record) hält *eine* wichtige Entscheidung fest – zusammen mit
 dem Kontext, den verworfenen Alternativen und den Konsequenzen. Das Format stammt von Michael Nygard
 und ist in vielen Firmen Standard.

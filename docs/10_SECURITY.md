@@ -1,5 +1,9 @@
 # Security
 
+> **Voraussetzungen:** HTTP, der Unterschied zwischen Hashen und Verschluesseln (→ `14_GLOSSARY.md`).
+>
+> **Nicht hier:** Endpoint-Vertraege → `09_API.md` · TLS und Reverse Proxy → `13_DEPLOYMENT.md`
+
 Security by Design – Sicherheit wird mitgebaut, nicht nachträglich aufgesetzt. Dieses Dokument
 wächst mit jedem Sprint und hält fest, **welche Maßnahme welches Risiko adressiert**.
 

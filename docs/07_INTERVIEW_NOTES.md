@@ -1,5 +1,9 @@
 # Interview Notes
 
+> **Voraussetzungen:** Das gesamte Buch. Diese Fragen sind **Selbstpruefung** und stehen deshalb am Ende – vorn gelesen verraten sie die Antwort, bevor man gemerkt hat, dass man sie nicht wusste.
+>
+> **Nicht hier:** Die Begruendungen in voller Laenge → `16_DECISIONS.md`
+
 Fragen, die zu den bisher gebauten Themen realistisch gestellt werden – mit Antworten in eigenen
 Worten. Ziel ist nicht Auswendiglernen, sondern laut erklären können.
 

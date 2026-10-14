@@ -1,5 +1,9 @@
 # Learning Journal
 
+> **Voraussetzungen:** Keine. Verlauf, nicht Lehrtext – zum Querlesen.
+>
+> **Nicht hier:** Der geordnete Stoff → die Fachkapitel davor
+
 Nach jeder Session: Was gelernt? Was war schwierig? Was ist offen?
 
 ---

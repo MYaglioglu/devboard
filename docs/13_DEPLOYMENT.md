@@ -1,5 +1,9 @@
 # Deployment
 
+> **Voraussetzungen:** `11_DEVOPS.md` – Docker, Compose, Pipeline.
+>
+> **Nicht hier:** Die Entscheidung ueber die Aufteilung (ADR-016) → `16_DECISIONS.md`
+
 Wo DevBoard läuft, wie es dorthin kommt und was dabei schiefgehen kann.
 
 Die Entscheidung über die Aufteilung steht in **ADR-016**. Diese Datei beschreibt die Umsetzung.

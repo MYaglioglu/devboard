@@ -1,5 +1,9 @@
 # Architektur
 
+> **Voraussetzungen:** Keine. Dies ist das Einstiegskapitel.
+>
+> **Nicht hier:** Ordnerstruktur und der Weg einer Anfrage → `19_BACKEND.md` · Begriffe → `14_GLOSSARY.md` · Begruendungen → `16_DECISIONS.md`
+
 Stand: Sprint 8 (Kalender, Scheibe K.1). Sprints 0–5 abgeschlossen, 6 und 7 teilweise.
 
 Dieses Kapitel beschreibt das **Gesamtbild über beide Anwendungen** – wie Frontend und Backend

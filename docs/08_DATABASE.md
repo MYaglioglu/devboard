@@ -1,5 +1,9 @@
 ﻿# Datenbank
 
+> **Voraussetzungen:** SQL-Grundlagen (`SELECT`, `JOIN`, `WHERE`), der Begriff Transaktion (→ `14_GLOSSARY.md`).
+>
+> **Nicht hier:** Endpoints → `09_API.md` · die Entscheidungen dahinter → `16_DECISIONS.md` · die Messungen → `12_TESTING.md`
+
 PostgreSQL 18, im Container. Schema und Migrationen über Prisma (ADR-004, ADR-006).
 
 ---

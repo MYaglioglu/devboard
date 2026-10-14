@@ -1,5 +1,9 @@
 # Fehler & Learnings
 
+> **Voraussetzungen:** Keine. Jeder Eintrag nennt seinen Zusammenhang selbst.
+>
+> **Nicht hier:** Die daraus entstandenen Entscheidungen → `16_DECISIONS.md`
+
 Fehler festhalten und daraus lernen. Jeder Eintrag: was passiert ist, warum, wie behoben,
 was daraus folgt.
 
@@ -1305,3 +1309,50 @@ war nicht der entfernte Schutz, sondern ein Aufruf per `npx jest` statt über `n
 ohne `THROTTLE_LIMIT=0` scheitert schon die Registrierung am Rate Limiting. Ohne die vorher
 aufgeschriebene Erwartung („7 rot, 5 grün") wäre das als „der Schutz wirkt sehr breit" durchgegangen.
 Dieselbe Falle wie in Sprint 3 mit dem nicht laufenden Docker-Daemon.
+
+---
+
+## 2026-10-14 – Zum zweiten Mal den Messkanal für das Ergebnis gehalten
+
+**Was passiert ist**
+
+Nach dem Einbau der Kapitelübergänge wurde das erzeugte PDF geprüft. Die Übergänge standen drin,
+aber die deutschen Anführungszeichen erschienen als `�`:
+
+```
+Weiter mit �Architektur�. Zuerst das Gesamtbild: …
+```
+
+Ein Zählen ergab: **0 Ersatzzeichen im Bestand, aber welche in den neuen Sätzen.** Das sah nach
+einem echten Zeichenfehler aus – falsch kodierte Anführungszeichen in frisch erzeugtem Text.
+
+**Ursache**
+
+Keiner. Die Zeichen waren korrekt. Was sie zerstörte, war die Ausgabe auf die Konsole: Git Bash
+unter Windows kann `U+201E` nicht darstellen und ersetzt es bei der Ausgabe.
+
+Der Beleg war, die Zeichen **nicht mehr zu drucken**, sondern ihre Codepunkte zu prüfen:
+
+```
+U+201E enthalten: True
+U+FFFD enthalten: False
+```
+
+Dass die erste Zählung *0 im Bestand* ergab, war ebenfalls richtig und hat trotzdem in die Irre
+geführt: Sie zählte `U+FFFD` im String – also nichts. Gesehen wurde das `�` erst beim **Drucken**,
+und die beiden Beobachtungen wurden für dieselbe gehalten.
+
+**Learning**
+
+> **Wer durch einen Kanal misst, misst den Kanal mit.** Eine Konsole, die Zeichen ersetzt, ist für
+> eine Aussage über Zeichen das falsche Werkzeug – so wie eine Messung mitten in einer
+> Übergangsanimation keine Aussage über den Endzustand ist.
+
+Das ist der **zweite** Fall derselben Sorte. Der erste steht in `18_FRONTEND.md` unter *Ein Wort zum
+Messen im Browser*: Dort zeigte `getComputedStyle` eine Deckkraft von 0 an einem gerade fokussierten
+Knopf – abgelesen 150 Millisekunden zu früh.
+
+Beide Male war die Regel dieselbe und beide Male fiel sie erst beim zweiten Hinsehen auf:
+
+> **Bevor man einen Fehler meldet, prüft man das Messgerät.** Und man prüft ihn auf dem Weg, der am
+> wenigsten dazwischen liegt – Codepunkte statt Bildschirmausgabe, DOM-Abfrage statt Screenshot.

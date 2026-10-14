@@ -1,5 +1,9 @@
 # Coding Standards
 
+> **Voraussetzungen:** Git-Grundlagen, TypeScript-Grundlagen.
+>
+> **Nicht hier:** Teststrategie → `12_TESTING.md` · Pipeline und Hooks → `11_DEVOPS.md`
+
 Verbindlich für dieses Projekt. Werkzeuge erzwingen, was sich erzwingen lässt – der Rest ist
 Vereinbarung.
 

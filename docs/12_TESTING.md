@@ -1,5 +1,9 @@
 # Testing
 
+> **Voraussetzungen:** `19_BACKEND.md` und `20_REACT.md` – die Beispiele stammen aus beiden.
+>
+> **Nicht hier:** Warum so getestet wird → `16_DECISIONS.md` · was die Tests nicht gefunden haben → `17_MISTAKES_AND_LESSONS.md`
+
 Warum getestet wird, steht in `17_MISTAKES_AND_LESSONS.md`: Eine frisch gelaunchte Live-Seite wurde
 durch ein ungetestetes Plugin lahmgelegt. Tests, Staging und Pipeline sind in diesem Projekt keine
 Kür.
